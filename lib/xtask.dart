@@ -8,7 +8,10 @@ library;
 
 import 'dart:io';
 
+import 'src/cli.dart';
 import 'src/context.dart';
+import 'src/exec.dart';
+import 'src/resolve.dart';
 
 // Re-exported rather than restated. A second declaration of `Verb` or of what
 // a verb is handed would be two lists of the same thing, which is the defect
@@ -23,28 +26,26 @@ export 'src/context.dart' show Verb, VerbContext;
 /// file name (§7, §9). **The answer is the process's exit code and has to be
 /// used as one** — a caller that discards it reports success whatever
 /// happened.
+///
+/// Everything ambient is supplied here and nowhere below: the directory the
+/// command was run in, the environment, the two output streams, how a program
+/// is found on this machine and how one is started. [runCli] takes all of it
+/// as parameters, which is what lets §7's surface and §7.1's GitHub markers be
+/// tested without a toolchain and from a machine that is not a runner.
 Future<int> runXtask(
   List<String> args, {
   Map<String, Verb> verbs = const {},
-}) async {
-  // **Refuses, rather than succeeding at nothing.** The CLI surface of §7 is
-  // the `cli` slice and everything it dispatches to is a slice of its own —
-  // but until then this function must not answer 0, whatever it is asked.
-  //
-  // §7.1 tells a pipeline to run `dart run :xtask ci-analyze` as a job's only
-  // step, and milestone item 9 makes this repository its own first user. A 0
-  // here gives whoever wires that up a permanently green job that ran nothing,
-  // indistinguishable from a passing gate — §1's third defect, produced by the
-  // tool written to remove it, in a package that argues at length that a green
-  // result nobody checked is the worst available answer.
-  //
-  // 2 rather than 1: §5.3 reserves 1 for a task that ran and failed, which
-  // would send somebody looking for the failing task. A 2 is "the invocation
-  // was refused", which is what this is.
-  stderr.writeln(
-    'xtask: the command surface is not implemented yet (xtask.md §7, §13). '
-    'Refusing rather than reporting success: a green result nobody checked is '
-    'the failure this tool exists to remove.',
-  );
-  return 2;
-}
+}) => runCli(
+  args,
+  workingDirectory: Directory.current.path,
+  environment: Platform.environment,
+  // The engine's own reports go to stdout, with the bodies' output rather
+  // than beside it: §7.1's grouping markers only fold what is on the same
+  // stream, and on GitHub an `::error::` written to stderr is not an
+  // annotation, it is a line of red text.
+  out: stdout.writeln,
+  err: stderr.writeln,
+  resolver: ExecutableResolver.forHost(),
+  starter: const SystemProcessStarter(),
+  verbs: verbs,
+);

@@ -192,6 +192,24 @@ void main() {
       );
     });
 
+    test(
+      'and the member is named as it goes, not only when it fails',
+      () async {
+        // Six identical lines from one `each:` over six packages is a log that
+        // makes somebody run all six again to find out which one is which.
+        await runFile(
+          'version: 1\n'
+              'sets:\n  pkgs: [one, two]\n'
+              'tasks:\n'
+              r'  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}'
+              '\n',
+          'a',
+        );
+        expect(logged.join('\n'), contains('a [one]: '));
+        expect(logged.join('\n'), contains('a [two]: '));
+      },
+    );
+
     test('a failure stops at that member, and the member is NAMED', () async {
       // §5.2 asks for the member by name. "The tests failed" over six
       // packages is a report that makes somebody run all six again by hand.
@@ -207,6 +225,37 @@ void main() {
       expect(code, ExitCode.taskFailed);
       expect(starter.started, hasLength(1), reason: 'stopped at the first');
       expect(logged.join('\n'), contains('failed at `one`'));
+    });
+  });
+
+  group('a set that expands to nothing stops the task, not the process', () {
+    // §4.2 makes it an error and §8 catches it without running anything — but
+    // somebody who did not validate first reaches it here, and it used to
+    // escape `run` altogether: past the exit code and past the section
+    // markers, leaving a group open around a task that had already stopped.
+    test('and answers 2, because the file is what is wrong', () async {
+      final code = await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [packages/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}'
+            '\n',
+        'a',
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(logged.join('\n'), contains('task `a` cannot run'));
+      expect(starter.started, isEmpty);
+    });
+
+    test('the same for `argv-from`, which fails one step later', () async {
+      final code = await runFile(
+        'version: 1\n'
+            'sets:\n  src:\n    include: [lib/*.dart]\n'
+            'tasks:\n  a: {desc: x, argv-from: src, run: [dart, format]}\n',
+        'a',
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(logged.join('\n'), contains('task `a` cannot run'));
     });
   });
 

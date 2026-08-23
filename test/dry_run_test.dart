@@ -301,6 +301,22 @@ void main() {
       expect(output(), isNot(contains('HOME')));
     });
 
+    test('and no task is wrapped in a section', () async {
+      // §7.1's markers exist to fold a task's OUTPUT, and a dry run produces
+      // none: its own report is the plan, and a header above each block would
+      // say the name twice. Asserted against the plain marker rather than the
+      // GitHub one, because plain is what a dry run uses on either host —
+      // checking only for `::group::` would pass with sections turned on.
+      await dry(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n',
+        'a',
+        environment: const {'GITHUB_ACTIONS': 'true'},
+      );
+      expect(output(), isNot(contains('──')));
+      expect(output(), isNot(contains('::group::')));
+      expect(logged.first, 'plan: a');
+    });
+
     test('a composite says it has nothing of its own to run', () async {
       await dry(
         'version: 1\ntasks:\n'
