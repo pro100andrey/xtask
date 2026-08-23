@@ -1,0 +1,498 @@
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+import 'package:test/test.dart';
+import 'package:xtask/src/context.dart';
+import 'package:xtask/src/exec.dart';
+import 'package:xtask/src/exit_codes.dart';
+import 'package:xtask/src/graph.dart';
+import 'package:xtask/src/parse.dart';
+import 'package:xtask/src/resolve.dart';
+
+/// One process the executor asked for.
+final class Started {
+  Started(
+    this.executable,
+    this.arguments,
+    this.workingDirectory,
+    this.environment,
+    this.runInShell,
+  );
+
+  final String executable;
+  final List<String> arguments;
+  final String workingDirectory;
+  final Map<String, String> environment;
+  final bool runInShell;
+}
+
+/// A starter that records instead of spawning.
+///
+/// Everything worth asserting here is WHICH processes would start and with
+/// what — the order, the directory, the environment, what happens after a
+/// failure, which member of an `each:` was reached. None of that needs a real
+/// process, and a suite that started one would depend on a toolchain to say
+/// anything at all.
+final class FakeStarter implements ProcessStarter {
+  FakeStarter([this.codes = const {}]);
+
+  /// Exit code per executable name; anything unlisted succeeds.
+  final Map<String, int> codes;
+  final started = <Started>[];
+
+  @override
+  Future<int> start(
+    String executable,
+    List<String> arguments, {
+    required String workingDirectory,
+    required Map<String, String> environment,
+    required bool runInShell,
+  }) async {
+    started.add(
+      Started(executable, arguments, workingDirectory, environment, runInShell),
+    );
+    return codes[p.basename(executable)] ?? ExitCode.success;
+  }
+}
+
+void main() {
+  late Directory root;
+  late FakeStarter starter;
+  late List<String> logged;
+
+  setUp(() {
+    root = Directory.systemTemp.createTempSync('xtask_exec_');
+    starter = FakeStarter();
+    logged = [];
+  });
+
+  tearDown(() => root.deleteSync(recursive: true));
+
+  void given(List<String> paths) {
+    for (final path in paths) {
+      File(p.join(root.path, p.joinAll(p.posix.split(path))))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('');
+    }
+  }
+
+  /// A resolver that finds every bare name at `/bin/<name>`, so the cases
+  /// below are about execution rather than about §5.4.
+  ExecutableResolver resolverFor({Set<String> shims = const {}}) =>
+      ExecutableResolver(
+        environment: const {'PATH': '/bin'},
+        windows: shims.isNotEmpty,
+        isRunnable: (path) => !p.basename(path).startsWith('missing'),
+      );
+
+  Future<int> runFile(
+    String yaml,
+    String task, {
+    Map<String, Verb> verbs = const {},
+    Map<String, String> environment = const {},
+    ExecutableResolver? resolver,
+  }) {
+    final file = parseXtaskFile(yaml);
+    return Executor(
+      file: file,
+      root: root.path,
+      resolver: resolver ?? resolverFor(),
+      starter: starter,
+      log: logged.add,
+      verbs: verbs,
+      environment: environment,
+    ).run(planRun(file, task));
+  }
+
+  group('a `run:` body becomes one process, as argv', () {
+    test('argv is not a string anybody splits', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, analyze, --fatal-infos]}\n',
+        'a',
+      );
+      expect(code, ExitCode.success);
+      expect(starter.started.single.arguments, ['analyze', '--fatal-infos']);
+    });
+
+    test('`args:` are appended to the body', () async {
+      await runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, format],'
+            ' args: [--set-exit-if-changed]}\n',
+        'a',
+      );
+      expect(starter.started.single.arguments, [
+        'format',
+        '--set-exit-if-changed',
+      ]);
+    });
+
+    test('`argv-from` appends the resolved members', () async {
+      given(['a.lake', 'b.lake']);
+      await runFile(
+        'version: 1\n'
+            "sets:\n  srcs: {include: ['**/*.lake']}\n"
+            'tasks:\n'
+            '  a: {desc: x, run: [fmt], argv-from: srcs}\n',
+        'a',
+      );
+      expect(starter.started.single.arguments, ['a.lake', 'b.lake']);
+    });
+
+    test(
+      'an unresolvable executable is a MISSING TOOL, not a failure',
+      () async {
+        // §5.3 gives it its own code because "Dart is not installed" and "the
+        // code is broken" are repaired by different people.
+        final code = await runFile(
+          'version: 1\ntasks:\n  a: {desc: x, run: [missing-tool]}\n',
+          'a',
+        );
+        expect(code, ExitCode.missingTool);
+        expect(starter.started, isEmpty, reason: 'asked before it is started');
+        expect(logged.join('\n'), contains('not installed'));
+      },
+    );
+  });
+
+  group('the run stops at the first failure', () {
+    test('and the tasks after it do not run', () async {
+      starter = FakeStarter({'boom': 1});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, needs: [b], run: [after]}\n'
+            '  b: {desc: y, run: [boom]}\n',
+        'a',
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(starter.started.map((s) => s.executable), ['/bin/boom']);
+    });
+
+    test('the report names the task and the code', () async {
+      starter = FakeStarter({'boom': 7});
+      await runFile('version: 1\ntasks:\n  a: {desc: x, run: [boom]}\n', 'a');
+      expect(logged.join('\n'), contains('task `a` failed with exit code 7'));
+    });
+  });
+
+  group('`each:` runs the body once per member, sequentially', () {
+    test('in the order the set gives', () async {
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs: [one, two, three]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}'
+            '\n',
+        'a',
+      );
+      expect(
+        starter.started.map((s) => p.basename(s.workingDirectory)),
+        ['one', 'two', 'three'],
+      );
+    });
+
+    test('a failure stops at that member, and the member is NAMED', () async {
+      // §5.2 asks for the member by name. "The tests failed" over six
+      // packages is a report that makes somebody run all six again by hand.
+      starter = FakeStarter({'dart': 1});
+      final code = await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs: [one, two, three]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}'
+            '\n',
+        'a',
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(starter.started, hasLength(1), reason: 'stopped at the first');
+      expect(logged.join('\n'), contains('failed at `one`'));
+    });
+  });
+
+  group('where a body runs', () {
+    test('the repository root, when `in:` is not written', () async {
+      await runFile('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n', 'a');
+      expect(starter.started.single.workingDirectory, root.path);
+    });
+
+    test('`in:` is taken relative to the root, never to the shell', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, in: packages/lake, run: [dart]}\n',
+        'a',
+      );
+      expect(
+        starter.started.single.workingDirectory,
+        p.join(root.path, 'packages/lake'),
+      );
+    });
+
+    test(r'`in: $each` without an `each:` set is refused', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            r'  a: {desc: x, in: $each, run: [dart]}'
+            '\n',
+        'a',
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(logged.join('\n'), contains(r'`in: $each` without an `each:`'));
+    });
+  });
+
+  group('`env:` is a key, not shell syntax', () {
+    test(
+      'it is added to the ambient environment, not swapped for it',
+      () async {
+        await runFile(
+          'version: 1\ntasks:\n'
+              "  a: {desc: x, run: [dart], env: {UPDATE_GOLDENS: '1'}}\n",
+          'a',
+          environment: {'PATH': '/bin', 'HOME': '/home'},
+        );
+        final env = starter.started.single.environment;
+        expect(env['UPDATE_GOLDENS'], '1');
+        expect(env['HOME'], '/home', reason: 'the ambient one survives');
+      },
+    );
+
+    test('a task value wins over the ambient one', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart], env: {K: task}}\n',
+        'a',
+        environment: {'K': 'ambient'},
+      );
+      expect(starter.started.single.environment['K'], 'task');
+    });
+  });
+
+  group('`env-required` is checked before the body, and installs nothing', () {
+    test('a missing variable stops the task before it starts', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, env-required: [CHROMEDRIVER], run: [dart]}\n',
+        'a',
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(starter.started, isEmpty);
+      // The whole value of the key: not "a browser test failed somewhere
+      // inside" but the name of the thing that is missing.
+      expect(logged.join('\n'), contains('requires the environment variable'));
+      expect(logged.join('\n'), contains('CHROMEDRIVER'));
+    });
+
+    test('a variable that is set lets the body run', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, env-required: [CHROMEDRIVER], run: [dart]}\n',
+        'a',
+        environment: {'CHROMEDRIVER': '/usr/bin/chromedriver'},
+      );
+      expect(code, ExitCode.success);
+      expect(starter.started, hasLength(1));
+    });
+
+    test('a variable set to nothing counts as missing', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, env-required: [CHROMEDRIVER], run: [dart]}\n',
+        'a',
+        environment: {'CHROMEDRIVER': ''},
+      );
+      expect(code, ExitCode.taskFailed);
+    });
+  });
+
+  group("a `do:` body is the project's own Dart", () {
+    test('the verb is called, with args and argv-from resolved', () async {
+      given(['x.lake']);
+      late VerbContext seen;
+      final code = await runFile(
+        'version: 1\n'
+            "sets:\n  srcs: {include: ['**/*.lake']}\n"
+            'tasks:\n'
+            '  a: {desc: x, do: fmt, args: [--write], argv-from: srcs}\n',
+        'a',
+        verbs: {
+          'fmt': (context) async {
+            seen = context;
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.success);
+      expect(seen.args, ['--write', 'x.lake']);
+      expect(seen.workingDirectory, root.path);
+    });
+
+    test('what the verb answers is what the task answers', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: nope}\n',
+        'a',
+        verbs: {'nope': (_) async => 3},
+      );
+      expect(code, ExitCode.taskFailed);
+    });
+
+    test('an unregistered verb is a file defect, not a task failure', () async {
+      // The engine ships no project verbs (§9), so naming one it does not have
+      // is the file being wrong — code 2, not 1.
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: ghost}\n',
+        'a',
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(logged.join('\n'), contains('has not registered'));
+    });
+  });
+
+  group('a continuation that fails is the third outcome, not a failure', () {
+    test('exit 4, and the notice the Makefile already printed', () async {
+      starter = FakeStarter({'verify': 1});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  publish: {desc: x, run: [upload], then: [verify]}\n'
+            '  verify: {desc: y, run: [verify]}\n',
+        'publish',
+      );
+      expect(code, ExitCode.continuationFailed);
+      expect(logged.join('\n'), contains(ExitCode.continuationNotice));
+      expect(
+        starter.started.map((s) => p.basename(s.executable)),
+        ['upload', 'verify'],
+        reason: 'the upload happened first, and that is the point',
+      );
+    });
+
+    test('a body that fails is still exit 1, continuation or not', () async {
+      starter = FakeStarter({'upload': 1});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  publish: {desc: x, run: [upload], then: [verify]}\n'
+            '  verify: {desc: y, run: [verify]}\n',
+        'publish',
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(logged.join('\n'), isNot(contains(ExitCode.continuationNotice)));
+    });
+
+    test('a missing tool INSIDE a continuation still answers 4', () async {
+      // The code carries where, not what. The publish happened either way, and
+      // that is the fact a pipeline must not lose.
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  publish: {desc: x, run: [upload], then: [verify]}\n'
+            '  verify: {desc: y, run: [missing-tool]}\n',
+        'publish',
+      );
+      expect(code, ExitCode.continuationFailed);
+    });
+  });
+
+  group('§5.4 rule 3: arguments to a batch shim', () {
+    ExecutableResolver windowsShims() => ExecutableResolver(
+      environment: const {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
+      windows: true,
+      isRunnable: (path) => path.toLowerCase().endsWith('.bat'),
+    );
+
+    test('a plain argument goes through the shell, because it must', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart, analyze]}\n',
+        'a',
+        resolver: windowsShims(),
+      );
+      expect(code, ExitCode.success);
+      expect(starter.started.single.runInShell, isTrue);
+      expect(starter.started.single.executable, r'C:\bin\dart.BAT');
+    });
+
+    test(
+      'an argument the shell would reinterpret is REFUSED, not passed',
+      () async {
+        // The honest answer to an obligation that cannot be verified from a
+        // machine that is not Windows. Passing `&` through means cmd.exe ends
+        // the command and starts another one, silently — the worst outcome
+        // available. Refusing names the character and says what it would do.
+        final code = await runFile(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, run: [dart, "--name=a&b"]}\n',
+          'a',
+          resolver: windowsShims(),
+        );
+        expect(code, ExitCode.invalidFile);
+        expect(starter.started, isEmpty);
+        final message = logged.join('\n');
+        expect(message, contains('batch file'));
+        expect(message, contains('shell operator'));
+      },
+    );
+
+    test('every character cmd acts on is covered', () async {
+      for (final bad in ['a&b', 'a|b', 'a<b', 'a>b', 'a^b', 'a(b', 'a)b']) {
+        starter = FakeStarter();
+        logged = [];
+        final code = await runFile(
+          'version: 1\ntasks:\n  a: {desc: x, run: [dart, "$bad"]}\n',
+          'a',
+          resolver: windowsShims(),
+        );
+        expect(code, ExitCode.invalidFile, reason: bad);
+      }
+    });
+
+    test('the same argument is fine when no shell is involved', () async {
+      // On POSIX, and on Windows for a real executable, nothing reinterprets
+      // it — so the limit applies exactly where the risk is and nowhere else.
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, "--name=a&b"]}\n',
+        'a',
+      );
+      expect(code, ExitCode.success);
+      expect(starter.started.single.arguments, ['--name=a&b']);
+      expect(starter.started.single.runInShell, isFalse);
+    });
+  });
+
+  group('a composite has nothing of its own to run', () {
+    test('its needs run and it does not start a process', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  check: {desc: x, needs: [a]}\n'
+            '  a: {desc: y, run: [dart]}\n',
+        'check',
+      );
+      expect(code, ExitCode.success);
+      expect(starter.started, hasLength(1));
+      expect(logged.join('\n'), contains('nothing of its own to run'));
+    });
+  });
+
+  group('the real starter, against a real process', () {
+    // The one thing the fake cannot answer. Everything else above is about
+    // which processes would start; this is about a process actually starting.
+    test('runs it and reports its code', () async {
+      const starter = SystemProcessStarter();
+      final code = await starter.start(
+        Platform.resolvedExecutable,
+        ['--version'],
+        workingDirectory: Directory.current.path,
+        environment: Platform.environment,
+        runInShell: false,
+      );
+      expect(code, 0);
+    });
+
+    test('a non-zero exit comes back as itself', () async {
+      const starter = SystemProcessStarter();
+      final code = await starter.start(
+        Platform.resolvedExecutable,
+        ['run', 'no_such_file_4f3a9.dart'],
+        workingDirectory: Directory.current.path,
+        environment: Platform.environment,
+        runInShell: false,
+      );
+      expect(code, isNot(0));
+    });
+  }, testOn: 'vm');
+}

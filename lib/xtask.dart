@@ -8,15 +8,12 @@ library;
 
 import 'dart:io';
 
-/// A job the project implements in Dart, named by a task's `do:` key.
-///
-/// Rule R1 pushes logic here deliberately: the file cannot branch, so a task
-/// that needs a condition becomes one of these instead. The context a verb
-/// receives — its arguments, the resolved members of its `argv-from` set, its
-/// environment, its working directory and a logger — is defined by the slice
-/// that builds body execution; until then this typedef names the shape without
-/// pretending to the detail.
-typedef Verb = Future<int> Function(List<String> args);
+import 'src/context.dart';
+
+// Re-exported rather than restated. A second declaration of `Verb` or of what
+// a verb is handed would be two lists of the same thing, which is the defect
+// §1 exists to remove.
+export 'src/context.dart' show Verb, VerbContext;
 
 /// Runs `xtask` with the verbs this project supplies, and answers with the
 /// process exit code — see §5.3 of `xtask.md` for what each code means.
