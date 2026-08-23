@@ -26,6 +26,89 @@ final class RunFailure implements Exception {
   String toString() => message;
 }
 
+/// A body with everything about it decided — §7's *resolved* plan.
+///
+/// **What `--dry-run` prints and what a run performs, worked out once.**
+/// Turning a task into a command is most of the engine: the set expanded, the
+/// member `$each` stands for, the directory it lands in, the environment it
+/// sees, and the executable §5.4 finds on this machine. A dry run that worked
+/// that out a second time would be a second answer to "what will happen" — the
+/// two would agree until the day one of them was changed, which is §1's first
+/// defect written by the tool that exists to remove it.
+///
+/// So there is one walk, in [Executor], with two endings.
+sealed class Resolved {
+  const Resolved({
+    required this.task,
+    required this.member,
+    required this.workingDirectory,
+    required this.environment,
+    required this.arguments,
+  });
+
+  /// The task this body belongs to.
+  final Task task;
+
+  /// The member of `each:` this body is for, or null when there is no `each:`.
+  ///
+  /// A task with `each:` resolves to one of these per member, which is why the
+  /// member is here and not only in the failure message.
+  final String? member;
+
+  /// Where the body runs — absolute, already resolved against the repository
+  /// root, with `$each` substituted.
+  final String workingDirectory;
+
+  /// The ambient environment with the task's `env:` applied: what the body
+  /// actually sees, rather than what the file adds.
+  final Map<String, String> environment;
+
+  /// Everything after the program name: for a `run:` body the rest of its
+  /// `argv`, then `args:`, then the expanded `argv-from` set.
+  final List<String> arguments;
+}
+
+/// A `run:` body, with the program found and Windows' shell question answered.
+final class ResolvedProcess extends Resolved {
+  const ResolvedProcess({
+    required super.task,
+    required super.member,
+    required super.workingDirectory,
+    required super.environment,
+    required super.arguments,
+    required this.executable,
+    required this.runInShell,
+  });
+
+  /// The absolute path §5.4 resolved the written name to, on this machine.
+  final String executable;
+
+  /// Whether starting it means going through `cmd.exe` — true only for a
+  /// Windows shim that `CreateProcess` cannot start (§5.4, rule 3).
+  final bool runInShell;
+}
+
+/// A `do:` body, with the verb the project registered found.
+final class ResolvedVerb extends Resolved {
+  const ResolvedVerb({
+    required super.task,
+    required super.member,
+    required super.workingDirectory,
+    required super.environment,
+    required super.arguments,
+    required this.verb,
+    required this.implementation,
+  });
+
+  /// The name written in the file.
+  final String verb;
+
+  /// The function it names — looked up while resolving, and **not called**
+  /// there, which is what lets a dry run report a `do:` task without running
+  /// arbitrary Dart.
+  final Verb implementation;
+}
+
 /// Runs a [Plan], in order, stopping at the first failure.
 final class Executor {
   Executor({
@@ -36,6 +119,7 @@ final class Executor {
     required this.log,
     this.verbs = const {},
     this.environment = const {},
+    this.dryRun,
   }) : _sets = SetExpander(root: root);
 
   final XtaskFile file;
@@ -59,6 +143,14 @@ final class Executor {
   /// The ambient environment a task's `env:` is added to, and the one
   /// `env-required` is checked against.
   final Map<String, String> environment;
+
+  /// When set, every body is resolved exactly as a run resolves it and then
+  /// handed here **instead of being performed** — `--dry-run` of §7.
+  ///
+  /// A callback rather than a flag because deciding what a body comes to is
+  /// this class's business and printing it is not. What it must not be is a
+  /// second walk over the file: see [Resolved].
+  final void Function(Resolved body)? dryRun;
 
   final SetExpander _sets;
 
@@ -118,19 +210,17 @@ final class Executor {
   }
 
   Future<void> _runBody(Task task, Body body, String? member) async {
-    final where = _workingDirectory(task, member);
-    final args = [
-      ...task.args,
-      if (task.argvFrom != null)
-        ..._sets.expand(task.argvFrom!, _set(task, task.argvFrom!)),
-    ];
-    final env = {...environment, ...task.env};
+    final resolved = _resolve(task, body, member);
 
-    final code = switch (body) {
-      DoBody(:final verb) => await _runVerb(task, verb, args, env, where),
-      RunBody(:final argv) => await _runProcess(task, argv, args, env, where),
-    };
+    final report = dryRun;
+    if (report != null) {
+      // Everything above has happened: the set was expanded, the directory
+      // worked out, the program found. Everything below has not.
+      report(resolved);
+      return;
+    }
 
+    final code = await _perform(resolved);
     if (code != ExitCode.success) {
       throw RunFailure(
         ExitCode.taskFailed,
@@ -144,61 +234,95 @@ final class Executor {
     }
   }
 
-  Future<int> _runVerb(
-    Task task,
-    String verb,
-    List<String> args,
-    Map<String, String> env,
-    String where,
-  ) {
-    final implementation = verbs[verb];
-    if (implementation == null) {
-      throw RunFailure(
-        ExitCode.invalidFile,
-        'task `${task.name}` names the verb `$verb`, which this project has '
-        'not registered. The engine ships no project verbs (§9): a verb is a '
-        'Dart function the project hands to `runXtask`',
-      );
+  /// What [body] comes to on this machine, for this member.
+  ///
+  /// Every way a task can turn out to be unrunnable is found here rather than
+  /// on the way in or half-way through: an unknown verb, a set that does not
+  /// exist, `in: $each` without an `each:`, a program nothing on `PATH`
+  /// answers to. That is what makes `--dry-run` worth reading — it fails
+  /// exactly where the run would, with the same message and the same exit
+  /// code.
+  Resolved _resolve(Task task, Body body, String? member) {
+    final where = _workingDirectory(task, member);
+    final args = List<String>.unmodifiable([
+      ...task.args,
+      if (task.argvFrom != null)
+        ..._sets.expand(task.argvFrom!, _set(task, task.argvFrom!)),
+    ]);
+    final env = Map<String, String>.unmodifiable({
+      ...environment,
+      ...task.env,
+    });
+
+    switch (body) {
+      case DoBody(:final verb):
+        final implementation = verbs[verb];
+        if (implementation == null) {
+          throw RunFailure(
+            ExitCode.invalidFile,
+            'task `${task.name}` names the verb `$verb`, which this project '
+            'has not registered. The engine ships no project verbs (§9): a '
+            'verb is a Dart function the project hands to `runXtask`',
+          );
+        }
+        return ResolvedVerb(
+          task: task,
+          member: member,
+          workingDirectory: where,
+          environment: env,
+          arguments: args,
+          verb: verb,
+          implementation: implementation,
+        );
+
+      case RunBody(:final argv):
+        final executable = resolver.resolve(argv.first);
+        if (executable == null) {
+          throw RunFailure(
+            ExitCode.missingTool,
+            'task `${task.name}`: ${resolver.missingToolMessage(argv.first)}',
+          );
+        }
+        final arguments = List<String>.unmodifiable([...argv.skip(1), ...args]);
+        final runInShell = resolver.needsShell(executable);
+        if (runInShell) {
+          _refuseShellMetacharacters(task, executable, arguments);
+        }
+        return ResolvedProcess(
+          task: task,
+          member: member,
+          workingDirectory: where,
+          environment: env,
+          arguments: arguments,
+          executable: executable,
+          runInShell: runInShell,
+        );
     }
-    return implementation(
-      VerbContext(
-        args: List.unmodifiable(args),
-        env: Map.unmodifiable(env),
-        workingDirectory: where,
-        log: log,
-      ),
-    );
   }
 
-  Future<int> _runProcess(
-    Task task,
-    List<String> argv,
-    List<String> args,
-    Map<String, String> env,
-    String where,
-  ) {
-    final resolved = resolver.resolve(argv.first);
-    if (resolved == null) {
-      throw RunFailure(
-        ExitCode.missingTool,
-        'task `${task.name}`: ${resolver.missingToolMessage(argv.first)}',
-      );
-    }
+  /// Does what [body] resolved to, and answers with its exit code.
+  Future<int> _perform(Resolved body) {
+    switch (body) {
+      case ResolvedVerb(:final implementation):
+        return implementation(
+          VerbContext(
+            args: body.arguments,
+            env: body.environment,
+            workingDirectory: body.workingDirectory,
+            log: log,
+          ),
+        );
 
-    final arguments = [...argv.skip(1), ...args];
-    final runInShell = resolver.needsShell(resolved);
-    if (runInShell) {
-      _refuseShellMetacharacters(task, resolved, arguments);
+      case ResolvedProcess(:final executable, :final runInShell):
+        log('${body.task.name}: ${[executable, ...body.arguments].join(' ')}');
+        return starter.start(
+          executable,
+          body.arguments,
+          workingDirectory: body.workingDirectory,
+          environment: body.environment,
+          runInShell: runInShell,
+        );
     }
-
-    log('${task.name}: ${[resolved, ...arguments].join(' ')}');
-    return starter.start(
-      resolved,
-      arguments,
-      workingDirectory: where,
-      environment: env,
-      runInShell: runInShell,
-    );
   }
 
   /// Characters `cmd.exe` acts on rather than passes along.
