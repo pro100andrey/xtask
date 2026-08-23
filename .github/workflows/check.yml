@@ -1,0 +1,26 @@
+# One job per gate set, and one invocation per job — xtask.md §7.1.
+#
+# What runs is not written here. `dart run :xtask check` runs the `check` gate,
+# and its members live in xtask.yaml; a `run:` step naming a command directly
+# would be the duplicate list this repository exists to remove, so
+# test/dogfood_test.dart refuses one.
+#
+# What IS written here is what must exist before xtask can run: the checkout
+# and the toolchain. §7.1 puts the line there deliberately — a `requires:` key
+# that installed a toolchain would make this a build system, which §10 rules
+# out. `dart run` resolves the package itself, so there is no `pub get` step
+# either.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart run :xtask check

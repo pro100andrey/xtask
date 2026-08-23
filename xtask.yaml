@@ -1,0 +1,45 @@
+# This repository's own tasks. xtask is the subject of the work here, so it is
+# also the first thing to be run by it: what a person types before calling a
+# task done, and what the CI job runs, are one list and it is this one.
+#
+# The design is xtask.md, which is not in the clone. Section numbers below
+# refer to it.
+version: 1
+
+tasks:
+  # Order inside the gate is the order written here, and it is the one place
+  # ordering is implicit (§4.3). Cheapest first: an unformatted file is one
+  # command to fix, and finding that out after the tests have run is two
+  # minutes spent to learn something that took a tenth of a second to check.
+  format:
+    desc: fail if any Dart file is unformatted
+    gate: [check]
+    run: [dart, format, --output=none, --set-exit-if-changed, .]
+
+  analyze:
+    # --fatal-infos is not decoration. The house rule set (package:pro_lints)
+    # reports most of what it has to say at info severity, so without it this
+    # task passes a file the rules reject.
+    desc: refuse anything the analyzer or the house rules object to
+    gate: [check]
+    run: [dart, analyze, --fatal-infos]
+
+  test:
+    # From the repository root, which is the run that counts: a test that only
+    # passes from its own directory is red here.
+    desc: run the suite
+    gate: [check]
+    run: [dart, test]
+
+  check:
+    desc: everything that must pass before work is called done
+    collects: check
+
+# There is no `install` task running `dart pub get`, deliberately. §7.1 draws
+# the line at what must EXIST before xtask runs, and that side belongs to the
+# CI file; `dart run` resolves the package on its own, so a task doing it would
+# be a second place that says so and a wait a person pays for locally.
+#
+# There is one gate set, not two. A `ci` set beside `check` would hold the same
+# three tasks, and two lists of one thing is the defect §1 exists to remove —
+# it is not made acceptable by both copies living in the same file.
