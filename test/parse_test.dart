@@ -508,6 +508,137 @@ tasks: {}
     });
   });
 
+  group('a value that parses and means nothing', () {
+    // Each of these used to travel on as a RUNTIME problem: an empty verb name
+    // reached the registry as "no such verb", an empty executable reached §5.4
+    // as a missing tool — exit 3, "not installed" — when the defect was in the
+    // file and §5.3 has a code for that.
+    test('an empty `desc:` is refused', () {
+      expect(
+        refusal(
+          () => parseXtaskFile('version: 1\ntasks:\n  a: {desc: ""}\n'),
+        ),
+        contains('is empty'),
+      );
+    });
+
+    test('a `desc:` running to more than one line is refused', () {
+      // §4.3 calls it one line, and `--list` prints it beside the task name.
+      final message = refusal(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n  a:\n    desc: |\n      first\n      second\n',
+        ),
+      );
+      expect(message, contains('more than one line'));
+    });
+
+    test('an empty `do:` is refused', () {
+      expect(
+        refusal(
+          () => parseXtaskFile('version: 1\ntasks:\n  a: {desc: x, do: ""}\n'),
+        ),
+        contains('a verb name is empty'),
+      );
+    });
+
+    test('an empty executable is refused', () {
+      expect(
+        refusal(
+          () => parseXtaskFile(
+            'version: 1\ntasks:\n  a: {desc: x, run: ["", analyze]}\n',
+          ),
+        ),
+        contains('executable'),
+      );
+    });
+
+    test('but an empty ARGUMENT is ordinary and is kept', () {
+      // `dart test --name ''` is a real command. Refusing every empty string
+      // in `run:` would forbid it, so only the first element is checked.
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart, --name, ""]}\n',
+      );
+      expect((file.tasks['a']!.body! as RunBody).argv, ['dart', '--name', '']);
+    });
+
+    test('an empty name in `needs:` is refused', () {
+      expect(
+        refusal(
+          () => parseXtaskFile(
+            'version: 1\ntasks:\n  a: {desc: x, needs: [""]}\n',
+          ),
+        ),
+        contains('is empty'),
+      );
+    });
+  });
+
+  group('two bodies are reported in the order the file wrote them', () {
+    // The list used to come from `bodyKeys`, so the message named `run:` first
+    // whatever the file said, while the caret pointed at whichever was written
+    // second — a message and a pointer disagreeing about the same defect.
+    test('`do:` before `run:` is reported in that order', () {
+      final message = refusal(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n  a:\n    desc: x\n    do: regen\n'
+          '    run: [dart]\n',
+        ),
+      );
+      expect(message.indexOf('`do:`'), lessThan(message.indexOf('`run:`')));
+      expect(message, contains('line 6'), reason: 'caret on the second one');
+    });
+
+    test('`run:` before `do:` is reported in that order', () {
+      final message = refusal(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n  a:\n    desc: x\n    run: [dart]\n'
+          '    do: regen\n',
+        ),
+      );
+      expect(message.indexOf('`run:`'), lessThan(message.indexOf('`do:`')));
+      expect(message, contains('line 6'));
+    });
+  });
+
+  group('what the parser hands back cannot be quietly rearranged', () {
+    // The `const []` defaults on Task throw on mutation while parsed
+    // collections accepted it — one type behaving two ways depending on what
+    // the file happened to say. And `tasks` is a map whose ORDER §4.3 calls
+    // load-bearing, which does not go with anybody being able to reorder it.
+    late final XtaskFile file;
+
+    setUpAll(() {
+      file = parseXtaskFile(
+        'version: 1\nsets:\n  s: [a]\n'
+        'tasks:\n  a: {desc: x, run: [dart], needs: [b], args: [--x],'
+        " env: {K: '1'}, gate: [check]}\n  b: {desc: y}\n",
+      );
+    });
+
+    test('the task map cannot be reordered', () {
+      expect(() => file.tasks.remove('b'), throwsUnsupportedError);
+      expect(() => file.tasks['c'] = file.tasks['a']!, throwsUnsupportedError);
+    });
+
+    test('the set map cannot be reordered', () {
+      expect(() => file.sets.remove('s'), throwsUnsupportedError);
+    });
+
+    test('a parsed list behaves like the default it replaced', () {
+      final task = file.tasks['a']!;
+      expect(() => task.needs.add('c'), throwsUnsupportedError);
+      expect(() => task.args.add('--y'), throwsUnsupportedError);
+      expect(() => task.gate.add('ci'), throwsUnsupportedError);
+      expect(() => task.env['J'] = '2', throwsUnsupportedError);
+      expect(
+        () => (task.body! as RunBody).argv.add('x'),
+        throwsUnsupportedError,
+      );
+      // The default, for comparison: the same answer, which is the point.
+      expect(() => file.tasks['b']!.needs.add('c'), throwsUnsupportedError);
+    });
+  });
+
   group('the document itself', () {
     test('an empty file says so, rather than parsing to nothing', () {
       expect(refusal(() => parseXtaskFile('')), contains('the file is empty'));

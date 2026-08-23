@@ -6,7 +6,14 @@ description: >-
 version: 0.1.0
 
 environment:
-  sdk: ^3.13.0
+  # The floor is the toolchain's, not the code's. This package uses sealed
+  # classes, patterns and class modifiers — Dart 3.0 — while `pro_lints 6.2.0`
+  # requires ^3.12.0, and pub resolves dev dependencies too, so the declared
+  # constraint has to satisfy them. Written down because it is a constraint a
+  # consumer pays for and this package's whole premise is being depended on:
+  # if it ever wants a lower floor, the lint package is the thing to move, and
+  # lowering the number alone silently downgrades the rule set instead.
+  sdk: ^3.12.0
 
 dependencies:
   # §4.2 says globs are expanded by the engine, not by a shell — this is the
