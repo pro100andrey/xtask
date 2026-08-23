@@ -9,8 +9,11 @@ environment:
   sdk: ^3.13.0
 
 dependencies:
-  # `source_span` is direct rather than reached through `yaml`: this package
-  # calls `SourceSpan.message()` itself to build the errors §8 promises, and a
+  # Windows path rules, on a machine that is not Windows: `Context(style:
+  # windows)` is what lets §5.4's resolution be tested rather than asserted.
+  path: ^1.9.1
+  # Direct rather than reached through `yaml`: this package calls
+  # `SourceSpan.message()` itself to build the errors §8 promises, and a
   # transitive dependency you call into is one that can move under you.
   source_span: ^1.10.2
   yaml: ^3.1.3
