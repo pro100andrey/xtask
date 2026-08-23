@@ -164,6 +164,148 @@ tasks: {}
     });
   });
 
+  group('§8: the scan of the raw text, before the parser', () {
+    // It has to be before, and this is the only function that ever holds the
+    // raw text: by the time an XtaskFile exists, package:yaml has expanded
+    // every alias into a copy and there is nothing left to detect.
+    test('an anchor is refused', () {
+      final message = refusal(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n  base: &b {desc: shared}\n',
+        ),
+      );
+      expect(message, contains('anchor'));
+      expect(message, contains('line 3'));
+    });
+
+    test('an alias is refused', () {
+      expect(
+        refusal(
+          () => parseXtaskFile(
+            'version: 1\ntasks:\n  a: {desc: x}\n  third: *b\n',
+          ),
+        ),
+        contains('alias'),
+      );
+    });
+
+    test('without this, an alias silently copies a task body', () {
+      // What the refusal protects. R2 says a task is read completely from its
+      // own keys; an alias means the reader of `third:` has to leave it and go
+      // find `&b`, which is the property R2 is written to protect.
+      final expanded =
+          loadYaml('base: &b {desc: shared}\nthird: *b\n') as YamlMap;
+      expect((expanded['third'] as YamlMap)['desc'], 'shared');
+    });
+
+    test('a merge key is refused as itself, not as an unknown key', () {
+      final message = refusal(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n  b:\n    <<: {desc: y}\n',
+        ),
+      );
+      expect(message, contains('merge key'));
+      // Before this it surfaced as "unknown key in task `b`: `<<`", which
+      // sends the author looking for a typo.
+      expect(message, isNot(contains('unknown')));
+    });
+
+    test('a glob is not an alias, and needs no quoting to survive', () {
+      // The false positive a careless scan would produce. `&` and `*` are
+      // YAML indicators only where a node begins.
+      final file = parseXtaskFile(
+        'version: 1\nsets:\n  s: [packages/*/coverage, a&b]\ntasks: {}\n',
+      );
+      expect((file.sets['s']! as ListSet).members, [
+        'packages/*/coverage',
+        'a&b',
+      ]);
+    });
+
+    test('an ampersand inside a comment or a quoted string is left alone', () {
+      final file = parseXtaskFile(
+        'version: 1\n# a comment with & and * in it\n'
+        "tasks:\n  a: {desc: 'literally &b and *b'}\n",
+      );
+      expect(file.tasks['a']!.desc, 'literally &b and *b');
+    });
+
+    test('a non-breaking space is named, at the character itself', () {
+      final message = refusal(
+        () => parseXtaskFile('version: 1\ntasks:\n\u00a0 a: {desc: x}\n'),
+      );
+      expect(message, contains('U+00A0'));
+      expect(message, contains('not a space'));
+      expect(message, contains('line 3'));
+    });
+
+    test('a stray byte-order mark is caught too', () {
+      expect(
+        refusal(() => parseXtaskFile('version: 1\n\ufefftasks: {}\n')),
+        contains('U+FEFF'),
+      );
+    });
+  });
+
+  group('a refusal points at one line, not at a whole block', () {
+    // `SourceSpan.message` reprints everything its span covers. Handing it a
+    // container answers "which line?" with all of them — on §12's ninety-line
+    // example, the most common first-time error printed the whole file back.
+    int quotedLines(String message) => message
+        .split('\n')
+        .where((l) => RegExp(r'^\s*\d+ .').hasMatch(l))
+        .length;
+
+    test('a missing `version:` does not reprint the file', () {
+      final long =
+          'tasks:\n'
+          '${List.generate(20, (i) => '  t$i: {desc: x}').join('\n')}\n';
+      expect(quotedLines(refusal(() => parseXtaskFile(long))), 1);
+    });
+
+    test('a missing `desc:` points at the task, not at its body', () {
+      final message = refusal(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n  first: {desc: fine}\n  broken:\n'
+          '    run: [dart, analyze]\n    gate: [check]\n    needs: [first]\n',
+        ),
+      );
+      expect(message, contains('line 4'));
+      expect(quotedLines(message), 1);
+    });
+
+    test('a set that is not a list or a glob points at its name', () {
+      expect(
+        refusal(
+          () => parseXtaskFile('version: 1\nsets:\n  s: 3\ntasks: {}\n'),
+        ),
+        contains('line 3'),
+      );
+    });
+  });
+
+  group('the model carries the position it was read from', () {
+    // So that a refusal raised AFTER parsing — an empty set, a cycle, a
+    // dangling name — can still name a line. Dropping the span at the parser
+    // boundary is what makes every later message say "somewhere in the file".
+    test('a task knows its own line', () {
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n  first: {desc: a}\n  second: {desc: b}\n',
+      );
+      expect(file.tasks['first']!.span!.start.line, 2);
+      expect(file.tasks['second']!.span!.start.line, 3);
+    });
+
+    test('a set knows its own line', () {
+      final file = parseXtaskFile(
+        'version: 1\nsets:\n  pkgs: [a]\n  srcs:\n'
+        "    include: ['**/*.lake']\ntasks: {}\n",
+      );
+      expect(file.sets['pkgs']!.span!.start.line, 2);
+      expect(file.sets['srcs']!.span!.start.line, 3);
+    });
+  });
+
   group('version', () {
     test('is required', () {
       expect(
