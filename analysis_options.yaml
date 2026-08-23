@@ -1,0 +1,4 @@
+# The house rule set, the same one pro_mpack, validator and pdf_to_text include.
+# `dart analyze --fatal-infos` is a gate here (CLAUDE.md), so an info is a
+# failure and there is no severity below it to hide in.
+include: package:pro_lints/recommended.yaml
