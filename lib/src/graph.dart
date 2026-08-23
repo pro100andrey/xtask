@@ -63,6 +63,23 @@ final class _Planner {
   /// is both the cycle detector and the thing that can print the cycle.
   final _open = <String>[];
 
+  /// The ring [name] closes, written from a fixed point.
+  ///
+  /// The members are whatever is open from [name] onwards — entering the ring
+  /// at a different task must not name a task that is not in it. Among those,
+  /// it starts at the alphabetically first, because **a ring has no start**:
+  /// printing it from wherever the walk happened to arrive gives the same
+  /// cycle several different spellings, and anything trying to tell one ring
+  /// from another — `--validate` reporting each once rather than once per
+  /// member — would be comparing entry points instead of cycles.
+  List<String> _ring(String name) {
+    final members = _open.skipWhile((n) => n != name).toList();
+    final first = members.reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
+    final at = members.indexOf(first);
+    final rotated = [...members.skip(at), ...members.take(at)];
+    return [...rotated, first];
+  }
+
   void resolve(
     String name, {
     required bool isContinuation,
@@ -87,10 +104,9 @@ final class _Planner {
       // is issued, below. §5.1 makes this a validation error and asks for the
       // cycle itself, because "there is a cycle" leaves the reader to find it
       // in a file that just proved it is hard to read.
-      final cycle = [..._open.skipWhile((n) => n != name), name];
       throw XtaskFormatException(
         'these tasks need each other, so none of them can go first: '
-        '${cycle.join(' → ')}',
+        '${_ring(name).join(' → ')}',
         task.span,
       );
     }
