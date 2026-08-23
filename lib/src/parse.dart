@@ -45,8 +45,11 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
 
   return XtaskFile(
     version: version,
-    sets: _sets(root),
-    tasks: _tasks(root),
+    // Unmodifiable, and §4.3 is why for `tasks`: its ORDER is load-bearing —
+    // a `collects:` composite runs its members in the order they appear — and
+    // a map anybody downstream can reorder is an order nobody can rely on.
+    sets: Map.unmodifiable(_sets(root)),
+    tasks: Map.unmodifiable(_tasks(root)),
   );
 }
 
@@ -165,23 +168,32 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
   return Task(
     name: name,
     span: keySpan,
-    desc: _string(desc, '`desc:` of task `$name`'),
+    desc: _description(desc, name),
     body: _body(map, name),
-    args: _optionalStringList(map, 'args', name),
+    args: List.unmodifiable(_optionalStringList(map, 'args', name)),
     argvFrom: _optionalString(map, 'argv-from', name),
     each: _optionalString(map, 'each', name),
     workingDirectory: _optionalString(map, 'in', name),
-    env: _env(map, name),
-    envRequired: _optionalStringList(map, 'env-required', name),
-    needs: _optionalStringList(map, 'needs', name),
-    then: _optionalStringList(map, 'then', name),
-    gate: _optionalStringList(map, 'gate', name),
+    env: Map.unmodifiable(_env(map, name)),
+    envRequired: List.unmodifiable(
+      _optionalStringList(map, 'env-required', name),
+    ),
+    needs: _names(map, 'needs', name),
+    then: _names(map, 'then', name),
+    gate: _names(map, 'gate', name),
     collects: _optionalString(map, 'collects', name),
   );
 }
 
 Body? _body(YamlMap map, String taskName) {
-  final declared = bodyKeys.where(map.nodes.containsKey).toList();
+  // In the order they appear in the FILE, not in the order `bodyKeys` happens
+  // to list them: the message names them and the caret points at one of them,
+  // and the two saying different things is a message that argues with itself.
+  final declared = [
+    for (final key in _keyNodes(map))
+      if (key.value is String && bodyKeys.contains(key.value))
+        key.value as String,
+  ];
   if (declared.length > 1) {
     throw XtaskFormatException(
       'task `$taskName` declares two bodies, `${declared[0]}:` and '
@@ -196,7 +208,13 @@ Body? _body(YamlMap map, String taskName) {
   final key = declared.single;
   final node = map.nodes[key]!;
   if (key == 'do') {
-    return DoBody(_string(node, '`do:` of task `$taskName`'));
+    return DoBody(
+      _nonEmpty(
+        _string(node, '`do:` of task `$taskName`'),
+        node,
+        'a verb name',
+      ),
+    );
   }
 
   final argv = _stringList(node, '`run:` of task `$taskName`');
@@ -207,7 +225,55 @@ Body? _body(YamlMap map, String taskName) {
       node.span,
     );
   }
-  return RunBody(argv);
+  // Only the first. An empty ARGUMENT is ordinary — `dart test --name ''` —
+  // but an empty executable resolves to nothing and would surface as a missing
+  // tool (code 3) when the defect is in the file (code 2).
+  _nonEmpty(argv.first, node, 'the executable of `run:`');
+  return RunBody(List.unmodifiable(argv));
+}
+
+/// `desc:` — required, and one line (§4.3).
+String _description(YamlNode node, String taskName) {
+  final desc = _nonEmpty(
+    _string(node, '`desc:` of task `$taskName`'),
+    node,
+    '`desc:` of task `$taskName`',
+  );
+  if (desc.contains('\n')) {
+    throw XtaskFormatException(
+      '`desc:` of task `$taskName` runs to more than one line. It is what '
+      '`--list` prints beside the task name, so it is one line by contract, '
+      'not by convention',
+      node.span,
+    );
+  }
+  return desc;
+}
+
+/// A list of names, each of which has to name something.
+List<String> _names(YamlMap map, String key, String taskName) {
+  final node = map.nodes[key];
+  if (node == null) {
+    return const [];
+  }
+  final values = _stringList(node, '`$key:` of task `$taskName`');
+  for (final value in values) {
+    _nonEmpty(value, node, 'an entry of `$key:` in task `$taskName`');
+  }
+  return List.unmodifiable(values);
+}
+
+/// [value], or a refusal naming [what].
+///
+/// An empty string parses fine and means nothing, so without this a file
+/// defect travels on as a runtime one: an empty verb name reaches the registry
+/// as "no such verb", an empty executable reaches §5.4 as a missing tool
+/// (code 3) when the file was wrong (code 2).
+String _nonEmpty(String value, YamlNode node, String what) {
+  if (value.trim().isNotEmpty) {
+    return value;
+  }
+  throw XtaskFormatException('$what is empty', node.span);
 }
 
 Map<String, String> _env(YamlMap map, String taskName) {

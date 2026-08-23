@@ -67,7 +67,7 @@ final class XtaskFile {
   /// carrying the number forward for somebody downstream to check.
   final int version;
 
-  /// Named sets, in declaration order.
+  /// Named sets, in declaration order. Unmodifiable — see [tasks].
   final Map<String, NamedSet> sets;
 
   /// Named tasks, **in declaration order**, which is load-bearing: §4.3 makes
@@ -75,6 +75,13 @@ final class XtaskFile {
   /// file, so that cheap gates come before slow ones. Dart's default map
   /// preserves insertion order and the parser inserts in document order; the
   /// YAML specification does not promise this, so a test pins it.
+  ///
+  /// **Unmodifiable, and that follows from the sentence above.** An order that
+  /// is load-bearing and a map anybody can reorder do not go together. The
+  /// same applies to every collection on [Task]: the `const []` defaults throw
+  /// on mutation, so a parsed value that quietly accepted one would make the
+  /// type behave two different ways depending on what the file happened to
+  /// say.
   final Map<String, Task> tasks;
 }
 
