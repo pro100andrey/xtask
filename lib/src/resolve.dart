@@ -11,26 +11,25 @@ import 'package:path/path.dart' as p;
 /// not run on the platform its portability argument was made for.
 ///
 /// Everything the answer depends on is injected — the environment, whether
-/// this is Windows, and whether a file exists. Not for purity: the Windows
-/// branch is the one that matters and the machines this is written on are not
-/// Windows, so a version reading `Platform.isWindows` directly would ship its
-/// most important rule untested. That is how the reference this was ported
-/// from, `resolveOnPath()` in Lake's `step_runner.dart`, has to be read as
-/// well: right, and unprovable away from the platform it is about.
+/// this is Windows, and whether a path names something startable. Not for
+/// purity: the Windows branch is the one that matters and the machines this is
+/// written on are not Windows, so a version reading `Platform.isWindows`
+/// directly would ship its most important rule untested. That is how the
+/// reference this was ported from, `resolveOnPath()` in Lake's
+/// `step_runner.dart`, has to be read as well: right, and unprovable away from
+/// the platform it is about.
 final class ExecutableResolver {
   ExecutableResolver({
     required this.environment,
     required this.windows,
-    required this.exists,
-  }) : _paths = p.Context(
-         style: windows ? p.Style.windows : p.Style.posix,
-       );
+    required this.isRunnable,
+  }) : _paths = p.Context(style: windows ? p.Style.windows : p.Style.posix);
 
   /// The resolver for the machine this process is running on.
   factory ExecutableResolver.forHost() => ExecutableResolver(
     environment: Platform.environment,
     windows: Platform.isWindows,
-    exists: (path) => File(path).existsSync(),
+    isRunnable: Platform.isWindows ? _existsOnWindows : _executableOnPosix,
   );
 
   /// Where `PATH` and `PATHEXT` are read from.
@@ -40,19 +39,34 @@ final class ExecutableResolver {
   /// bare name that may match `dart.bat`.
   final bool windows;
 
-  /// Whether a file is there. Injected so the Windows cases can be tested at
-  /// all: they are about paths that do not exist on the machine running them.
-  final bool Function(String path) exists;
+  /// Whether this path names something that could actually be started.
+  ///
+  /// **Not "does a file exist".** `execvp` and `which` skip a file without an
+  /// execute bit and keep walking `PATH`; a resolver that stops at the first
+  /// name-match hands back a stale non-executable `/usr/local/bin/dart` and
+  /// never reaches the real toolchain further along. The caller then gets a
+  /// `ProcessException: Permission denied`, which is exit 1 territory — while
+  /// §5.3 gives the missing-tool case code 3 precisely so that "not installed"
+  /// and "the code is broken" reach different people.
+  ///
+  /// Injected so the Windows cases can be tested at all: they are about paths
+  /// that do not exist on the machine running them.
+  final bool Function(String path) isRunnable;
 
   final p.Context _paths;
 
-  /// The default `PATHEXT`, used when the machine does not set one. Windows
-  /// itself has more entries; these are the ones that make a program start.
+  /// The default `PATHEXT`, used when the machine does not set a usable one.
   static const defaultPathExt = '.COM;.EXE;.BAT;.CMD';
 
-  /// The extensions a batch shim has. Starting one is not starting a program
-  /// (§5.4, rule 3).
-  static const shimExtensions = {'.bat', '.cmd'};
+  /// What Windows can hand to `CreateProcess` directly.
+  ///
+  /// The complement, not a list of shims, and that is the fix for a real bug:
+  /// a closed `{.bat, .cmd}` was checked against an **open** `PATHEXT`, so a
+  /// stock machine's `.VBS`, `.JS`, `.WSF` or `.MSC` resolved as executables
+  /// and were then told they could be started directly. `CreateProcess` can no
+  /// more start a `.ps1` than a `.bat`. Everything that is not one of these
+  /// goes through the shell.
+  static const directlyStartable = {'.exe', '.com'};
 
   /// Where [executable] is, or null when nothing on `PATH` answers to it.
   ///
@@ -75,17 +89,16 @@ final class ExecutableResolver {
     // author said where it is, and searching `PATH` for it would be
     // second-guessing a statement of fact.
     if (_paths.split(executable).length > 1) {
-      return exists(executable) ? executable : null;
+      return isRunnable(executable) ? executable : null;
     }
 
-    // Both lists are read once. They are getters over the environment, and
-    // leaving `_suffixes` inside the loop re-split `PATHEXT` for every
-    // directory on `PATH`.
-    final suffixes = _suffixes;
+    // Read once. They are getters over the environment, and leaving them
+    // inside the loop re-split `PATHEXT` for every directory on `PATH`.
+    final suffixes = _suffixesFor(executable);
     for (final directory in _searchPath) {
       for (final suffix in suffixes) {
         final candidate = _paths.join(directory, '$executable$suffix');
-        if (exists(candidate)) {
+        if (isRunnable(candidate)) {
           return candidate;
         }
       }
@@ -95,23 +108,21 @@ final class ExecutableResolver {
 
   /// Whether starting [resolvedPath] has to go through the system shell.
   ///
-  /// True only for a Windows batch shim. `dart`, `flutter` and everything
-  /// `dart pub global activate` installs are `.bat`/`.cmd` files there, and
-  /// `CreateProcess` will not start one: the shell is what knows how. Dart's
-  /// own documentation warns that such a file **may be launched by the OS in a
-  /// system shell regardless of the caller's intent**, and that its arguments
-  /// are then parsed by shell rules — so a caller that gets this answer owes
-  /// its arguments an escaping pass, which is an obligation and not a
-  /// precaution.
+  /// True on Windows for anything that is not [directlyStartable]. `dart`,
+  /// `flutter` and everything `dart pub global activate` installs are
+  /// `.bat`/`.cmd` files there, and `CreateProcess` will not start one: the
+  /// shell is what knows how. Dart's own documentation warns that such a file
+  /// **may be launched by the OS in a system shell regardless of the caller's
+  /// intent**, and that its arguments are then parsed by shell rules — so a
+  /// caller that gets this answer owes its arguments an escaping pass, which
+  /// is an obligation and not a precaution.
   ///
   /// Compared in lower case, and that is not tidiness. `PATHEXT` is spelled in
-  /// capitals by convention, so [resolve] hands back `dart.BAT`; matching it
-  /// against a lower-case set answers false for the exact file this method
-  /// exists to recognise, and the shim then fails to start with nothing
-  /// pointing at why.
+  /// capitals, so [resolve] hands back `dart.BAT`; a case-sensitive match
+  /// answers wrongly for the exact file this method exists to recognise.
   bool needsShell(String resolvedPath) =>
       windows &&
-      shimExtensions.contains(_paths.extension(resolvedPath).toLowerCase());
+      !directlyStartable.contains(_paths.extension(resolvedPath).toLowerCase());
 
   /// What to tell somebody whose machine cannot start [executable].
   ///
@@ -119,11 +130,12 @@ final class ExecutableResolver {
   /// tool, or put the directory it is already in on `PATH`.
   String missingToolMessage(String executable) {
     final where = _paths.split(executable).length > 1
-        ? 'no file at `$executable`'
-        : 'nothing by that name in the '
+        ? 'no file at `$executable`, or it is not executable'
+        : 'nothing runnable by that name in the '
               '${_searchPath.length} directories on PATH';
-    final suffixes = windows
-        ? ', with any of ${_suffixes.where((s) => s.isNotEmpty).join(', ')}'
+    final tried = _suffixesFor(executable).where((s) => s.isNotEmpty);
+    final suffixes = windows && tried.isNotEmpty
+        ? ', with any of ${tried.join(', ')}'
         : '';
     return '`$executable` is not installed, or is not on PATH — $where'
         '$suffixes';
@@ -134,19 +146,32 @@ final class ExecutableResolver {
       if (directory.isNotEmpty) directory,
   ];
 
-  List<String> get _suffixes {
+  /// The suffixes to try for [executable], in order.
+  List<String> _suffixesFor(String executable) {
     if (!windows) {
       return const [''];
     }
-    // The empty suffix first, so a name written WITH an extension resolves to
-    // itself rather than to `foo.exe.COM`. The reference this was ported from
-    // omits this and would miss `run: [something.exe, ...]`.
-    return [
-      '',
-      ...(_lookup('PATHEXT') ?? defaultPathExt)
-          .split(';')
-          .where((s) => s.isNotEmpty),
-    ];
+
+    // **Only when the name already carries an extension.** cmd.exe tries a
+    // bare name with the `PATHEXT` entries and with nothing else; trying the
+    // empty suffix first regardless is how `flutter` loses to `flutter.bat`.
+    // The Flutter SDK ships both in `bin\` — a POSIX `sh` script beside the
+    // batch shim — and nodejs ships `npm` beside `npm.cmd`, so this misses on
+    // exactly the two tools §5.4 names as the reason it exists. What comes
+    // back then is a shell script with no PE header, reported as
+    // ERROR_BAD_EXE_FORMAT rather than as anything §5.4 explains.
+    final named = _paths.extension(executable).isNotEmpty ? [''] : <String>[];
+
+    // An empty `PATHEXT` is not an absent one to `??`, but it is to Windows,
+    // which falls back to its default. Without this, `PATHEXT=` collapses the
+    // list to the bare name and `dart` is reported missing with `dart.bat`
+    // sitting right there — code 3, "not installed", for an installed tool.
+    final configured = _lookup('PATHEXT');
+    final pathExt = (configured == null || configured.trim().isEmpty)
+        ? defaultPathExt
+        : configured;
+
+    return [...named, ...pathExt.split(';').where((s) => s.isNotEmpty)];
   }
 
   /// Windows environment variable names are case-insensitive, and the real
@@ -166,3 +191,20 @@ final class ExecutableResolver {
     return null;
   }
 }
+
+/// A file with an execute bit, on a platform that has them.
+bool _executableOnPosix(String path) {
+  final stat = FileStat.statSync(path);
+  if (stat.type != FileSystemEntityType.file) {
+    return false;
+  }
+  // Any of owner, group or other — `which` does not ask whose bit it is
+  // either, and asking would need the process's own uid and groups.
+  return stat.mode & 0x49 != 0;
+}
+
+/// On Windows the execute bit does not exist; what makes a file startable is
+/// its extension, and [ExecutableResolver._suffixesFor] has already decided
+/// that before this is asked.
+bool _existsOnWindows(String path) =>
+    FileStat.statSync(path).type == FileSystemEntityType.file;

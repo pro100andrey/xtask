@@ -6,6 +6,8 @@
 /// run is `graph`'s.
 library;
 
+import 'package:source_span/source_span.dart';
+
 /// Every key a task may carry (§4.3).
 ///
 /// **This is the only list of them.** §8 refuses an unknown task key, and the
@@ -39,6 +41,20 @@ const bodyKeys = <String>{'run', 'do'};
 /// never a best-effort read (§4.1).
 const supportedVersion = 1;
 
+/// Something read out of the file, which therefore has a place in it.
+///
+/// **The span travels with the value, and that is the whole point.** §8
+/// promises that a refusal says which line to look at, but a refusal is not
+/// only raised while parsing: a set that expands to nothing, a cycle, a
+/// dangling name — each is found after the document has become these types,
+/// and each has to name a line. Dropping the span at the parser boundary is
+/// what makes every later message say "somewhere in your file".
+mixin Located {
+  /// Where this was written — the key that names it, not the block it owns,
+  /// so a message points at one line rather than reprinting a whole task.
+  SourceSpan? get span;
+}
+
 /// A parsed `xtask.yaml`.
 final class XtaskFile {
   const XtaskFile({
@@ -63,13 +79,16 @@ final class XtaskFile {
 }
 
 /// A set is either a plain list or a glob with exclusions (§4.2).
-sealed class NamedSet {
-  const NamedSet();
+sealed class NamedSet with Located {
+  const NamedSet({this.span});
+
+  @override
+  final SourceSpan? span;
 }
 
 /// Members written out one by one.
 final class ListSet extends NamedSet {
-  const ListSet(this.members);
+  const ListSet(this.members, {super.span});
 
   final List<String> members;
 }
@@ -77,7 +96,7 @@ final class ListSet extends NamedSet {
 /// Members found on disk. Expansion — and the rule that an expansion matching
 /// nothing is an error — belongs to the `sets` slice, not here.
 final class GlobSet extends NamedSet {
-  const GlobSet({required this.include, required this.exclude});
+  const GlobSet({required this.include, required this.exclude, super.span});
 
   final List<String> include;
   final List<String> exclude;
@@ -104,10 +123,11 @@ final class DoBody extends Body {
 }
 
 /// One node of the task graph (§4.3).
-final class Task {
+final class Task with Located {
   const Task({
     required this.name,
     required this.desc,
+    this.span,
     this.body,
     this.args = const [],
     this.argvFrom,
@@ -120,6 +140,9 @@ final class Task {
     this.gate = const [],
     this.collects,
   });
+
+  @override
+  final SourceSpan? span;
 
   /// The key this task was written under.
   final String name;

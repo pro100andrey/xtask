@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/resolve.dart';
 
@@ -16,20 +17,25 @@ import 'package:xtask/src/resolve.dart';
 ExecutableResolver resolver({
   required bool windows,
   required Map<String, String> environment,
-  required Set<String> files,
+  required Set<String> runnable,
 }) {
-  final present = windows ? files.map((f) => f.toLowerCase()).toSet() : files;
+  final present = windows
+      ? runnable.map((f) => f.toLowerCase()).toSet()
+      : runnable;
   return ExecutableResolver(
     environment: environment,
     windows: windows,
-    exists: (path) => present.contains(windows ? path.toLowerCase() : path),
+    isRunnable: (path) => present.contains(windows ? path.toLowerCase() : path),
   );
 }
 
 void main() {
   group('POSIX', () {
-    ExecutableResolver withPath(String path, Set<String> files) =>
-        resolver(windows: false, environment: {'PATH': path}, files: files);
+    ExecutableResolver withPath(String path, Set<String> runnable) => resolver(
+      windows: false,
+      environment: {'PATH': path},
+      runnable: runnable,
+    );
 
     test('finds a bare name in the first directory that has it', () {
       final r = withPath('/a:/b', {'/b/dart', '/a/other'});
@@ -46,18 +52,25 @@ void main() {
     });
 
     test('skips empty PATH entries rather than searching the root', () {
-      // A trailing colon is common and means "and the current directory" to
-      // some shells. Searching '' would join to a bare relative name.
-      final r = withPath('/a::', {'dart'});
-      expect(r.resolve('dart'), isNull);
+      expect(withPath('/a::', {'dart'}).resolve('dart'), isNull);
     });
 
     test('never appends a suffix', () {
       expect(withPath('/a', {'/a/dart.exe'}).resolve('dart'), isNull);
     });
 
-    test('an empty name resolves to nothing', () {
-      expect(withPath('/a', {'/a/'}).resolve(''), isNull);
+    test('walks past a name-match that cannot be started', () {
+      // The whole reason the predicate asks about runnability rather than
+      // existence. `execvp` and `which` skip a file with no execute bit and
+      // keep going; stopping there hands back a stale wrapper and never
+      // reaches the toolchain further along, then fails as `Permission
+      // denied` — exit 1, where §5.3 wanted 3 or a working program.
+      final r = ExecutableResolver(
+        environment: const {'PATH': '/stale:/real'},
+        windows: false,
+        isRunnable: (path) => path == '/real/dart',
+      );
+      expect(r.resolve('dart'), '/real/dart');
     });
   });
 
@@ -66,7 +79,7 @@ void main() {
       final r = resolver(
         windows: false,
         environment: {'PATH': '/a'},
-        files: {'./tool/gen', '/a/gen'},
+        runnable: {'./tool/gen', '/a/gen'},
       );
       expect(r.resolve('./tool/gen'), './tool/gen');
     });
@@ -77,7 +90,7 @@ void main() {
       final r = resolver(
         windows: false,
         environment: {'PATH': '/a'},
-        files: {'/a/gen'},
+        runnable: {'/a/gen'},
       );
       expect(r.resolve('./tool/gen'), isNull);
     });
@@ -86,7 +99,7 @@ void main() {
       final r = resolver(
         windows: true,
         environment: {'PATH': r'C:\bin'},
-        files: {r'tool\gen.bat'},
+        runnable: {r'tool\gen.bat'},
       );
       expect(r.resolve(r'tool\gen.bat'), r'tool\gen.bat');
     });
@@ -94,17 +107,15 @@ void main() {
 
   group('Windows', () {
     ExecutableResolver windowsWith(
-      Set<String> files, {
+      Set<String> runnable, {
       Map<String, String>? environment,
     }) => resolver(
       windows: true,
       environment: environment ?? {'PATH': r'C:\bin;C:\sdk'},
-      files: files,
+      runnable: runnable,
     );
 
     test('a bare name matches a batch shim — the case that broke §5.2', () {
-      // `run: [dart, analyze]`, the very first example in xtask.md, with no
-      // dart.exe anywhere: on Windows `dart` is `dart.bat`.
       final r = windowsWith({r'C:\sdk\dart.bat'});
       // `.BAT`, not `.bat`: the suffix comes from PATHEXT, not from disk.
       expect(r.resolve('dart'), r'C:\sdk\dart.BAT');
@@ -134,11 +145,22 @@ void main() {
     test('falls back to the documented default when PATHEXT is unset', () {
       final r = windowsWith(
         {r'C:\bin\tool.CMD'},
-        environment: {
-          'PATH': r'C:\bin',
-        },
+        environment: {'PATH': r'C:\bin'},
       );
       expect(r.resolve('tool'), r'C:\bin\tool.CMD');
+    });
+
+    test('an EMPTY PATHEXT also means the default, as it does to Windows', () {
+      // `??` reads only null as absent. An empty string is not null, so
+      // without this the suffix list collapses to the bare name and `dart` is
+      // reported not installed with `dart.bat` sitting right there — exit 3,
+      // "not installed", for a tool that is present. A CI image, or a
+      // Process.start forwarding PATH but not PATHEXT, reproduces it.
+      final r = windowsWith(
+        {r'C:\bin\dart.bat'},
+        environment: {'PATH': r'C:\bin', 'PATHEXT': ''},
+      );
+      expect(r.resolve('dart'), r'C:\bin\dart.BAT');
     });
 
     test('tries PATHEXT in the order the machine gives', () {
@@ -150,16 +172,12 @@ void main() {
     });
 
     test("the answer carries PATHEXT's spelling, not the disk's", () {
-      // Stated as its own case because it is observable: --dry-run prints
-      // resolved command lines (§7), and this is what appears there. It is
-      // harmless — NTFS does not care — but somebody will read it and wonder,
-      // and a surprise nobody wrote down is a bug report waiting to happen.
+      // Observable: --dry-run prints resolved command lines (§7), and this is
+      // what appears there. Harmless — NTFS does not care — but a surprise
+      // nobody wrote down is a bug report waiting to happen.
       final r = windowsWith(
         {r'C:\bin\tool.bat'},
-        environment: {
-          'PATH': r'C:\bin',
-          'PATHEXT': '.BAT',
-        },
+        environment: {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
       );
       expect(r.resolve('tool'), r'C:\bin\tool.BAT');
     });
@@ -171,10 +189,21 @@ void main() {
       expect(r.resolve('tool.exe'), r'C:\bin\tool.exe');
     });
 
+    test('a bare name does NOT match an extensionless file beside a shim', () {
+      // The Flutter SDK ships `bin\flutter` (a POSIX sh script) beside
+      // `bin\flutter.bat`; nodejs ships `npm` beside `npm.cmd`. Trying the
+      // empty suffix first hands back the sh script, `needsShell` then says
+      // false, and CreateProcess answers ERROR_BAD_EXE_FORMAT — on exactly the
+      // two tools §5.4 names as the reason it exists. cmd.exe's rule is that a
+      // name carrying no extension is tried only with PATHEXT entries.
+      final r = windowsWith(
+        {r'C:\src\flutter\bin\flutter', r'C:\src\flutter\bin\flutter.bat'},
+        environment: {'PATH': r'C:\src\flutter\bin'},
+      );
+      expect(r.resolve('flutter'), r'C:\src\flutter\bin\flutter.BAT');
+    });
+
     test('reads `Path`, which is how Windows actually spells it', () {
-      // `Platform.environment` hides the case on Windows; an injected map does
-      // not, and a rule that works on the machine but not in its test is worse
-      // than either.
       final r = windowsWith(
         {r'C:\bin\dart.bat'},
         environment: {'Path': r'C:\bin'},
@@ -184,19 +213,45 @@ void main() {
   });
 
   group('needsShell', () {
-    test('a batch shim on Windows does', () {
-      final r = resolver(windows: true, environment: {}, files: {});
+    ExecutableResolver on({required bool windows}) =>
+        resolver(windows: windows, environment: {}, runnable: {});
+
+    test('only .exe and .com start directly on Windows', () {
+      final r = on(windows: true);
+      expect(r.needsShell(r'C:\sdk\dart.exe'), isFalse);
+      expect(r.needsShell(r'C:\sdk\dart.COM'), isFalse);
+    });
+
+    test('a batch shim does not', () {
+      final r = on(windows: true);
       expect(r.needsShell(r'C:\sdk\dart.bat'), isTrue);
       expect(r.needsShell(r'C:\sdk\dart.CMD'), isTrue);
     });
 
-    test('a real executable on Windows does not', () {
-      final r = resolver(windows: true, environment: {}, files: {});
-      expect(r.needsShell(r'C:\sdk\dart.exe'), isFalse);
+    test('nor does anything else a stock PATHEXT admits', () {
+      // A stock PATHEXT holds .VBS .VBE .JS .JSE .WSF .WSH .MSC, and this
+      // suite itself pins that `.PS1` resolves. CreateProcess can no more
+      // start a `.ps1` than a `.bat`: it needs `powershell -File`, as `.vbs`
+      // needs `wscript`. Answering false for those was a closed set of shims
+      // checked against an open PATHEXT.
+      final r = on(windows: true);
+      for (final path in [
+        r'C:\bin\tool.ps1',
+        r'C:\bin\tool.VBS',
+        r'C:\bin\tool.js',
+        r'C:\bin\tool.WSF',
+        r'C:\bin\tool.msc',
+      ]) {
+        expect(r.needsShell(path), isTrue, reason: path);
+      }
+    });
+
+    test('an extensionless program on Windows still goes through a shell', () {
+      expect(on(windows: true).needsShell(r'C:\bin\tool'), isTrue);
     });
 
     test('nothing on POSIX does — there are no shims to accommodate', () {
-      final r = resolver(windows: false, environment: {}, files: {});
+      final r = on(windows: false);
       expect(r.needsShell('/usr/bin/dart'), isFalse);
       expect(r.needsShell('/usr/bin/dart.bat'), isFalse);
     });
@@ -207,7 +262,7 @@ void main() {
       final r = resolver(
         windows: false,
         environment: {'PATH': '/a:/b:/c'},
-        files: {},
+        runnable: {},
       );
       final message = r.missingToolMessage('dart');
       expect(message, contains('`dart`'));
@@ -218,16 +273,28 @@ void main() {
       final r = resolver(
         windows: true,
         environment: {'PATH': r'C:\bin', 'PATHEXT': '.EXE;.BAT'},
-        files: {},
+        runnable: {},
       );
       expect(r.missingToolMessage('dart'), contains('.EXE, .BAT'));
+    });
+
+    test('and does not trail off when PATHEXT is empty', () {
+      // It used to end mid-clause: "... on PATH, with any of ".
+      final r = resolver(
+        windows: true,
+        environment: {'PATH': r'C:\bin', 'PATHEXT': ''},
+        runnable: {},
+      );
+      final message = r.missingToolMessage('dart');
+      expect(message, isNot(endsWith('with any of ')));
+      expect(message, contains('.BAT'));
     });
 
     test('a path that is not there says so, without mentioning PATH', () {
       final r = resolver(
         windows: false,
         environment: {'PATH': '/a'},
-        files: {},
+        runnable: {},
       );
       final message = r.missingToolMessage('./tool/gen');
       expect(message, contains('no file at `./tool/gen`'));
@@ -235,18 +302,60 @@ void main() {
     });
   });
 
-  group('the host resolver', () {
-    test('finds the Dart running this test', () {
-      // The one case the seam cannot cover: that the injected rules and the
-      // real machine agree. `Platform.resolvedExecutable` is a program known
-      // to exist, so a null here means the host wiring is wrong.
-      final dart = File(Platform.resolvedExecutable);
-      expect(ExecutableResolver.forHost().resolve(dart.path), dart.path);
+  group('the host resolver, against the real machine', () {
+    // The review found the previous version of this group vacuous: it stayed
+    // green with `environment: const {}` or with `windows: true` on macOS,
+    // because every case hit either the already-a-path branch or a null
+    // answer. These walk a real PATH, so the wiring is actually exercised.
+    late Directory dir;
+
+    setUp(() => dir = Directory.systemTemp.createTempSync('xtask_resolve_'));
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    void write(String name, {required bool executable}) {
+      final file = File(p.join(dir.path, name))
+        ..writeAsStringSync('#!/bin/sh\nexit 0\n');
+      if (executable) {
+        Process.runSync('chmod', ['+x', file.path]);
+      }
+    }
+
+    ExecutableResolver hostWithPath() => ExecutableResolver(
+      environment: {...Platform.environment, 'PATH': dir.path},
+      windows: Platform.isWindows,
+      isRunnable: ExecutableResolver.forHost().isRunnable,
+    );
+
+    test('finds a real executable by bare name on a real PATH', () {
+      write('xtask-probe', executable: true);
+      expect(
+        hostWithPath().resolve('xtask-probe'),
+        p.join(dir.path, 'xtask-probe'),
+      );
+    });
+
+    test('skips a real file that is not executable', () {
+      // The failure this is about, on an actual filesystem rather than a fake
+      // one: a stale non-executable wrapper is not a program.
+      write('xtask-probe', executable: false);
+      expect(hostWithPath().resolve('xtask-probe'), isNull);
+    });
+
+    test('a directory on PATH is not a program', () {
+      Directory(p.join(dir.path, 'xtask-probe')).createSync();
+      expect(hostWithPath().resolve('xtask-probe'), isNull);
+    });
+
+    test('finds the Dart running this test, given as a path', () {
+      final dart = Platform.resolvedExecutable;
+      expect(ExecutableResolver.forHost().resolve(dart), dart);
     });
 
     test('does not find a name nothing answers to', () {
-      final r = ExecutableResolver.forHost();
-      expect(r.resolve('xtask-no-such-program-4f3a9'), isNull);
+      expect(
+        ExecutableResolver.forHost().resolve('xtask-no-such-program-4f3a9'),
+        isNull,
+      );
     });
-  });
+  }, skip: Platform.isWindows ? 'these pin POSIX execute bits' : null);
 }
