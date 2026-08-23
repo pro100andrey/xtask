@@ -6,9 +6,11 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'context.dart';
+import 'errors.dart';
 import 'exit_codes.dart';
 import 'graph.dart';
 import 'model.dart';
+import 'reporting.dart';
 import 'resolve.dart';
 import 'sets.dart';
 
@@ -120,6 +122,7 @@ final class Executor {
     this.verbs = const {},
     this.environment = const {},
     this.dryRun,
+    this.markers = const PlainMarkers(),
   }) : _sets = SetExpander(root: root);
 
   final XtaskFile file;
@@ -152,6 +155,16 @@ final class Executor {
   /// second walk over the file: see [Resolved].
   final void Function(Resolved body)? dryRun;
 
+  /// How this host wants a section of output marked (§7.1).
+  ///
+  /// **The engine owns the boundaries, which is why they are here.** A task is
+  /// a collapsible section only if something knows where it starts and ends,
+  /// and the bodies do not: they write to an inherited stdout and know nothing
+  /// about each other. Defaulting to [PlainMarkers] rather than detecting is
+  /// deliberate — detection is `LogMarkers.forHost`, and a class that reached
+  /// for the ambient environment itself could not be tested for either host.
+  final LogMarkers markers;
+
   final SetExpander _sets;
 
   /// Runs every step, and answers with the code §5.3 gives the outcome.
@@ -160,7 +173,11 @@ final class Executor {
       try {
         await _runTask(step.task);
       } on RunFailure catch (failure) {
-        log(failure.message);
+        // Closes the open section and annotates, in that order and for that
+        // reason: an `::error::` inside a group is folded away with it, so
+        // the one line somebody needs would be the one they have to expand a
+        // section to reach.
+        markers.error(failure.message).forEach(log);
         if (step.isContinuation) {
           // **Always 4, whatever went wrong inside it.** The distinction the
           // code carries is not what failed but WHERE: the body already
@@ -177,6 +194,26 @@ final class Executor {
   }
 
   Future<void> _runTask(Task task) async {
+    // **A section per task, opened before anything that can fail inside it.**
+    // §7.1 rests on this: a CI job is one invocation, and what keeps that no
+    // worse than a step per task is that each task folds and the failing one
+    // is annotated. It is closed here on success and by `markers.error` on
+    // failure — never twice, which is what the ordering inside
+    // [GitHubMarkers.error] is for.
+    //
+    // A dry run has no sections. It performs nothing, so there is no output
+    // to fold, and its own report is already the plan.
+    final sections = dryRun == null;
+    if (sections) {
+      markers.open(task.name).forEach(log);
+    }
+    await _runTaskBody(task);
+    if (sections) {
+      markers.close().forEach(log);
+    }
+  }
+
+  Future<void> _runTaskBody(Task task) async {
     // Before the body, and that is the whole value of the key: it turns "a
     // browser test failed somewhere inside" into "task `web-e2e` requires
     // CHROMEDRIVER, which is not set" (§7.1). The engine installs nothing.
@@ -202,7 +239,7 @@ final class Executor {
 
     final members = task.each == null
         ? const <String?>[null]
-        : _sets.expand(task.each!, _set(task, task.each!));
+        : _expand(task, task.each!);
 
     for (final member in members) {
       await _runBody(task, body, member);
@@ -246,8 +283,7 @@ final class Executor {
     final where = _workingDirectory(task, member);
     final args = List<String>.unmodifiable([
       ...task.args,
-      if (task.argvFrom != null)
-        ..._sets.expand(task.argvFrom!, _set(task, task.argvFrom!)),
+      if (task.argvFrom != null) ..._expand(task, task.argvFrom!),
     ]);
     final env = Map<String, String>.unmodifiable({
       ...environment,
@@ -314,7 +350,14 @@ final class Executor {
         );
 
       case ResolvedProcess(:final executable, :final runInShell):
-        log('${body.task.name}: ${[executable, ...body.arguments].join(' ')}');
+        // The member is named here for the same reason §5.2 names it in a
+        // failure: six identical lines from one `each:` over six packages is
+        // a log that makes somebody run all six again to find out which.
+        final member = body.member;
+        log(
+          '${body.task.name}${member == null ? '' : ' [$member]'}: '
+          '${[executable, ...body.arguments].join(' ')}',
+        );
         return starter.start(
           executable,
           body.arguments,
@@ -391,6 +434,25 @@ final class Executor {
     return p.join(root, written);
   }
 
+  /// The members of set [name], as a failure of [task] when there are none.
+  ///
+  /// **Rewrapped rather than let through.** A set that expands to nothing is
+  /// an [XtaskFormatException] — the right type for `--validate`, which is
+  /// where §4.2 expects it to be caught. Reaching a RUN, it used to escape
+  /// `run` altogether: past the exit code, and past the section markers, so a
+  /// group opened for the task was never closed and everything after it on
+  /// GitHub was folded into a task that had already stopped.
+  List<String> _expand(Task task, String name) {
+    try {
+      return _sets.expand(name, _set(task, name));
+    } on XtaskFormatException catch (problem) {
+      throw RunFailure(
+        ExitCode.invalidFile,
+        'task `${task.name}` cannot run:\n$problem',
+      );
+    }
+  }
+
   NamedSet _set(Task task, String name) {
     final set = file.sets[name];
     if (set == null) {
@@ -415,6 +477,14 @@ final class SystemProcessStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
   }) async {
+    // **Flushed before the child starts, not for tidiness.** Dart's `stdout`
+    // is asynchronous when it is a pipe, which is what it is on CI — and the
+    // child writes to the same descriptor directly. Without this the
+    // `::group::` line for a task can arrive after the output it is supposed
+    // to be folding, which turns §7.1's readable failure into a jumble
+    // exactly where nobody can reproduce it.
+    await stdout.flush();
+
     final process = await Process.start(
       executable,
       arguments,

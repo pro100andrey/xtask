@@ -1,62 +1,131 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/xtask.dart';
 
 void main() {
-  group('until the CLI exists, every invocation is refused', () {
-    // These three used to assert 0, and a code review named that as a defect
-    // rather than a placeholder: §7.1 has a pipeline run `dart run :xtask
-    // ci-analyze` as a job's only step, so a 0 gives whoever wires CI before
-    // the `cli` slice lands a permanently green job that ran nothing —
-    // indistinguishable from a passing gate, which is §1's third defect
-    // reproduced by the tool written to remove it.
-    test('with no arguments', () async {
-      expect(await runXtask([]), 2);
-    });
-
-    test('with a task name', () async {
-      expect(await runXtask(['ci-analyze']), 2);
-    });
-
-    test('with --validate, which is not implemented either', () async {
-      expect(await runXtask(['--validate']), 2);
-    });
-
-    test('a project passing no verbs is still refused, not excused', () async {
-      expect(await runXtask([], verbs: {}), 2);
-    });
-  });
-
   group('dart run :xtask', () {
-    // The claim this slice exists to prove, and the reason it is a subprocess
-    // rather than a direct call: §7 says the command is `dart run :xtask`, and
-    // that resolves through `bin/xtask.dart` by file name alone. Calling
-    // `runXtask` in-process would pass even if bin/ were empty or misnamed —
-    // which is precisely the failure the sentence in §7 would then be hiding.
+    // The claim this proves, and the reason it is a subprocess rather than a
+    // direct call: §7 says the command is `dart run :xtask`, and that resolves
+    // through `bin/xtask.dart` by file name alone. Calling `runXtask`
+    // in-process would pass even if bin/ were empty or misnamed — which is
+    // precisely the failure the sentence in §7 would then be hiding.
     //
     // `Platform.resolvedExecutable` is the Dart running this test, so the test
     // does not itself depend on `dart` being resolvable on PATH. That question
     // is §5.4's, and it belongs to the `resolve` slice, not to this one.
-    late final ProcessResult run;
+    Future<ProcessResult> xtask(List<String> args) => Process.run(
+      Platform.resolvedExecutable,
+      ['run', ':xtask', ...args],
+      workingDirectory: Directory.current.path,
+    );
 
-    setUpAll(() async {
-      run = await Process.run(
-        Platform.resolvedExecutable,
-        ['run', ':xtask'],
-        workingDirectory: Directory.current.path,
-      );
+    test("reaches this package, and its usage is §7's", () async {
+      final run = await xtask(['--help']);
+      expect(run.exitCode, 0);
+      expect(run.stdout, contains('xtask --validate'));
+      expect(run.stdout, contains('xtask --dry-run <task>'));
     });
 
-    test('reaches this package, not some other xtask', () {
-      expect(run.stderr, contains('xtask.md'));
-    });
-
-    test('and carries the refusal out to the process exit code', () {
+    test('and carries the answer out to the process exit code', () async {
       // The entry point has to USE the answer. `bin/xtask.dart` assigns it to
       // `exitCode`; a consumer that writes `=> runXtask(args)` — as §9's own
       // snippet used to — discards it and exits 0 for every outcome.
+      //
+      // An invocation asking for nothing is the cheapest refusal there is, and
+      // §5.3 gives it 2 rather than 1: a 1 would send somebody looking for the
+      // task that failed.
+      final run = await xtask([]);
       expect(run.exitCode, 2);
+      expect(run.stderr, contains('usage:'));
     });
+  });
+
+  group('a task is a section in the shipped binary, not only in a test', () {
+    // The one claim that cannot be made in-process. §7.1 says a CI job is one
+    // invocation and each task folds — which needs the `::group::` line to
+    // reach the stream BEFORE the body's own output. The engine writes through
+    // Dart's `stdout`, which is asynchronous when it is a pipe (what it is on
+    // a runner), while the body inherits the descriptor and writes to it
+    // directly. Nothing in-process can tell those two apart; a real subprocess
+    // with a real pipe can.
+    late Directory root;
+    late ProcessResult run;
+
+    setUpAll(() async {
+      root = Directory.systemTemp.createTempSync('xtask_grouped_');
+      File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
+        'version: 1\n'
+        'tasks:\n'
+        '  version:\n'
+        '    desc: print the toolchain\n'
+        '    run: ["${Platform.resolvedExecutable}", --version]\n',
+      );
+      run = await Process.run(
+        Platform.resolvedExecutable,
+        [
+          'run',
+          p.join(Directory.current.path, 'bin', 'xtask.dart'),
+          'version',
+        ],
+        workingDirectory: root.path,
+        environment: {'GITHUB_ACTIONS': 'true'},
+      );
+    });
+
+    tearDownAll(() => root.deleteSync(recursive: true));
+
+    test('and the marker arrives before the output it folds', () {
+      final output = run.stdout as String;
+      expect(run.exitCode, 0, reason: output + (run.stderr as String));
+      expect(output, contains('::group::version'));
+      expect(
+        output.indexOf('::group::version'),
+        lessThan(output.indexOf('Dart SDK version')),
+        reason: 'a group that opens after its content folds the wrong thing',
+      );
+      expect(
+        output.indexOf('Dart SDK version'),
+        lessThan(output.indexOf('::endgroup::')),
+      );
+    });
+  });
+
+  group('runXtask is the whole public surface (§9)', () {
+    // In-process, because what is being asserted is the function a consumer
+    // calls rather than the file it is called from.
+    late Directory root;
+    late String previous;
+
+    setUp(() {
+      root = Directory.systemTemp.createTempSync('xtask_public_');
+      previous = Directory.current.path;
+      Directory.current = root;
+    });
+
+    tearDown(() {
+      Directory.current = previous;
+      root.deleteSync(recursive: true);
+    });
+
+    test(
+      'a project with no verbs still gets the built-ins and the file',
+      () async {
+        File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
+          'version: 1\ntasks:\n  a: {desc: x, do: remove, args: [gone]}\n',
+        );
+        expect(await runXtask(['--validate']), 0);
+      },
+    );
+
+    test(
+      'and a directory with no file is refused, not assumed empty',
+      () async {
+        // The outcome §7.1 makes dangerous: a CI job is one invocation, so a 0
+        // from an xtask that found nothing to do is a permanently green job.
+        expect(await runXtask(['a']), 2);
+      },
+    );
   });
 }
