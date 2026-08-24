@@ -232,11 +232,42 @@ Request parseArguments(List<String> args) {
       continue;
     }
 
+    // **Both spellings, because `--gate` already took both.** A person who
+    // learns `--gate=check` from the usage line writes `--why=test` next, and
+    // what they used to get was "`--why=test` is not an option xtask has" — a
+    // refusal that denies the flag exists rather than naming the form it
+    // wants. The value joins the operands, where the mode below reads it as
+    // if it had been written as its own word.
+    final joined = modes.firstWhere(
+      (mode) => argument.startsWith('$mode='),
+      orElse: () => '',
+    );
+    if (joined.isNotEmpty) {
+      written.add(joined);
+      operands.add(argument.substring(joined.length + 1));
+      continue;
+    }
+
     if (argument.startsWith('-')) {
       return ShowUsage('`$argument` is not an option xtask has');
     }
 
     operands.add(argument);
+  }
+
+  if (concurrency > 1 && operands.length > 1) {
+    final tail = operands.last;
+    if (int.tryParse(tail) != null) {
+      // `--parallel 2` reads as a task called `2`, and the refusal that came
+      // out named two tasks the person never asked for. `--parallel` takes no
+      // separate word, because a bare `--parallel` is already a complete
+      // answer — as many at once as this machine has processors — and there is
+      // nothing to tell that apart from a task whose name is a number.
+      return ShowUsage(
+        '`--parallel` is written `--parallel=$tail`, joined. On its own it '
+        'means as many at once as this machine has processors',
+      );
+    }
   }
 
   if (written.length > 1) {

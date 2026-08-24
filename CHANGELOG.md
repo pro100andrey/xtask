@@ -21,6 +21,9 @@ First release. Enough to replace one repository's `make`, and no more.
 - `--dry-run`, printing what a run resolves to rather than what is written.
 - `--emit-schema`, a JSON Schema for editors, generated from the same key lists
   the parser refuses unknown keys with.
+- A mode that takes a name takes it either way — `--why build` and
+  `--why=build` — because one flag taking both spellings and the rest taking
+  one is a rule nobody can hold.
 - `--why`, which names every entry point that reaches a task and spells the
   route edge by edge, saying whether each edge is a `needs:` or a `then:`.
 - `--check-ci`, which reads the workflow files and reports a shell step that
