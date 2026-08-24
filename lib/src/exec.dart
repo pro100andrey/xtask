@@ -80,6 +80,7 @@ final class ResolvedProcess extends Resolved {
     required super.arguments,
     required this.executable,
     required this.runInShell,
+    this.timeout,
   });
 
   /// The absolute path §5.4 resolved the written name to, on this machine.
@@ -88,6 +89,13 @@ final class ResolvedProcess extends Resolved {
   /// Whether starting it means going through `cmd.exe` — true only for a
   /// Windows shim that `CreateProcess` cannot start (§5.4, rule 3).
   final bool runInShell;
+
+  /// How long it may take, or null for no limit — §4.3's `timeout:`.
+  ///
+  /// Under `each:` this is a limit **per member**: six packages with a limit
+  /// of five minutes is thirty minutes of patience, not five, because the
+  /// question the key answers is whether one of them has hung.
+  final Duration? timeout;
 }
 
 /// A `do:` body, with the verb the project registered found.
@@ -429,6 +437,21 @@ final class Executor {
 
     final code = await _perform(resolved);
     if (code != ExitCode.success) {
+      // **A killed process is reported as killed, not as "exit code 124".**
+      // The number is what a killed process answers with and what a shell
+      // wrapping this already checks for, but it is a number nobody reads as
+      // "it hung". Recognised rather than proved: a program that genuinely
+      // exits 124 while carrying a `timeout:` would be described wrongly, and
+      // it would still be the right task on the right line.
+      final killed =
+          code == SystemProcessStarter.timedOut &&
+          resolved is ResolvedProcess &&
+          resolved.timeout != null;
+      final what = killed
+          ? 'did not finish inside its `timeout: ${task.timeout}`, '
+                'and was killed'
+          : 'failed with exit code $code';
+
       throw RunFailure(
         ExitCode.taskFailed,
         [
@@ -436,9 +459,9 @@ final class Executor {
           // stops at that member — and "the tests failed" over six packages is
           // a report that makes somebody run all six again by hand.
           if (member == null)
-            'task `${task.name}` failed with exit code $code'
+            'task `${task.name}` $what'
           else
-            'task `${task.name}` failed at `$member` with exit code $code',
+            'task `${task.name}` at `$member` $what',
           // **The line that says it broke is the line that reproduces it.**
           // On a host that folds, the failing task's output is collapsed and
           // the annotation is all somebody sees; without the command and the
@@ -514,6 +537,9 @@ final class Executor {
           arguments: arguments,
           executable: executable,
           runInShell: runInShell,
+          timeout: task.timeout == null
+              ? null
+              : Duration(seconds: task.timeout!),
         );
     }
   }
@@ -531,7 +557,11 @@ final class Executor {
           ),
         );
 
-      case ResolvedProcess(:final executable, :final runInShell):
+      case ResolvedProcess(
+        :final executable,
+        :final runInShell,
+        :final timeout,
+      ):
         // The member is named here for the same reason §5.2 names it in a
         // failure: six identical lines from one `each:` over six packages is
         // a log that makes somebody run all six again to find out which.
@@ -546,6 +576,7 @@ final class Executor {
           workingDirectory: body.workingDirectory,
           environment: body.environment,
           runInShell: runInShell,
+          timeout: timeout,
         );
     }
   }
@@ -649,7 +680,14 @@ final class Executor {
 
 /// The starter that runs real processes.
 final class SystemProcessStarter implements ProcessStarter {
-  const SystemProcessStarter();
+  const SystemProcessStarter({this.grace = const Duration(seconds: 5)});
+
+  /// How long a process that has been asked to stop is given to do it.
+  ///
+  /// A parameter so a test can prove the escalation without waiting out a
+  /// realistic one. The default is what a test runner needs to write its
+  /// partial output and a compiler to remove a half-written file.
+  final Duration grace;
 
   @override
   Future<int> start(
@@ -658,6 +696,7 @@ final class SystemProcessStarter implements ProcessStarter {
     required String workingDirectory,
     required Map<String, String> environment,
     required bool runInShell,
+    Duration? timeout,
   }) async {
     // **Flushed before the child starts, not for tidiness.** Dart's `stdout`
     // is asynchronous when it is a pipe, which is what it is on CI — and the
@@ -681,8 +720,48 @@ final class SystemProcessStarter implements ProcessStarter {
       // streams wrong.
       mode: ProcessStartMode.inheritStdio,
     );
-    return process.exitCode;
+
+    if (timeout == null) {
+      return process.exitCode;
+    }
+
+    // **Asked to stop, then made to.** SIGTERM lets a test runner write its
+    // partial output and a compiler remove a half-written file; SIGKILL is
+    // what happens to a process that ignores being asked. A short grace
+    // period between them is the whole difference between a killed run that
+    // leaves a corrupt artifact behind and one that does not.
+    //
+    // What this does NOT do is kill the process's own children. There is no
+    // portable way to reach them from here — Windows has job objects, POSIX
+    // has process groups, and neither is what `Process` exposes — so a task
+    // that spawns a server and hangs may leave the server behind. Stated
+    // rather than quietly hoped away.
+    final finished = await process.exitCode
+        .then<int?>((code) => code)
+        .timeout(timeout, onTimeout: () => null);
+    if (finished != null) {
+      return finished;
+    }
+
+    process.kill();
+    final stopped = await process.exitCode
+        .then<int?>((code) => code)
+        .timeout(grace, onTimeout: () => null);
+    if (stopped == null) {
+      process.kill(ProcessSignal.sigkill);
+      await process.exitCode;
+    }
+    return timedOut;
   }
+
+  /// What a killed process answers with.
+  ///
+  /// 124 is what `timeout(1)` uses and what every script that wraps a command
+  /// in one already checks for. Borrowing it costs nothing and means a shell
+  /// around `xtask` does not have to learn a new number — while §5.3's own
+  /// codes are untouched, because the ENGINE still answers 1: a task that hung
+  /// is a task that failed, and the same person goes to look.
+  static const timedOut = 124;
 }
 
 /// How a [Resolved] body is written down: what runs, where, and with what.
@@ -717,6 +796,8 @@ List<String> describe(Resolved body) {
     // not printed either: by the time a body resolves, it is set.
     for (final variable in body.task.env.entries)
       '  env  ${variable.key}=${_quoted(variable.value)}',
+    if (body case ResolvedProcess(timeout: final limit?))
+      '  for  at most ${limit.inSeconds}s, then it is killed',
     if (body case ResolvedProcess(runInShell: true))
       '  via  cmd.exe, which is the only way to start a batch file (§5.4)',
   ];

@@ -31,6 +31,7 @@ final class Started {
     this.workingDirectory,
     this.environment,
     this.runInShell,
+    this.timeout,
   );
 
   final String executable;
@@ -38,6 +39,7 @@ final class Started {
   final String workingDirectory;
   final Map<String, String> environment;
   final bool runInShell;
+  final Duration? timeout;
 }
 
 /// A starter that records instead of spawning.
@@ -61,9 +63,17 @@ final class FakeStarter implements ProcessStarter {
     required String workingDirectory,
     required Map<String, String> environment,
     required bool runInShell,
+    Duration? timeout,
   }) async {
     started.add(
-      Started(executable, arguments, workingDirectory, environment, runInShell),
+      Started(
+        executable,
+        arguments,
+        workingDirectory,
+        environment,
+        runInShell,
+        timeout,
+      ),
     );
     return codes[p.basename(executable)] ?? ExitCode.success;
   }
@@ -246,7 +256,7 @@ void main() {
       );
       expect(code, ExitCode.taskFailed);
       expect(starter.started, hasLength(1), reason: 'stopped at the first');
-      expect(logged.join('\n'), contains('failed at `one`'));
+      expect(logged.join('\n'), contains('at `one`'));
     });
   });
 
@@ -375,7 +385,7 @@ void main() {
         'a',
       );
       final failure = logged.firstWhere((l) => l.contains('failed'));
-      expect(failure, contains('failed at `one`'));
+      expect(failure, contains('at `one`'));
       expect(failure, contains('in   ${p.join(root.path, 'one')}'));
     });
 
@@ -603,6 +613,70 @@ void main() {
       );
       expect(code, ExitCode.continuationFailed);
       expect(logged.join('\n'), contains(ExitCode.continuationNotice));
+    });
+  });
+
+  group('`timeout:` reaches the starter, which is the only thing that can '
+      'enforce it', () {
+    test('as a duration on the process it limits', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, timeout: 300, run: [dart]}\n',
+        'a',
+      );
+      expect(starter.started.single.timeout, const Duration(seconds: 300));
+    });
+
+    test('and nothing at all when the task set none', () async {
+      await runFile('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n', 'a');
+      expect(starter.started.single.timeout, isNull);
+    });
+
+    test(
+      'under `each:` it is a limit per member, not for all of them',
+      () async {
+        // Six packages with a limit of five minutes is thirty minutes of
+        // patience, not five: the question the key answers is whether one of
+        // them has hung.
+        await runFile(
+          'version: 1\n'
+              'sets:\n  pkgs: [one, two]\n'
+              'tasks:\n'
+              r'  a: {desc: x, each: pkgs, in: $each, timeout: 60,'
+              ' run: [dart, test]}'
+              '\n',
+          'a',
+        );
+        expect(
+          starter.started.map((s) => s.timeout),
+          [const Duration(seconds: 60), const Duration(seconds: 60)],
+        );
+      },
+    );
+  });
+
+  group('a killed task is reported as killed, not as a number', () {
+    test('the message names the limit it overran', () async {
+      // 124 is what a killed process answers with and what a shell wrapping
+      // this already checks for — and it is a number nobody reads as "it
+      // hung".
+      starter = FakeStarter({'dart': SystemProcessStarter.timedOut});
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, timeout: 30, run: [dart]}\n',
+        'a',
+      );
+      final failure = logged.firstWhere((l) => l.contains('task `a`'));
+      expect(failure, contains('timeout: 30'));
+      expect(failure, contains('killed'));
+    });
+
+    test('and the same code without a limit is just a failure', () async {
+      // Not a claim the engine cannot support: without a `timeout:` there is
+      // no reason to read 124 as anything but what the program returned.
+      starter = FakeStarter({'dart': SystemProcessStarter.timedOut});
+      await runFile('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n', 'a');
+      final failure = logged.firstWhere((l) => l.contains('task `a`'));
+      expect(failure, contains('exit code 124'));
+      expect(failure, isNot(contains('killed')));
     });
   });
 
@@ -875,6 +949,61 @@ void main() {
         workingDirectory: Directory.current.path,
         environment: Platform.environment,
         runInShell: false,
+      );
+      expect(code, 0);
+    });
+
+    test('a process that overstays is killed, and says so', () async {
+      // The one thing no fake can answer: whether the process actually dies.
+      // A Dart that reads stdin forever is portable and needs no `sleep`.
+      const starter = SystemProcessStarter();
+      final began = DateTime.now();
+      final code = await starter.start(
+        Platform.resolvedExecutable,
+        ['run', p.join('test', 'fixtures', 'hangs.dart')],
+        workingDirectory: Directory.current.path,
+        environment: Platform.environment,
+        runInShell: false,
+        timeout: const Duration(seconds: 2),
+      );
+      expect(code, SystemProcessStarter.timedOut);
+      expect(
+        DateTime.now().difference(began),
+        lessThan(const Duration(seconds: 30)),
+        reason: 'it waited for the process instead of ending it',
+      );
+    }, timeout: const Timeout(Duration(seconds: 20)));
+
+    test(
+      'and one that ignores being asked is killed anyway',
+      () async {
+        // SIGTERM is a request. The escalation is what makes `timeout:` a limit
+        // rather than a suggestion, and only a process that refuses the request
+        // can tell the two apart.
+        const starter = SystemProcessStarter(grace: Duration(seconds: 2));
+        final code = await starter.start(
+          Platform.resolvedExecutable,
+          ['run', p.join('test', 'fixtures', 'ignores_sigterm.dart')],
+          workingDirectory: Directory.current.path,
+          environment: Platform.environment,
+          runInShell: false,
+          timeout: const Duration(seconds: 2),
+        );
+        expect(code, SystemProcessStarter.timedOut);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+      testOn: '!windows',
+    );
+
+    test('and one that finishes in time is not touched', () async {
+      const starter = SystemProcessStarter();
+      final code = await starter.start(
+        Platform.resolvedExecutable,
+        ['--version'],
+        workingDirectory: Directory.current.path,
+        environment: Platform.environment,
+        runInShell: false,
+        timeout: const Duration(seconds: 60),
       );
       expect(code, 0);
     });

@@ -146,6 +146,11 @@
           "collects": {
             "type": "string",
             "description": "Names a gate set this task is the composite of — it needs every task in that set. Spelled nothing like `gate:` on purpose: the two mean opposite things."
+          },
+          "timeout": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Seconds a `run:` body may take before it is killed. A `do:` cannot carry one: a verb is a Dart function and nothing outside it can stop one, so the limit would pass while the verb kept running. Under `each:` it is a limit per member."
           }
         }
       }

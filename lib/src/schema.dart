@@ -222,6 +222,15 @@ const _taskKeys = <String, Map<String, Object?>>{
         'its own entry. Never a command line — nothing splits a string here, '
         'and no shell sees it.',
   },
+  'timeout': {
+    'type': 'integer',
+    'minimum': 1,
+    'description':
+        'Seconds a `run:` body may take before it is killed. A `do:` cannot '
+        'carry one: a verb is a Dart function and nothing outside it can stop '
+        'one, so the limit would pass while the verb kept running. Under '
+        '`each:` it is a limit per member.',
+  },
   'then': {
     ..._strings,
     'description':
