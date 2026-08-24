@@ -23,7 +23,13 @@ final class VerbContext {
   /// it was asked about.
   final List<String> args;
 
-  /// The environment for this task only (§4.3).
+  /// The environment the body would see: this machine's, with the task's own
+  /// `env:` applied over it.
+  ///
+  /// **Not the task's `env:` on its own**, which is what the name suggests and
+  /// what this doc comment said until somebody read it beside the code. A verb
+  /// that wants `PATH` finds it here; a verb that wants to know what the file
+  /// declared cannot ask, and has not needed to.
   final Map<String, String> env;
 
   /// Where the task runs, absolute.

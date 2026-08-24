@@ -211,6 +211,39 @@ void main() {
     });
   });
 
+  group('and its Dart examples define what they register', () {
+    // The entry point in the README registered two verbs, `regen` and
+    // `publish`, and defined one. Copied out, it does not compile:
+    //
+    //   bin/xtask.dart:10:18: Error: Undefined name 'publish'.
+    //
+    // A reader meeting that has no way to tell whether they mistyped it or
+    // the document is wrong. Checked by reading rather than by compiling,
+    // which would need a scratch package and a `pub get` in the gate: what
+    // went wrong here is a NAME with no declaration, and that is visible in
+    // the text.
+    test('every verb the entry point hands over is defined nearby', () {
+      final readme = File(p.join(root, 'README.md')).readAsStringSync();
+      final dart = _fencedBlocks(readme, 'dart').join('\n');
+      final registered = RegExp("'([a-z-]+)': ([a-zA-Z]+)").allMatches(dart);
+      expect(
+        registered,
+        isNotEmpty,
+        reason: 'the README used to show a verb being registered; find it',
+      );
+      for (final registration in registered) {
+        final verb = registration.group(2);
+        expect(
+          dart,
+          contains('Future<int> $verb('),
+          reason:
+              'the README registers `$verb` and never defines it, so the '
+              'example does not compile when it is copied',
+        );
+      }
+    });
+  });
+
   group('the version in code is the version in the manifest', () {
     // The number has to be in `pubspec.yaml` because pub needs it there, and
     // in code because a compiled entry point has no manifest beside it to
