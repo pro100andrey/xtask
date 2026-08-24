@@ -1,6 +1,9 @@
 # xtask
 
-A task runner whose tasks are **data**.
+A task runner whose tasks are **data**. The name is `cargo xtask`'s, the Rust
+convention of keeping a repository's automation in the repository, in a
+language it already builds — this takes the idea and keeps the composition out
+of code, where it can be read without being run.
 
 Write an `xtask.yaml`, and run `xtask <task>`. It resolves the dependency
 graph, runs each task once, in declared order, **without a shell**.
@@ -554,19 +557,6 @@ them existing only because `package.json` scripts are shell.
   project links; everything else is data.
 - **No templating or interpolation** beyond `$each`. The moment a value can be
   computed in the file, R1 is gone.
-
-## Prior art
-
-| | what it is | why not this |
-| --- | --- | --- |
-| `make` | a task graph with shell bodies | the model is right and is what `xtask` keeps; the shell bodies and the absence of Windows are what it drops |
-| `cargo xtask` | automation as a project-local binary in the project's own language | the closest relative and where the name comes from — but it puts the *composition* in code too, so "what does `check` run" means reading a program |
-| `grinder` | a Dart task runner, tasks as annotated functions | tasks as code is right for jobs with logic and wrong for the two-thirds that are one line, and it makes the gate list uninspectable |
-| `melos` | Dart/Flutter monorepo tool | complementary — but its script bodies are shell, so it does not solve portability |
-| npm scripts | shell strings in a manifest | the cautionary tale: choosing shell forced a family of shim packages into existence |
-
-**The one-line difference:** `make`'s model with argv bodies, project verbs, and
-the gate list as data.
 
 ## Windows
 
