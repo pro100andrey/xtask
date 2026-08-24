@@ -128,9 +128,15 @@ void main() {
     });
 
     test('a literal that looks like a path is not globbed', () async {
-      given(['a*b.txt']);
-      await remove([r'a\*b.txt']);
-      expect(exists('a*b.txt'), isFalse);
+      // `[` rather than `*`, and that is the whole reason: Windows refuses
+      // `*` in a file name, so a fixture built on it cannot exist there and
+      // the assertion could only ever have been skipped. `[` is a glob
+      // metacharacter on every platform and a legal name character on every
+      // platform, which is what lets this run where it matters — on the host
+      // whose own separator is the escape character.
+      given(['a[b.txt']);
+      await remove([r'a\[b.txt']);
+      expect(exists('a[b.txt'), isFalse);
     });
   });
 
