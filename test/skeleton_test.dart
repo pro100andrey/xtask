@@ -97,6 +97,69 @@ void main() {
     });
   });
 
+  group('a parallel run of real processes survives its own stdout', () {
+    // The other claim no fake can make. `stdout.flush()` marks the sink bound
+    // for as long as it is in flight, so a task ending and writing its
+    // buffered block while another task is starting threw `Bad state:
+    // StreamSink is bound to a stream` and took the whole run with it. Every
+    // test above uses a fake starter and a list for a log, and none of them
+    // has a sink to bind.
+    //
+    // The engine now flushes only where the flush is for — a child that
+    // inherits the descriptor, which is a run that is not parallel at all.
+    late Directory root;
+    late ProcessResult run;
+
+    setUpAll(() async {
+      root = Directory.systemTemp.createTempSync('xtask_parallel_');
+      final dart = Platform.resolvedExecutable;
+      File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
+        'version: 1\n'
+        'tasks:\n'
+        '  one:\n'
+        '    desc: first\n'
+        '    gate: [both]\n'
+        "    run: ['$dart', --version]\n"
+        '  two:\n'
+        '    desc: second\n'
+        '    gate: [both]\n'
+        "    run: ['$dart', --version]\n"
+        '  both:\n'
+        '    desc: everything\n'
+        '    collects: both\n',
+      );
+      run = await Process.run(dart, [
+        'run',
+        p.join(Directory.current.path, 'bin', 'xtask.dart'),
+        'both',
+        '--parallel',
+      ], workingDirectory: root.path);
+    });
+
+    tearDownAll(() => root.deleteSync(recursive: true));
+
+    test('it does not die of its own bookkeeping', () {
+      final output = run.stdout as String;
+      expect(
+        run.stderr,
+        isNot(contains('StreamSink')),
+        reason: 'the run crashed writing its own output',
+      );
+      expect(run.exitCode, 0, reason: output + (run.stderr as String));
+    });
+
+    test('and both tasks are in the transcript, whole', () {
+      final output = run.stdout as String;
+      expect(output, contains('── one ──'));
+      expect(output, contains('── two ──'));
+      expect(
+        output,
+        contains('up to'),
+        reason: 'a parallel run says so before it goes quiet',
+      );
+    });
+  });
+
   group('runXtask is the whole public surface (§9)', () {
     // In-process, because what is being asserted is the function a consumer
     // calls rather than the file it is called from.
