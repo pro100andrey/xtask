@@ -7,6 +7,13 @@ version: 0.1.0
 repository: https://github.com/pro100andrey/xtask
 issue_tracker: https://github.com/pro100andrey/xtask/issues
 
+# What `dart install` puts on the PATH. Its own help says an absent section
+# means "install every `bin/*.dart`"; it does not — the install fails with
+# `The pubspec.yaml contained no executables section`, which is how this was
+# found: by running the command the README tells a newcomer to run.
+executables:
+  xtask:
+
 topics:
   - task-runner
   - automation
