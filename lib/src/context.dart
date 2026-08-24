@@ -51,6 +51,14 @@ abstract interface class ProcessStarter {
   /// [timeout], where a task set one, is the starter's to enforce — not the
   /// caller's. Only whoever holds the process can kill it, and a deadline
   /// applied by waiting less would report a timeout while the process ran on.
+  ///
+  /// [output], when given, is where the body's own stdout and stderr go
+  /// instead of straight through — **the one place §5.2's promise is
+  /// deliberately not kept**, and only a run that asked to be parallel gives
+  /// it. Two tasks writing to one terminal at once produce a transcript
+  /// belonging to neither, and a section that folds lines from two tasks folds
+  /// nothing; collecting each task's output and printing it whole is the price
+  /// of running them together, and it is why parallelism is opt-in.
   Future<int> start(
     String executable,
     List<String> arguments, {
@@ -58,5 +66,6 @@ abstract interface class ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    void Function(String line)? output,
   });
 }

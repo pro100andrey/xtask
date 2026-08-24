@@ -42,6 +42,7 @@ final class RunTask extends Request {
     this.task, {
     this.arguments = const [],
     this.keepGoing = false,
+    this.concurrency = 1,
   });
 
   final String task;
@@ -51,6 +52,9 @@ final class RunTask extends Request {
 
   /// `--keep-going`: report every failure rather than the first.
   final bool keepGoing;
+
+  /// `--parallel`: how many tasks may be in flight. 1 is §5.2's run.
+  final int concurrency;
 }
 
 /// `xtask --dry-run <task> [-- <args>]` — print what that would come to (§7).
@@ -163,6 +167,7 @@ Request parseArguments(List<String> args) {
   String? gate;
   var narrowed = false;
   var keepGoing = false;
+  var concurrency = 1;
 
   final passed = <String>[];
   var separated = false;
@@ -204,6 +209,22 @@ Request parseArguments(List<String> args) {
       continue;
     }
 
+    if (argument == '--parallel' || argument.startsWith('--parallel=')) {
+      if (argument == '--parallel') {
+        concurrency = Platform.numberOfProcessors;
+        continue;
+      }
+      final written = argument.substring('--parallel='.length);
+      final asked = int.tryParse(written);
+      if (asked == null || asked < 1) {
+        return ShowUsage(
+          '`--parallel=$written` is not a number of tasks to run at once',
+        );
+      }
+      concurrency = asked;
+      continue;
+    }
+
     if (modes.contains(argument)) {
       written.add(argument);
       continue;
@@ -232,6 +253,12 @@ Request parseArguments(List<String> args) {
     return const ShowUsage(
       '`--gate` narrows `--list`. For the members of one gate set on their '
       'own, write `--gates <name>`',
+    );
+  }
+
+  if (concurrency > 1 && mode != null) {
+    return ShowUsage(
+      '`--parallel` is about a run, and `$mode` does not run anything',
     );
   }
 
@@ -324,7 +351,12 @@ Request parseArguments(List<String> args) {
   }
 
   return operands.length == 1
-      ? RunTask(operands.single, arguments: passed, keepGoing: keepGoing)
+      ? RunTask(
+          operands.single,
+          arguments: passed,
+          keepGoing: keepGoing,
+          concurrency: concurrency,
+        )
       : ShowUsage(
           'xtask runs one task at a time, and it was given '
           '${operands.map((o) => '`$o`').join(' and ')}',
@@ -337,6 +369,8 @@ const usage = [
   '  xtask <task>                run a task and everything it needs',
   '  xtask <task> -- <args>      and pass those arguments to its body',
   '  xtask <task> --keep-going   report every failure, not just the first',
+  '  xtask <task> --parallel     run independent tasks at once — which costs',
+  '                              seeing their output as it arrives',
   '  xtask --list                every task, with its description',
   '  xtask --list --gate <name>  only the tasks in that gate set',
   "  xtask --gates <name>        that gate set's task names, one per line",
@@ -575,7 +609,12 @@ Future<int> runCli(
           passedThrough: (task: task, arguments: arguments),
         );
 
-      case RunTask(:final task, :final arguments, :final keepGoing):
+      case RunTask(
+        :final task,
+        :final arguments,
+        :final keepGoing,
+        :final concurrency,
+      ):
         _refuseArgumentsWithNowhereToGo(collected, task, arguments);
         return await Executor(
           file: collected,
@@ -588,6 +627,7 @@ Future<int> runCli(
           markers: LogMarkers.forHost(environment),
           passedThrough: (task: task, arguments: arguments),
           keepGoing: keepGoing,
+          concurrency: concurrency,
         ).run(planRun(collected, task));
     }
   } on XtaskFormatException catch (problem) {

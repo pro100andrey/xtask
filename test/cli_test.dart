@@ -32,6 +32,7 @@ final class FakeStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    void Function(String line)? output,
   }) async {
     started.add(Started(executable, arguments, workingDirectory));
     return codes[p.basename(executable)] ?? ExitCode.success;
@@ -178,6 +179,38 @@ void main() {
           final usage = parseArguments([mode, 'x', '--keep-going']);
           expect(usage, isA<ShowUsage>(), reason: '$mode accepted it');
         }
+      });
+    });
+
+    group('--parallel', () {
+      test('it is a modifier on a run, with a number or without', () {
+        expect((parseArguments(['check']) as RunTask).concurrency, 1);
+        expect(
+          (parseArguments(['check', '--parallel=3']) as RunTask).concurrency,
+          3,
+        );
+        expect(
+          (parseArguments(['check', '--parallel']) as RunTask).concurrency,
+          greaterThan(1),
+          reason: 'a bare --parallel means as many as this machine has',
+        );
+      });
+
+      test('a number that is not one is refused', () {
+        for (final written in ['0', '-2', 'many', '']) {
+          expect(
+            parseArguments(['check', '--parallel=$written']),
+            isA<ShowUsage>(),
+            reason: '`--parallel=$written` was accepted',
+          );
+        }
+      });
+
+      test('and a mode that runs nothing has nothing to parallelise', () {
+        expect(
+          parseArguments(['--dry-run', 'x', '--parallel=2']),
+          isA<ShowUsage>(),
+        );
       });
     });
 
@@ -764,6 +797,28 @@ tasks:
         writeFile(chain);
         expect(await run(['--why', 'instal']), ExitCode.invalidFile);
         expect(complained(), contains('instal'));
+      });
+    });
+
+    group('running with --parallel', () {
+      test('the whole gate still runs, and still passes', () async {
+        writeFile('''
+version: 1
+tasks:
+  lint: {desc: a, gate: [check], run: [ruff]}
+  unit: {desc: b, gate: [check], run: [pytest]}
+  check: {desc: c, collects: check}
+''');
+        expect(await run(['check', '--parallel=2']), ExitCode.success);
+        expect(starter.started, hasLength(2));
+      });
+
+      test('and a dry run is never parallel, having nothing to run', () async {
+        writeFile('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n');
+        expect(
+          await run(['--dry-run', 'a', '--parallel=4']),
+          ExitCode.invalidFile,
+        );
       });
     });
 

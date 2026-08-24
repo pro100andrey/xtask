@@ -91,6 +91,7 @@ repository's business. Its only built-in is `remove`.
 xtask <task>                run a task and everything it needs
 xtask <task> -- <args>      and pass those arguments to its body
 xtask <task> --keep-going   report every failure, not just the first
+xtask <task> --parallel     run independent tasks at once
 xtask --list                every task, with its description
 xtask --list --gate <name>  only the tasks in that gate set
 xtask --gates <name>        that gate set's task names, one per line
@@ -225,6 +226,29 @@ It is off by default. §5.2 promises a run stops at the first failure, and a
 pipeline wants the earliest possible red rather than a broken run read to the
 end.
 
+`--parallel` runs tasks that do not depend on each other at once, up to the
+number of processors or `--parallel=N`. It is **not** the default, and the
+reason is a real cost rather than caution: normally a task's output passes
+through as it arrives and each task is a section that folds, and two tasks
+writing to one terminal at once break both — the transcript belongs to neither.
+So a parallel run collects each task's output and prints it whole when that
+task ends. You get the answer sooner and you watch it happen less.
+
+The summary then says both numbers, because they answer different questions:
+
+```
+lint    1.0s
+unit    1.0s
+types   1.0s
+total   3.1s spent, 1.1s taken
+```
+
+Declaration order still decides which of the ready tasks starts first — cheap
+gates before slow ones — but nothing makes them finish in that order. A failure
+stops what has not started; it does not reach into what is running, because
+killing a task would leave whatever it was half-way through in whatever state
+that half is.
+
 ## Exit codes
 
 An exit code is not a success flag; it is the shortest possible bug report.
@@ -346,8 +370,9 @@ them existing only because `package.json` scripts are shell.
   An expensive task solves that inside its own verb.
 - **Not a package manager and not a monorepo tool.** `melos` runs shell across
   packages; `xtask` runs a graph without one. They do not overlap.
-- **Not parallel.** Tasks run in order, one at a time. Parallelism belongs to
-  the CI system, which already has it.
+- **Not parallel by default.** Tasks run in order, one at a time, and
+  parallelism belongs to the CI system, which already has it. `--parallel` is
+  there for the local loop and costs watching the output arrive.
 - **No plugins, no dynamic loading, no expression language.** Verbs are code the
   project links; everything else is data.
 - **No templating or interpolation** beyond `$each`. The moment a value can be

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -56,6 +57,12 @@ final class FakeStarter implements ProcessStarter {
   final Map<String, int> codes;
   final started = <Started>[];
 
+  /// Executables to hold part-way through, by name.
+  ///
+  /// A held process has started and not finished, which is the only state in
+  /// which "are these two running at once" is a question with an answer.
+  final holds = <String, Completer<void>>{};
+
   @override
   Future<int> start(
     String executable,
@@ -64,7 +71,9 @@ final class FakeStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    void Function(String line)? output,
   }) async {
+    final name = p.basename(executable);
     started.add(
       Started(
         executable,
@@ -75,7 +84,12 @@ final class FakeStarter implements ProcessStarter {
         timeout,
       ),
     );
-    return codes[p.basename(executable)] ?? ExitCode.success;
+    // Two lines with a pause between them: enough to tell output that was
+    // collected and printed whole from output that arrived interleaved.
+    (output ?? (_) {})('$name speaking');
+    await holds[name]?.future;
+    (output ?? (_) {})('$name again');
+    return codes[name] ?? ExitCode.success;
   }
 }
 
@@ -113,6 +127,7 @@ void main() {
     String yaml,
     String task, {
     bool keepGoing = false,
+    int concurrency = 1,
     List<String> passed = const [],
     Map<String, Verb> verbs = const {},
     Map<String, String> environment = const {},
@@ -133,6 +148,7 @@ void main() {
       now: ticking(step),
       passedThrough: (task: task, arguments: passed),
       keepGoing: keepGoing,
+      concurrency: concurrency,
     ).run(planRun(file, task));
   }
 
@@ -678,6 +694,181 @@ void main() {
       expect(failure, contains('exit code 124'));
       expect(failure, isNot(contains('killed')));
     });
+  });
+
+  group('--parallel runs what does not depend on anything else', () {
+    // The one place a documented promise is deliberately broken, and only when
+    // asked: §5.2 wants a task's output as it arrives, and two tasks arriving
+    // at once make a transcript belonging to neither.
+    const three =
+        'version: 1\ntasks:\n'
+        '  fmt: {desc: a, run: [dart]}\n'
+        '  lint: {desc: b, needs: [fmt], run: [ruff]}\n'
+        '  unit: {desc: c, needs: [fmt], run: [pytest]}\n'
+        '  all: {desc: d, needs: [lint, unit]}\n';
+
+    test('two independent tasks are in flight together', () async {
+      starter = FakeStarter()
+        ..holds['ruff'] = Completer<void>()
+        ..holds['pytest'] = Completer<void>();
+      final running = runFile(three, 'all', concurrency: 2);
+      await pumpEventQueue();
+      expect(
+        starter.started.map((s) => p.basename(s.executable)),
+        ['dart', 'ruff', 'pytest'],
+        reason: 'both started while neither had finished',
+      );
+      starter.holds['ruff']!.complete();
+      starter.holds['pytest']!.complete();
+      expect(await running, ExitCode.success);
+    });
+
+    test('and a task that needs one still waits for it', () async {
+      starter = FakeStarter()..holds['dart'] = Completer<void>();
+      final running = runFile(three, 'all', concurrency: 4);
+      await pumpEventQueue();
+      expect(
+        starter.started.map((s) => p.basename(s.executable)),
+        ['dart'],
+        reason: 'nothing may start before what it needs has finished',
+      );
+      starter.holds['dart']!.complete();
+      expect(await running, ExitCode.success);
+    });
+
+    test('the limit is a limit', () async {
+      // Three tasks could run at once here; two are allowed to.
+      starter = FakeStarter()
+        ..holds['ruff'] = Completer<void>()
+        ..holds['pytest'] = Completer<void>()
+        ..holds['mypy'] = Completer<void>();
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  lint: {desc: a, run: [ruff]}\n'
+            '  unit: {desc: b, run: [pytest]}\n'
+            '  types: {desc: c, run: [mypy]}\n'
+            '  all: {desc: d, needs: [lint, unit, types]}\n',
+        'all',
+        concurrency: 2,
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(2), reason: 'the third is waiting');
+      for (final hold in starter.holds.values) {
+        hold.complete();
+      }
+      await running;
+      expect(starter.started, hasLength(3));
+    });
+
+    test("each task's output is printed whole, not interleaved", () async {
+      // The price §5.2 is charged. Both bodies speak, pause, and speak again
+      // with the other in between — and each still reads as one block.
+      starter = FakeStarter()
+        ..holds['ruff'] = Completer<void>()
+        ..holds['pytest'] = Completer<void>();
+      final running = runFile(three, 'all', concurrency: 2);
+      await pumpEventQueue();
+      starter.holds['pytest']!.complete();
+      await pumpEventQueue();
+      starter.holds['ruff']!.complete();
+      await running;
+
+      final first = logged.indexOf('ruff speaking');
+      expect(first, isNot(-1));
+      expect(logged[first + 1], 'ruff again');
+    });
+
+    test('a failure stops what has not started, and says so', () async {
+      // Three tasks that need NOTHING, so being blocked is not what stops the
+      // third: two run, one of them fails, and the third must not begin. The
+      // first form of this test used dependents of the failing task, which
+      // `_blockedBy` would have stopped anyway — it passed with the rule
+      // removed, and a mutation said so.
+      //
+      // What is already running is left alone: killing it would leave whatever
+      // it was half-way through in whatever state that half is.
+      starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  lint: {desc: a, run: [ruff]}\n'
+            '  unit: {desc: b, run: [pytest]}\n'
+            '  types: {desc: c, run: [mypy]}\n'
+            '  all: {desc: d, needs: [lint, unit, types]}\n',
+        'all',
+        concurrency: 2,
+      );
+      await pumpEventQueue();
+      expect(
+        starter.started.map((s) => p.basename(s.executable)),
+        ['ruff', 'pytest'],
+        reason: '`mypy` must not have begun after `ruff` failed',
+      );
+      starter.holds['pytest']!.complete();
+      expect(await running, ExitCode.taskFailed);
+      expect(starter.started, hasLength(2));
+      expect(logged.join('\n'), contains('skipped  types'));
+    });
+
+    test('and a dry run is never parallel, whatever it is handed', () async {
+      // Not about speed — a dry run performs nothing, so there is nothing to
+      // overlap. It is about what it REPORTS: sequentially a plan stops at the
+      // first thing that will not resolve, and run together it would list
+      // several, which is a different answer to the same question. The command
+      // line refuses the combination; this is the engine refusing it too, for
+      // a caller that reaches past the command line.
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  one: {desc: a, run: [missing-one]}\n'
+        '  two: {desc: b, run: [missing-two]}\n'
+        '  all: {desc: c, needs: [one, two]}\n',
+      );
+      final code = await Executor(
+        file: file,
+        root: root.path,
+        resolver: resolverFor(),
+        starter: starter,
+        log: logged.add,
+        concurrency: 8,
+        dryRun: (body) => logged.add('plan ${body.task.name}'),
+      ).run(planRun(file, 'all'));
+
+      expect(code, ExitCode.missingTool);
+      expect(logged.join('\n'), contains('missing-one'));
+      expect(
+        logged.join('\n'),
+        isNot(contains('missing-two')),
+        reason: 'the plan stops where a run would stop',
+      );
+    });
+
+    test('and --keep-going still runs everything independent', () async {
+      starter = FakeStarter({'ruff': 1, 'pytest': 1});
+      final code = await runFile(
+        three,
+        'all',
+        concurrency: 4,
+        keepGoing: true,
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(starter.started, hasLength(3));
+    });
+
+    test('the summary says both what was spent and what was taken', () async {
+      // Sequentially they are the same number. Run together they answer
+      // different questions, and printing only the sum would report three
+      // minutes for a run that took one.
+      await runFile(three, 'all', concurrency: 2);
+      expect(logged.last, contains('spent'));
+      expect(logged.last, contains('taken'));
+    });
+
+    test(
+      'and says neither of those things when it ran one at a time',
+      () async {
+        await runFile(three, 'all');
+        expect(logged.last, isNot(contains('spent')));
+      },
+    );
   });
 
   group('where a body runs', () {

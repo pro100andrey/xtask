@@ -72,6 +72,7 @@ final class RefusingProcessStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    void Function(String line)? output,
   }) => throw StateError(
     'a dry run tried to start `$executable`. Nothing is started here: this is '
     'the seam that makes --dry-run dry, and it has a hole in it',
