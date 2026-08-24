@@ -18,9 +18,14 @@ final class VerbContext {
     required this.log,
   });
 
-  /// The task's `args:`, with the members of its `argv-from` set appended —
-  /// already expanded, so a verb never touches the filesystem to find out what
-  /// it was asked about.
+  /// Everything the body was given, in one list: the task's `args:`, then the
+  /// members of its `argv-from` set, then whatever the command line passed
+  /// after `--`.
+  ///
+  /// Already expanded, so a verb never touches the filesystem to find out what
+  /// it was asked about — and **a verb is reached by `--` exactly as a process
+  /// is**, which the three sources being one list is the whole statement of. A
+  /// verb that wants to tell them apart cannot, and has not needed to.
   final List<String> args;
 
   /// The environment the body would see: this machine's, with the task's own
