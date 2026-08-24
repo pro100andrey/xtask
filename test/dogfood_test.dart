@@ -61,31 +61,43 @@ void main() {
       expect(report.problems, isEmpty, reason: '$report');
     });
 
-    test('the `check` gate gathers something', () {
+    test('and every gate it declares gathers something', () {
       // A composite over an empty gate is the failure this whole tool is
-      // about: a command that passes having examined nothing.
-      expect(tasksInGate(file, 'check'), isNotEmpty);
+      // about: a command that passes having examined nothing. Asked of every
+      // collected gate rather than of `check` by name — naming them here
+      // would be a list of gates beside the file's own, and the second one is
+      // always the one that stops being updated.
+      final gates = collectedGates(file);
+      expect(gates, isNotEmpty);
+      for (final gate in gates) {
+        expect(tasksInGate(file, gate), isNotEmpty, reason: 'gate `$gate`');
+      }
     });
 
-    test('and running it reaches every task but the ones typed by hand', () {
+    test('and running the gates reaches every task but the hand-typed one', () {
       // The local half of §7.1's residual — a task no gate ever reaches is
       // invisible, and it looks exactly like a task that is checked.
       //
-      // Not every task is a check, and the two here fail the gate for
-      // opposite reasons. `aot` compiles a binary for one machine, so a gate
-      // running it spends CI's time on something CI cannot use.
-      // `publishable` is the sharper case: `pub publish --dry-run` exits 65
-      // while a checked-in file is modified, which is every run a person
-      // makes before committing — green in CI's clean checkout, red on the
-      // desk. What §7.1 asks is that both exceptions be DECLARED rather than
-      // discovered.
+      // Every gate, not `check` alone. `publishable` is why: `pub publish
+      // --dry-run` exits 65 while a checked-in file is modified, so it can
+      // only pass in a clean checkout — which makes it CI's to run, not the
+      // desk's, and gives it a gate set of its own rather than no gate at all.
+      // A test that asked about `check` would have called a task CI runs on
+      // every push "typed by hand", and the word would have been wrong.
       //
-      // So this is equality, not containment. A task added to the file and
-      // forgotten fails here, and so does a name left behind after the task
-      // it excused is gone. It is not a second copy of the gate: the gate's
-      // members are exactly what is not written on this line.
-      const typedByHand = {'aot', 'publishable'};
-      final reached = planRun(withCollectedGates(file), 'check').names.toSet();
+      // Planned from each composite's own name rather than from the gate's:
+      // they happen to match in this file and nothing makes them.
+      //
+      // What is left is equality, not containment. A task added and forgotten
+      // fails here, and so does a name left behind after the task it excused
+      // is gone. It is not a second copy of any gate: their members are
+      // exactly what is not written on this line.
+      const typedByHand = {'aot'};
+      final collected = withCollectedGates(file);
+      final reached = {
+        for (final task in file.tasks.values)
+          if (task.collects != null) ...planRun(collected, task.name).names,
+      };
       expect(
         file.tasks.keys.toSet().difference(reached),
         typedByHand,

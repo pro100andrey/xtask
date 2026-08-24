@@ -46,14 +46,20 @@ tasks:
     desc: everything that must pass before work is called done
     collects: check
 
-  # Typed before a release, and NOT in the gate — which is what trying it
-  # taught, in four seconds.
+  # In its own gate set, and that is the whole point — which trying the other
+  # arrangement taught, in four seconds.
   #
-  # `--dry-run` exits 65 when a checked-in file is modified in git. A gate runs
-  # before the commit, so that is every run a person makes while working: red
-  # locally, green in CI's clean checkout. A check that fails only for the
-  # person and passes for the machine is worse than no check — it is the one
-  # people learn to route around.
+  # `--dry-run` exits 65 when a checked-in file is modified in git. `check`
+  # runs before the commit, so putting this there is red on every run a person
+  # makes while working and green in CI's clean checkout: a check that fails
+  # only for the person and passes only for the machine is the one people learn
+  # to route around.
+  #
+  # A second gate set is §7.1's answer to exactly that — one job per gate set,
+  # and this one's job runs where the tree is clean by construction. Leaving it
+  # ungated instead would have reopened the hole it was written to close: the
+  # licence was missing not because nobody thought of it, but because nothing
+  # ran.
   #
   # It stays in the file because it earned its place the day it ran: this
   # package had no LICENSE at all, through every green gate, because nothing
@@ -62,7 +68,12 @@ tasks:
   # nobody would have written by hand come with it.
   publishable:
     desc: refuse a package that could not be published as it stands
+    gate: [release]
     run: [dart, pub, publish, --dry-run]
+
+  release:
+    desc: everything that must hold before this package can be published
+    collects: release
 
   # A person's convenience, and the one task in this file no gate reaches.
   #
@@ -89,6 +100,9 @@ tasks:
 # CI file; `dart run` resolves the package on its own, so a task doing it would
 # be a second place that says so and a wait a person pays for locally.
 #
-# There is one gate set, not two. A `ci` set beside `check` would hold the same
-# three tasks, and two lists of one thing is the defect §1 exists to remove —
-# it is not made acceptable by both copies living in the same file.
+# There are two gate sets, and they are not two copies. A `ci` set beside
+# `check` WOULD have been — the same three tasks written twice, which is the
+# defect §1 exists to remove and is not made acceptable by both copies living
+# in one file. `release` holds something `check` cannot hold at all: a check
+# that only a clean tree can pass. Different members, different job, different
+# question.

@@ -24,3 +24,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
       - run: dart run :xtask check
+
+  # The second gate set, and it needs a job of its own rather than a step in
+  # the one above: `dart pub publish --dry-run` exits 65 while any checked-in
+  # file is modified, so it can only pass where the tree is clean by
+  # construction. That is here and not a desk, which is why the member sits in
+  # `release` instead of `check` — xtask.yaml says the rest.
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart run :xtask release
