@@ -46,6 +46,24 @@ tasks:
     desc: everything that must pass before work is called done
     collects: check
 
+  # Typed before a release, and NOT in the gate — which is what trying it
+  # taught, in four seconds.
+  #
+  # `--dry-run` exits 65 when a checked-in file is modified in git. A gate runs
+  # before the commit, so that is every run a person makes while working: red
+  # locally, green in CI's clean checkout. A check that fails only for the
+  # person and passes for the machine is worse than no check — it is the one
+  # people learn to route around.
+  #
+  # It stays in the file because it earned its place the day it ran: this
+  # package had no LICENSE at all, through every green gate, because nothing
+  # in the gate knew what pub.dev asks. Keeping it as data means it is not our
+  # copy of pub's rules — it IS pub's rules, run — and the twenty validations
+  # nobody would have written by hand come with it.
+  publishable:
+    desc: refuse a package that could not be published as it stands
+    run: [dart, pub, publish, --dry-run]
+
   # A person's convenience, and the one task in this file no gate reaches.
   #
   # Not in `check`, because compiling costs two seconds and produces something

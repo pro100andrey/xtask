@@ -71,16 +71,20 @@ void main() {
       // The local half of §7.1's residual — a task no gate ever reaches is
       // invisible, and it looks exactly like a task that is checked.
       //
-      // Not every task is a check, though, and `aot` is the proof: it
-      // compiles a binary for one machine, so a gate that ran it would be
-      // spending CI's time on something CI cannot use. What §7.1 asks is that
-      // the exception be DECLARED rather than discovered.
+      // Not every task is a check, and the two here fail the gate for
+      // opposite reasons. `aot` compiles a binary for one machine, so a gate
+      // running it spends CI's time on something CI cannot use.
+      // `publishable` is the sharper case: `pub publish --dry-run` exits 65
+      // while a checked-in file is modified, which is every run a person
+      // makes before committing — green in CI's clean checkout, red on the
+      // desk. What §7.1 asks is that both exceptions be DECLARED rather than
+      // discovered.
       //
       // So this is equality, not containment. A task added to the file and
       // forgotten fails here, and so does a name left behind after the task
       // it excused is gone. It is not a second copy of the gate: the gate's
       // members are exactly what is not written on this line.
-      const typedByHand = {'aot'};
+      const typedByHand = {'aot', 'publishable'};
       final reached = planRun(withCollectedGates(file), 'check').names.toSet();
       expect(
         file.tasks.keys.toSet().difference(reached),
