@@ -20,6 +20,7 @@ import 'resolve.dart';
 import 'schema.dart';
 import 'sets.dart';
 import 'validate.dart';
+import 'version.dart';
 
 /// The file, at the repository root (§4).
 const xtaskFileName = 'xtask.yaml';
@@ -80,6 +81,15 @@ final class Validate extends Request {
   const Validate();
 }
 
+/// `xtask --version` — print which engine this is.
+///
+/// Answered without a file, for the same reason as [EmitSchema]: it is a fact
+/// about the engine. It is also the first thing a bug report needs, which is
+/// no use if it only works in a directory that already works.
+final class ShowVersion extends Request {
+  const ShowVersion();
+}
+
 /// `xtask --emit-schema` — print the JSON Schema for the file format.
 ///
 /// **The one request that does not want a file.** It describes what an
@@ -105,7 +115,14 @@ final class ShowUsage extends Request {
 /// that checked it against a list of its own would be a third copy of this —
 /// drift between the parser and its own help being the sort that survives
 /// review, since both halves read plausibly on their own.
-const modes = {'--list', '--gates', '--validate', '--dry-run', '--emit-schema'};
+const modes = {
+  '--list',
+  '--gates',
+  '--validate',
+  '--dry-run',
+  '--emit-schema',
+  '--version',
+};
 
 /// What [args] asked for, or a [ShowUsage] naming what was wrong with it.
 ///
@@ -209,6 +226,15 @@ Request parseArguments(List<String> args) {
           );
   }
 
+  if (mode == '--version') {
+    return operands.isEmpty
+        ? const ShowVersion()
+        : ShowUsage(
+            '`--version` says which engine this is and takes nothing else, '
+            'and it was given `${operands.first}`',
+          );
+  }
+
   if (mode == '--emit-schema') {
     return operands.isEmpty
         ? const EmitSchema()
@@ -264,6 +290,7 @@ const usage = [
   '  xtask --validate            parse and check the file; run nothing',
   '  xtask --dry-run <task>      print the resolved plan; run nothing',
   '  xtask --emit-schema         print the JSON Schema for this file format',
+  '  xtask --version             print which engine this is',
   '',
   'the file is `$xtaskFileName`, at the repository root.',
 ];
@@ -330,6 +357,11 @@ Future<int> runCli(
     return ExitCode.success;
   }
 
+  if (request is ShowVersion) {
+    out('xtask $packageVersion');
+    return ExitCode.success;
+  }
+
   // A project verb shadowing a primitive would change what `do: remove` means
   // without anything saying so, and §6 is a closed list precisely so that the
   // answer to "what does this verb do" is one place. Refusing costs a project
@@ -381,7 +413,7 @@ Future<int> runCli(
 
   try {
     switch (request) {
-      case ShowUsage() || EmitSchema():
+      case ShowUsage() || EmitSchema() || ShowVersion():
         throw StateError('answered above');
 
       case Validate():
