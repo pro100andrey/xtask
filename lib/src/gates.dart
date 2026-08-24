@@ -15,6 +15,25 @@ List<Task> tasksInGate(XtaskFile file, String gate) => [
     if (task.gate.contains(gate)) task,
 ];
 
+/// Every gate set [file] mentions — declared membership or collection.
+///
+/// **Existing and being runnable are different questions**, and this answers
+/// the first. A gate set exists as soon as a task says it is in one, whether
+/// or not any composite gathers it; whether a gate nothing collects is a
+/// MISTAKE is §8's question, and `--validate` answers it. Both used to be
+/// worked out inline wherever they were needed — three separate expressions
+/// over `file.tasks.values` — which is one concept with no owner.
+Set<String> gateSets(XtaskFile file) => {
+  for (final task in file.tasks.values) ...task.gate,
+  ...collectedGates(file),
+};
+
+/// Every gate set some composite collects, and which can therefore be run.
+Set<String> collectedGates(XtaskFile file) => {
+  for (final task in file.tasks.values)
+    if (task.collects != null) task.collects!,
+};
+
 /// [file] with every `collects:` composite given the members it collects.
 ///
 /// **The seam between gates and the graph.** `graph.dart` knows `needs:` and

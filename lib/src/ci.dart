@@ -89,10 +89,7 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     );
   }
 
-  final collected = {
-    for (final task in file.tasks.values)
-      if (task.collects != null) task.collects!,
-  };
+  final collected = collectedGates(file);
 
   final steps = <CiStep>[];
   for (final workflow in directory.listSync().whereType<File>()) {
