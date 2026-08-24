@@ -19,7 +19,8 @@ dart run :xtask check
 
 ## The shape
 
-Two files in your repository.
+One file in your repository, and a second one only when a task needs code you
+wrote.
 
 **`xtask.yaml`**, at the repository root — this project's own, in full:
 
@@ -47,9 +48,26 @@ tasks:
     collects: check
 ```
 
-**`bin/xtask.dart`**, the entry point. The file name *is* the declaration:
-`dart run :xtask` resolves to `bin/xtask.dart` and nothing else, so no manifest
-entry names it.
+**`bin/xtask.dart`**, the entry point — and you do **not** need it yet. A
+repository whose tasks are all `run:` has nothing to put in it: the executable
+that comes with the package runs the file above already.
+
+```shell
+dart run xtask:xtask <task>     # the executable from the package you depend on
+dart run :xtask <task>          # bin/xtask.dart in YOUR package
+```
+
+The colon is the whole difference, and it is easy to read past: what is written
+to the left of it is which package the executable comes from, and an empty left
+side means yours. Without a `bin/xtask.dart` of your own the second spelling
+fails with `Could not find bin/xtask.dart in package <yours>`, which is a
+truthful error and a baffling one if nobody said the file was optional.
+
+Write the file when a task needs a **verb** — a Dart function in your
+repository, which no executable shipped by anybody else can contain. The file
+name *is* the declaration: `dart run :xtask` resolves to `bin/xtask.dart` and
+nothing else, so no manifest entry names it. The rest of this README writes the
+short spelling, because this repository has one.
 
 ```dart
 import 'dart:io';
