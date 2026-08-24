@@ -420,3 +420,7 @@ honouring `PATHEXT`, and knowing that `CreateProcess` cannot start a `.bat` or
 a `.cmd` however it is asked. A shim goes through the shell because there is no
 other way; an argument that the shell would reinterpret is **refused** with the
 character named, rather than passed through to mean something else.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
