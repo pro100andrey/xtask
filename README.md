@@ -402,7 +402,8 @@ broken" are repaired by different people, and one code sends both to the same
 one.
 
 A **verb**'s exit code is what the run answers with — it is your Dart, written
-against this table, and the built-in `remove` answers `2` for a path outside the
+against this table, whose constants the package exports as `ExitCode` so a
+verb can name the reason rather than the digit; and the built-in `remove` answers `2` for a path outside the
 repository because that means *the file is wrong*. A program started by `run:`
 has never heard of this table, so its code goes in the message and the run
 answers `1`.

@@ -119,10 +119,17 @@ void main() {
     // §5.3 gives five codes and a paragraph each. A bare `return 2;` is the
     // same value with the paragraph deleted, and the deletion is invisible:
     // it reads like arithmetic and reviews like nothing at all.
+    // Line by line, and comment lines dropped — the first version read the
+    // whole file and reported `lib/xtask.dart` for a comment that QUOTED
+    // `return 0;` while explaining why not to write it. A guard that cannot
+    // tell code from prose about code is a guard nobody keeps.
     final literal = RegExp(r'\breturn -?\d+;|\bexit\(-?\d+\)');
     final offenders = {
       for (final MapEntry(key: file, value: source) in sources.entries)
-        if (file != 'lib/src/exit_codes.dart' && literal.hasMatch(source)) file,
+        if (file != 'lib/src/exit_codes.dart')
+          for (final line in source.split('\n'))
+            if (!line.trimLeft().startsWith('//') && literal.hasMatch(line))
+              file,
     };
     expect(
       offenders,

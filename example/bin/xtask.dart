@@ -20,9 +20,10 @@ Future<int> countLines(VerbContext context) async {
   final files = context.args.length;
   context.log('$lines lines in $files ${files == 1 ? 'file' : 'files'}');
   // The exit code is the run's. A verb is written against the same table the
-  // engine answers with, which is why a verb may say `2` for "the file is
-  // wrong" where a process only ever says "it failed".
-  return 0;
+  // engine answers with — `ExitCode` comes from the package — which is why a
+  // verb may answer `invalidFile` for "the file is wrong", where a process
+  // only ever manages "it failed".
+  return ExitCode.success;
 }
 
 /// A set's members are relative to the repository root, and a verb is told
