@@ -151,6 +151,12 @@ void main() {
       });
     });
 
+    test('--why is a mode, and needs exactly one task', () {
+      expect((parseArguments(['--why', 'install']) as WhyTask).task, 'install');
+      expect(parseArguments(['--why']), isA<ShowUsage>());
+      expect(parseArguments(['--why', 'a', 'b']), isA<ShowUsage>());
+    });
+
     group('--keep-going', () {
       test('it is a modifier on a run, not a mode of its own', () {
         final request = parseArguments(['check', '--keep-going']) as RunTask;
@@ -676,6 +682,83 @@ tasks:
           expect(out.where((l) => l.startsWith('::error::')), hasLength(2));
         },
       );
+    });
+
+    group('--why', () {
+      const chain = '''
+version: 1
+tasks:
+  install: {desc: a, run: [dart]}
+  lint: {desc: b, gate: [check], needs: [install], run: [dart]}
+  check: {desc: c, collects: check}
+  publish: {desc: d, then: [announce], run: [dart]}
+  announce: {desc: e, run: [dart]}
+''';
+
+      test('names each entry point and the edges that reach it', () async {
+        writeFile(chain);
+        expect(await run(['--why', 'install']), ExitCode.success);
+        expect(printed(), contains('check'));
+        expect(printed(), contains('check needs lint'));
+        expect(printed(), contains('lint needs install'));
+      });
+
+      test('and it asks the file with `collects:` already resolved', () async {
+        // Otherwise every member of a gate looks like an entry point: it is
+        // the composite naming them that makes them not one.
+        writeFile(chain);
+        await run(['--why', 'install']);
+        expect(
+          out.where((l) => !l.startsWith(' ')),
+          isNot(contains('lint')),
+          reason: '`lint` is named by `check`, so it is not where a run starts',
+        );
+      });
+
+      test('a `then:` is reported as one, not as a requirement', () async {
+        writeFile(chain);
+        await run(['--why', 'announce']);
+        expect(printed(), contains('publish then announce'));
+      });
+
+      test('an entry point is told it is one', () async {
+        writeFile(chain);
+        await run(['--why', 'check']);
+        expect(printed(), contains('where a run starts'));
+      });
+
+      test('a task in no plan at all gets the answer, not an error', () async {
+        // The only way to be in the file and in no plan: named by something,
+        // and everything that names it is in a ring with it. `--validate`
+        // reports the ring; the answer here is that no run includes it, which
+        // looks from the outside exactly like a task that is checked.
+        writeFile('''
+version: 1
+tasks:
+  a: {desc: x, needs: [b], run: [dart]}
+  b: {desc: y, needs: [a], run: [dart]}
+  c: {desc: z, run: [dart]}
+''');
+        expect(await run(['--why', 'a']), ExitCode.success);
+        expect(printed(), contains('nothing reaches `a`'));
+      });
+
+      test('while a lone task IS an entry point, not an orphan', () async {
+        writeFile('''
+version: 1
+tasks:
+  a: {desc: x, run: [dart]}
+  lonely: {desc: y, run: [dart]}
+''');
+        await run(['--why', 'lonely']);
+        expect(printed(), contains('where a run starts'));
+      });
+
+      test('and a name no task answers to is refused', () async {
+        writeFile(chain);
+        expect(await run(['--why', 'instal']), ExitCode.invalidFile);
+        expect(complained(), contains('instal'));
+      });
     });
 
     group('--version', () {

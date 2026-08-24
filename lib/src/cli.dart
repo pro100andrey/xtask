@@ -88,6 +88,13 @@ final class Validate extends Request {
   const Validate();
 }
 
+/// `xtask --why <task>` — what puts that task in a plan.
+final class WhyTask extends Request {
+  const WhyTask(this.task);
+
+  final String task;
+}
+
 /// `xtask --version` — print which engine this is.
 ///
 /// Answered without a file, for the same reason as [EmitSchema]: it is a fact
@@ -124,6 +131,7 @@ final class ShowUsage extends Request {
 /// review, since both halves read plausibly on their own.
 const modes = {
   '--list',
+  '--why',
   '--gates',
   '--validate',
   '--dry-run',
@@ -275,6 +283,12 @@ Request parseArguments(List<String> args) {
           );
   }
 
+  if (mode == '--why') {
+    return operands.length == 1
+        ? WhyTask(operands.single)
+        : const ShowUsage('`--why` needs the name of one task');
+  }
+
   if (mode == '--gates') {
     return operands.length == 1
         ? GateMembers(operands.single)
@@ -310,6 +324,8 @@ const usage = [
   '  xtask --list                every task, with its description',
   '  xtask --list --gate <name>  only the tasks in that gate set',
   "  xtask --gates <name>        that gate set's task names, one per line",
+  '  xtask --why <task>          what puts that task in a plan, and by which',
+  '                              `needs:` or `then:`',
   '  xtask --validate            parse and check the file; run nothing',
   '  xtask --dry-run <task>      print the resolved plan; run nothing',
   '  xtask --emit-schema         print the JSON Schema for this file format',
@@ -467,6 +483,33 @@ Future<int> runCli(
         );
         for (final task in tasks) {
           out('${task.name.padRight(width)}  ${task.desc}');
+        }
+        return ExitCode.success;
+
+      case WhyTask(:final task):
+        if (!collected.tasks.containsKey(task)) {
+          throw XtaskFormatException('there is no task called `$task`');
+        }
+        var reached = false;
+        for (final entry in entryPoints(collected)) {
+          final route = routeTo(collected, from: entry, to: task);
+          if (route == null) {
+            continue;
+          }
+          reached = true;
+          out(entry);
+          if (route.isEmpty) {
+            out('  nothing else names it: `$task` is where a run starts');
+          }
+          for (final edge in route) {
+            out('  $edge');
+          }
+        }
+        if (!reached) {
+          // Not an error. It is the answer, and it is the one worth having:
+          // a task no entry point reaches is a task nothing runs, which looks
+          // from the outside exactly like a task that is checked.
+          out('nothing reaches `$task` — no run includes it');
         }
         return ExitCode.success;
 
