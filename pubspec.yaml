@@ -20,6 +20,12 @@ topics:
   - ci
   - build
 
+# The example is a package of its own — it has to be, so that `dart run :xtask`
+# inside it reaches its own entry point. A workspace keeps that one `pub get`
+# and one `dart analyze` away from rotting.
+workspace:
+  - example
+
 environment:
   # The floor is the toolchain's, not the code's. This package uses sealed
   # classes, patterns and class modifiers — Dart 3.0 — while `pro_lints 6.2.0`

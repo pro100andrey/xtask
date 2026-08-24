@@ -1,0 +1,32 @@
+# A project's whole task file. Everything here is data: the engine reads it,
+# and nothing in it can branch, capture output or reach a shell.
+version: 1
+
+sets:
+  # Expanded by the engine, in a deterministic order. A set that matches
+  # nothing is an error, because a task given no files checked nothing.
+  sources:
+    include: ['lib/**.dart']
+
+tasks:
+  format:
+    desc: fail if any Dart file is unformatted
+    gate: [check]
+    run: [dart, format, --output=none, --set-exit-if-changed, .]
+
+  analyze:
+    desc: refuse anything the analyzer objects to
+    gate: [check]
+    run: [dart, analyze, --fatal-infos]
+
+  # A verb: this project's own Dart, named here and registered in
+  # bin/xtask.dart. R1 puts logic here because the file cannot branch.
+  count:
+    desc: count the lines the sources add up to
+    gate: [check]
+    do: count-lines
+    argv-from: sources
+
+  check:
+    desc: everything that must pass before work is called done
+    collects: check

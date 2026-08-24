@@ -23,12 +23,14 @@ void main() {
 
   setUpAll(() {
     final root = findRoot(Directory.current.path)!;
-    // `bin/` as well as `lib/`, and the omission was not free: the entry point
-    // went on naming the deleted design document for a day after every other
-    // file stopped, because it is the one source outside `lib/` — and it is
-    // the file the README tells every consumer to copy.
+    // Everything that ships, not just `lib/`. The omission was not free once:
+    // the entry point went on naming the deleted design document for a day
+    // after every other file stopped, because it was the one source outside
+    // `lib/` — and it is the file the README tells every consumer to copy.
+    // `example/` is here for the same reason, one step further: it is written
+    // to be copied.
     sources = {
-      for (final directory in ['lib', 'bin'])
+      for (final directory in ['lib', 'bin', 'example'])
         for (final file in Directory(
           p.join(root, directory),
         ).listSync(recursive: true).whereType<File>())
