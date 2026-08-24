@@ -149,25 +149,13 @@ void main() {
   });
 
   group('and nothing runs', () {
-    test('the starter is not a stub — it refuses', () {
-      // If the seam ever leaks, a dry run starts a real process. A stub
-      // answering 0 would make that look like a plan that printed nothing.
-      expect(
-        () => const RefusingProcessStarter().start(
-          '/bin/dart',
-          const [],
-          workingDirectory: '/',
-          environment: const {},
-          runInShell: false,
-        ),
-        throwsStateError,
-      );
-    });
-
-    test('a `run:` body reaches it in neither of its two forms', () async {
-      // Both branches of `_perform` are past the dry-run return; a leak in
-      // either one would come back as the StateError above rather than as a
-      // green run.
+    test('a dry run has no process starter to leak through', () async {
+      // This used to be guarded at run time, by a `ProcessStarter` whose only
+      // job was to throw if anything ever reached it. There is nothing to
+      // guard now: `dryRun` takes no starter, because a dry run resolves and
+      // renders and never performs. The guarantee moved from a refusal into
+      // the shape of the call, which is the better place for it — so what is
+      // left to assert is that resolving several tasks answers cleanly.
       expect(
         await dry(
           'version: 1\ntasks:\n'
@@ -177,6 +165,22 @@ void main() {
         ),
         ExitCode.success,
       );
+    });
+
+    test('and it stops at the first thing that will not resolve', () async {
+      // The plan stops where a run would stop. A dry run that listed every
+      // unresolvable task would be a different answer to the same question,
+      // and it is one loop precisely so it cannot become one.
+      final code = await dry(
+        'version: 1\ntasks:\n'
+            '  one: {desc: a, run: [missing-one]}\n'
+            '  two: {desc: b, run: [missing-two]}\n'
+            '  all: {desc: c, needs: [one, two]}\n',
+        'all',
+      );
+      expect(code, ExitCode.missingTool);
+      expect(output(), contains('missing-one'));
+      expect(output(), isNot(contains('missing-two')));
     });
 
     test('a verb is looked up and NOT called', () async {

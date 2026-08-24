@@ -17,6 +17,7 @@ import 'model.dart';
 import 'parse.dart';
 import 'primitives.dart';
 import 'reporting.dart';
+import 'resolution.dart';
 import 'resolve.dart';
 import 'schema.dart';
 import 'sets.dart';
@@ -617,15 +618,17 @@ Future<int> runCli(
       ):
         _refuseArgumentsWithNowhereToGo(collected, task, arguments);
         return await Executor(
-          file: collected,
-          root: root,
-          resolver: resolver,
+          bodies: BodyResolver(
+            root: root,
+            resolver: resolver,
+            sets: collected.sets,
+            verbs: known,
+            environment: environment,
+            passedThrough: (task: task, arguments: arguments),
+          ),
           starter: starter,
           log: out,
-          verbs: known,
-          environment: environment,
           markers: LogMarkers.forHost(environment),
-          passedThrough: (task: task, arguments: arguments),
           keepGoing: keepGoing,
           concurrency: concurrency,
         ).run(planRun(collected, task));
