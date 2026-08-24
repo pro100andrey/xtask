@@ -2,22 +2,21 @@
 library;
 
 import 'context.dart';
-import 'exec.dart';
+import 'errors.dart';
+import 'exit_codes.dart';
 import 'graph.dart';
 import 'model.dart';
+import 'resolution.dart';
 import 'resolve.dart';
 
 /// Prints [plan] and everything in it, and runs nothing.
 ///
-/// **A real run with the last step removed.** The plan comes from the same
-/// `planRun` an execution uses (§5.1) and each body is resolved by the same
-/// [Executor] — the sets expanded, `$each` substituted, the working directory
-/// worked out, the program found on this machine's `PATH` (§5.4). Only the
-/// starting is skipped.
-///
-/// That is the whole point of the slice: a dry run that read the file its own
-/// way would print a plan that agrees with the run until the day one of the
-/// two is changed. §1's first defect, one directory apart.
+/// **Not a mode of the executor any more.** It used to be one: a callback the
+/// executor called instead of performing, a process starter whose only job was
+/// to throw, and four branches inside the run asking whether this run was
+/// pretending. What it actually is, is a plan and a resolution — the same
+/// resolution a run uses, which is why what it prints is what will happen and
+/// not a second reading of the file.
 ///
 /// The answer is **the exit code the run would give**, not a separate
 /// vocabulary: a program nothing answers to is still 3, an unknown verb still
@@ -33,48 +32,40 @@ Future<int> dryRun({
   Map<String, Verb> verbs = const {},
   Map<String, String> environment = const {},
   ({String task, List<String> arguments})? passedThrough,
-}) {
+}) async {
   // The order, before anything that can fail to resolve. A plan whose second
   // task names a program this machine has not got is exactly when somebody
   // wants to see the order, and printing it afterwards would print nothing.
   log('plan: ${plan.names.join(', ')}');
 
-  return Executor(
-    file: file,
+  final bodies = BodyResolver(
     root: root,
     resolver: resolver,
-    starter: const RefusingProcessStarter(),
-    log: log,
+    sets: file.sets,
     verbs: verbs,
     environment: environment,
-    dryRun: (body) => describe(body).forEach(log),
-    // Carried, because a dry run that dropped them would print a command
-    // different from the one the same invocation is about to run.
     passedThrough: passedThrough,
-  ).run(plan);
-}
-
-/// The starter a dry run is handed.
-///
-/// **Not a stub that answers 0.** [Executor] reaches its starter only after
-/// deciding to perform a body, which a dry run never does — so a call here is
-/// a hole in that seam, and a hole in that seam means `--dry-run` has just
-/// started a real process. Refusing turns that into a crash with a name on it
-/// rather than into a build.
-final class RefusingProcessStarter implements ProcessStarter {
-  const RefusingProcessStarter();
-
-  @override
-  Future<int> start(
-    String executable,
-    List<String> arguments, {
-    required String workingDirectory,
-    required Map<String, String> environment,
-    required bool runInShell,
-    Duration? timeout,
-    void Function(String line)? output,
-  }) => throw StateError(
-    'a dry run tried to start `$executable`. Nothing is started here: this is '
-    'the seam that makes --dry-run dry, and it has a hole in it',
   );
+
+  for (final step in plan.steps) {
+    final List<Resolved> resolved;
+    try {
+      resolved = bodies.resolveTask(step.task);
+    } on RunFailure catch (failure) {
+      log('error: ${failure.message}');
+      // The same code the run would answer with, including the third outcome:
+      // a body that would have succeeded and a continuation that would not.
+      return step.isContinuation ? ExitCode.continuationFailed : failure.code;
+    }
+
+    if (resolved.isEmpty) {
+      log('${step.task.name}: nothing of its own to run');
+      continue;
+    }
+    for (final body in resolved) {
+      describe(body).forEach(log);
+    }
+  }
+
+  return ExitCode.success;
 }

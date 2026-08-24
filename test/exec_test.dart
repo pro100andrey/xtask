@@ -9,6 +9,7 @@ import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/reporting.dart';
+import 'package:xtask/src/resolution.dart';
 import 'package:xtask/src/resolve.dart';
 
 /// A clock that advances by [step] every time it is read.
@@ -137,16 +138,18 @@ void main() {
   }) {
     final file = parseXtaskFile(yaml);
     return Executor(
-      file: file,
-      root: root.path,
-      resolver: resolver ?? resolverFor(),
+      bodies: BodyResolver(
+        root: root.path,
+        resolver: resolver ?? resolverFor(),
+        sets: file.sets,
+        verbs: verbs,
+        environment: environment,
+        passedThrough: (task: task, arguments: passed),
+      ),
       starter: starter,
       log: logged.add,
-      verbs: verbs,
-      environment: environment,
       markers: markers,
       now: ticking(step),
-      passedThrough: (task: task, arguments: passed),
       keepGoing: keepGoing,
       concurrency: concurrency,
     ).run(planRun(file, task));
@@ -859,9 +862,7 @@ void main() {
         '  late: {desc: b, run: [dart]}\n',
       );
       final code = await Executor(
-        file: file,
-        root: root.path,
-        resolver: resolverFor(),
+        bodies: BodyResolver(root: root.path, resolver: resolverFor()),
         starter: starter,
         log: logged.add,
         now: ticking(const Duration(milliseconds: 100)),
@@ -879,35 +880,66 @@ void main() {
       );
     });
 
-    test('and a dry run is never parallel, whatever it is handed', () async {
-      // Not about speed — a dry run performs nothing, so there is nothing to
-      // overlap. It is about what it REPORTS: sequentially a plan stops at the
-      // first thing that will not resolve, and run together it would list
-      // several, which is a different answer to the same question. The command
-      // line refuses the combination; this is the engine refusing it too, for
-      // a caller that reaches past the command line.
-      final file = parseXtaskFile(
+    test('a failure stops what has not started, and says so', () async {
+      // Three tasks that need NOTHING, so being blocked is not what stops the
+      // third: two run, one of them fails, and the third must not begin. The
+      // first form of this test used dependents of the failing task, which
+      // `_blockedBy` would have stopped anyway — it passed with the rule
+      // removed, and a mutation said so.
+      //
+      // What is already running is left alone: killing it would leave whatever
+      // it was half-way through in whatever state that half is.
+      starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
+      final running = runFile(
         'version: 1\ntasks:\n'
-        '  one: {desc: a, run: [missing-one]}\n'
-        '  two: {desc: b, run: [missing-two]}\n'
-        '  all: {desc: c, needs: [one, two]}\n',
+            '  lint: {desc: a, run: [ruff]}\n'
+            '  unit: {desc: b, run: [pytest]}\n'
+            '  types: {desc: c, run: [mypy]}\n'
+            '  all: {desc: d, needs: [lint, unit, types]}\n',
+        'all',
+        concurrency: 2,
       );
-      final code = await Executor(
-        file: file,
-        root: root.path,
-        resolver: resolverFor(),
-        starter: starter,
-        log: logged.add,
-        concurrency: 8,
-        dryRun: (body) => logged.add('plan ${body.task.name}'),
-      ).run(planRun(file, 'all'));
-
-      expect(code, ExitCode.missingTool);
-      expect(logged.join('\n'), contains('missing-one'));
+      await pumpEventQueue();
+      expect(
+        starter.started.map((s) => p.basename(s.executable)),
+        ['ruff', 'pytest'],
+        reason: '`mypy` must not have begun after `ruff` failed',
+      );
+      starter.holds['pytest']!.complete();
+      expect(await running, ExitCode.taskFailed);
+      expect(starter.started, hasLength(2));
       expect(
         logged.join('\n'),
-        isNot(contains('missing-two')),
-        reason: 'the plan stops where a run would stop',
+        contains('skipped  types — the run stopped at an earlier failure'),
+      );
+    });
+
+    test('a plan that is not in order is named, not spun on', () async {
+      // Unreachable through `planRun`, which emits every requirement before
+      // the task that needs it — so the plan is built by hand. The guard is
+      // against a hang, and a hang is the one failure with nothing to read
+      // afterwards.
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  early: {desc: a, needs: [late], run: [dart]}\n'
+        '  late: {desc: b, run: [dart]}\n',
+      );
+      final code = await Executor(
+        bodies: BodyResolver(root: root.path, resolver: resolverFor()),
+        starter: starter,
+        log: logged.add,
+        now: ticking(const Duration(milliseconds: 100)),
+        concurrency: 2,
+      ).run(Plan([PlanStep(file.tasks['early']!)]));
+
+      expect(code, ExitCode.success, reason: 'nothing failed; nothing ran');
+      expect(starter.started, isEmpty);
+      expect(
+        logged.join('\n'),
+        contains(
+          'skipped  early — nothing that would let it start ever '
+          'finished',
+        ),
       );
     });
 
