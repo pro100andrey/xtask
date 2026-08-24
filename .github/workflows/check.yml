@@ -18,8 +18,21 @@ on:
   pull_request:
 
 jobs:
+  # Three platforms, because §5.4 makes promises about all three and one of
+  # them had never been run. The engine resolves executables itself — walking
+  # `PATH`, honouring `PATHEXT`, knowing `CreateProcess` cannot start a `.bat`
+  # — and the suite was written for that: `resolve_test.dart` carries a
+  # `skip: Platform.isWindows` and the SIGTERM escalation a `testOn:
+  # '!windows'`. Guards written for a run that never happened are guesses.
+  #
+  # `fail-fast: false` so a red platform does not hide the other two, which is
+  # the whole reason to run them.
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
