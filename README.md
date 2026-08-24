@@ -2,10 +2,13 @@
 
 A task runner whose tasks are **data**.
 
-A project depends on `xtask`, writes an `xtask.yaml` describing its tasks, and
-writes one small entry point handing the engine its own **verbs** — Dart
-functions for the jobs that need real logic. `xtask <task>` resolves the
-dependency graph, runs each task once, in declared order, **without a shell**.
+Write an `xtask.yaml`, and run `xtask <task>`. It resolves the dependency
+graph, runs each task once, in declared order, **without a shell**.
+
+That is the whole of it, and the repository does not have to be a Dart one:
+the engine starts programs, so `[pytest, -q]` is as ordinary a task as
+`[dart, test]`. Two things are worth adding later, each when something makes
+you want it — see [The shape](#the-shape).
 
 The point is not convenience. It is that a repository stops keeping the same
 list twice. A `Makefile` names the commands, the CI workflow names them again,
@@ -19,55 +22,68 @@ dart run :xtask check
 
 ## The shape
 
-One file in your repository, and a second one only when a task needs code you
-wrote.
+### One file, and a command
 
-**`xtask.yaml`**, at the repository root — this project's own, in full:
+Install the engine once, write the file, run it. Nothing else — no
+`pubspec.yaml`, no Dart in the repository at all:
+
+```shell
+dart install xtask
+```
+
+The file is `xtask.yaml` at the repository root, and this is a whole one:
 
 ```yaml
 version: 1
 
 tasks:
-  format:
-    desc: fail if any Dart file is unformatted
+  lint:
+    desc: check the style
     gate: [check]
-    run: [dart, format, --output=none, --set-exit-if-changed, .]
-
-  analyze:
-    desc: refuse anything the analyzer or the house rules object to
-    gate: [check]
-    run: [dart, analyze, --fatal-infos]
+    run: [ruff, check, .]
 
   test:
     desc: run the suite
     gate: [check]
-    run: [dart, test]
+    run: [pytest, -q]
 
   check:
     desc: everything that must pass before work is called done
     collects: check
 ```
 
-**`bin/xtask.dart`**, the entry point — and you do **not** need it yet. A
-repository whose tasks are all `run:` has nothing to put in it: the executable
-that comes with the package runs the file above already.
+`xtask check` runs both, in the order they are written. `xtask --list` prints
+them with their descriptions.
+
+### Depending on it instead
+
+A Dart repository can depend on `xtask` rather than installing it, and then the
+version is written down in `pubspec.yaml` instead of being whatever that
+machine happens to have. The command becomes:
 
 ```shell
-dart run xtask:xtask <task>     # the executable from the package you depend on
-dart run :xtask <task>          # bin/xtask.dart in YOUR package
+dart run xtask:xtask <task>
 ```
 
-The colon is the whole difference, and it is easy to read past: what is written
-to the left of it is which package the executable comes from, and an empty left
-side means yours. Without a `bin/xtask.dart` of your own the second spelling
-fails with `Could not find bin/xtask.dart in package <yours>`, which is a
-truthful error and a baffling one if nobody said the file was optional.
+### Your own entry point
 
-Write the file when a task needs a **verb** — a Dart function in your
-repository, which no executable shipped by anybody else can contain. The file
-name *is* the declaration: `dart run :xtask` resolves to `bin/xtask.dart` and
-nothing else, so no manifest entry names it. The rest of this README writes the
-short spelling, because this repository has one.
+The third step, and the only one that needs Dart code, is a **verb**: a
+function of your own for a job with real logic in it. An engine somebody else
+shipped cannot contain your function, so you hand it over from a file of yours:
+
+```shell
+dart run :xtask <task>
+```
+
+The colon is the whole difference between the last two, and it is easy to read
+past: what is written to the left of it is which package the executable comes
+from, and an empty left side means yours. Without a `bin/xtask.dart` of your
+own the short spelling fails with `Could not find bin/xtask.dart in package
+<yours>`, which is a truthful error and a baffling one if nobody said the file
+was optional.
+
+The rest of this README writes the short spelling, because this repository has
+one.
 
 ```dart
 import 'dart:io';
@@ -102,6 +118,36 @@ Future<int> regen(VerbContext context) async {
 
 The engine ships **no** project verbs. `spec-check`, `regen`, `publish` are one
 repository's business. Its only built-in is `remove`.
+
+The file name *is* the declaration: `dart run :xtask` resolves to
+`bin/xtask.dart` and nothing else, so no manifest entry names it.
+
+### This repository's own file, in full
+
+```yaml
+version: 1
+
+tasks:
+  format:
+    desc: fail if any Dart file is unformatted
+    gate: [check]
+    run: [dart, format, --output=none, --set-exit-if-changed, .]
+
+  analyze:
+    desc: refuse anything the analyzer or the house rules object to
+    gate: [check]
+    run: [dart, analyze, --fatal-infos]
+
+  test:
+    desc: run the suite
+    gate: [check]
+    run: [dart, test]
+
+  check:
+    desc: everything that must pass before work is called done
+    collects: check
+```
+
 
 ## The command
 
