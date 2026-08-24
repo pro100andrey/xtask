@@ -317,6 +317,19 @@ void main() {
       expect(logged.first, 'plan: a');
     });
 
+    test('and nothing is timed, because nothing took any time', () async {
+      // The run prints what each task took. A dry run performs nothing, so a
+      // duration there would be a number measuring the printing of a plan.
+      await dry(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, test]}\n'
+            '  b: {desc: x, needs: [a], run: [dart, analyze]}\n',
+        'b',
+      );
+      expect(output(), isNot(contains('total')));
+      expect(output(), isNot(matches(RegExp(r'\d\.\ds'))));
+    });
+
     test('a composite says it has nothing of its own to run', () async {
       await dry(
         'version: 1\ntasks:\n'

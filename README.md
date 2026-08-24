@@ -139,8 +139,21 @@ jobs:
 Run-once still holds, because a job is one invocation. Parallelism is preserved,
 because it comes from the jobs the CI system already schedules. And a failure is
 still legible: on a host that folds output — GitHub Actions today — each task is
-a collapsible section and the failing one is annotated, which is not worse than
-a step per task and additionally shows order and duration.
+a collapsible section, and the failing one is annotated with the command and the
+directory, so the line that says a task failed is also the line that reproduces
+it.
+
+A job that is one invocation has one duration, which answers nothing, so the run
+prints what each task took at the end — after the last section, because a line
+inside a fold is invisible in exactly the state somebody is in when they want a
+number:
+
+```
+format    0.4s
+analyze   2.3s
+test     11.7s
+total    14.4s
+```
 
 The workflow file still owns what must **exist** before anything runs: the
 checkout, the toolchain, a browser driver. `xtask` owns what runs. There is no

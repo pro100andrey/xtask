@@ -50,37 +50,6 @@ Future<int> dryRun({
   ).run(plan);
 }
 
-/// How `--dry-run` prints one resolved body: what runs, where, and with what.
-///
-/// §13 keeps output *formats* out of this milestone — there is no `--json` and
-/// no key to choose one. This is the one human-readable form, and the thing it
-/// has to get right is that a person can check it against what they meant.
-List<String> describe(Resolved body) {
-  final member = body.member;
-  return [
-    if (member == null) body.task.name else '${body.task.name}  [$member]',
-    switch (body) {
-      ResolvedProcess(:final executable, :final arguments) =>
-        '  run  ${_command(executable, arguments)}',
-      // The name written in the file, not the Dart function it found: a verb
-      // is the project's, and `Closure: (VerbContext) => Future<int>` tells
-      // the reader nothing they can check.
-      ResolvedVerb(:final verb, :final arguments) =>
-        '  do   ${_command(verb, arguments)}',
-    },
-    '  in   ${body.workingDirectory}',
-    // **The task's own `env:`, not the environment the body will see.** The
-    // second is this machine's environment with two entries changed, and
-    // printing it would bury the two lines that are part of the plan under a
-    // hundred that are part of the terminal. What `env-required` asked for is
-    // not printed either: by the time a body resolves, it is set.
-    for (final variable in body.task.env.entries)
-      '  env  ${variable.key}=${_quoted(variable.value)}',
-    if (body case ResolvedProcess(runInShell: true))
-      '  via  cmd.exe, which is the only way to start a batch file (§5.4)',
-  ];
-}
-
 /// The starter a dry run is handed.
 ///
 /// **Not a stub that answers 0.** [Executor] reaches its starter only after
@@ -103,19 +72,3 @@ final class RefusingProcessStarter implements ProcessStarter {
     'the seam that makes --dry-run dry, and it has a hole in it',
   );
 }
-
-String _command(String head, List<String> arguments) =>
-    [head, ...arguments].map(_quoted).join(' ');
-
-/// [word] written so that its edges are visible.
-///
-/// A plan that cannot tell one argument from two is not one anybody can check
-/// against what they meant: `dart test a b` and `dart test 'a b'` are
-/// different commands, and an argument that is the empty string disappears
-/// entirely. This is for **reading** — xtask starts no shell (§5.4), so there
-/// is no shell for it to be correct for, and it does not claim to be.
-String _quoted(String word) => word.isEmpty || _needsQuotes.hasMatch(word)
-    ? "'${word.replaceAll("'", r"\'")}'"
-    : word;
-
-final _needsQuotes = RegExp(r'''[\s'"]''');

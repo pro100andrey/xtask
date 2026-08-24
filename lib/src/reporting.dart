@@ -7,8 +7,13 @@ library;
 /// run `xtask ci-analyze` as its only step rather than one step per task, and
 /// the obvious objection is that a failure then arrives as one blob. Grouping
 /// answers it: each task is a collapsible section and the failing one is
-/// annotated, which is not worse than a step per task and additionally shows
-/// order and duration.
+/// annotated with the command that broke, which is not worse than a step per
+/// task and additionally shows the order.
+///
+/// What grouping does **not** do is say how long anything took, and it cannot:
+/// a line inside a group is folded away with it, so a duration printed beside
+/// its task is invisible in exactly the state somebody is in when they want
+/// one. `Executor` prints the timing after the last section instead.
 sealed class LogMarkers {
   const LogMarkers();
 
