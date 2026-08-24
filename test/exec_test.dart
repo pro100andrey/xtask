@@ -735,6 +735,69 @@ void main() {
     });
   });
 
+  group('one walk, whether or not it runs things at once', () {
+    const three =
+        'version: 1\ntasks:\n'
+        '  boom: {desc: a, run: [ruff]}\n'
+        '  other: {desc: b, run: [pytest]}\n'
+        '  all: {desc: c, needs: [boom, other]}\n';
+
+    test('at one task in flight, nothing is held back', () async {
+      // §5.2's promise, and the only way this merge could have done harm: the
+      // parallel walk collects a task's lines and prints them when it ends,
+      // and doing that at one task a time would have silently stopped a long
+      // run being watchable.
+      //
+      // What is watched is the ENGINE's own lines — the section header and the
+      // command. A body's own output never passes through here unbuffered:
+      // §5.2 gets that by inheriting the terminal, which is why the fake
+      // starter writes to the `output` sink only when it is given one.
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(three, 'all');
+      await pumpEventQueue();
+      expect(
+        logged,
+        containsAllInOrder(['── boom ──', 'boom: /bin/ruff']),
+        reason: 'they arrived while the task was still running',
+      );
+      starter.holds['ruff']!.complete();
+      await running;
+    });
+
+    test('and at two, everything waits for the task to end', () async {
+      starter = FakeStarter()
+        ..holds['ruff'] = Completer<void>()
+        ..holds['pytest'] = Completer<void>();
+      final running = runFile(three, 'all', concurrency: 2);
+      await pumpEventQueue();
+      expect(
+        logged,
+        isEmpty,
+        reason: 'two tasks are in flight and neither has finished',
+      );
+      starter.holds['ruff']!.complete();
+      starter.holds['pytest']!.complete();
+      await running;
+      expect(logged, contains('── boom ──'));
+    });
+
+    test('a sequential run says what it did not get to', () async {
+      // **A behaviour change, and the one this merge makes.** The sequential
+      // walk used to return the moment something failed, saying nothing about
+      // the tasks it never reached; the parallel one named them. Which report
+      // you got depended on a flag that is about speed. Now it does not — and
+      // a task that did not run is worth a line either way.
+      starter = FakeStarter({'ruff': 1});
+      final code = await runFile(three, 'all');
+      expect(code, ExitCode.taskFailed);
+      expect(starter.started, hasLength(1), reason: 'it still stops');
+      expect(
+        logged.join('\n'),
+        contains('skipped  other — the run stopped at an earlier failure'),
+      );
+    });
+  });
+
   group('--parallel runs what does not depend on anything else', () {
     // The one place a documented promise is deliberately broken, and only when
     // asked: §5.2 wants a task's output as it arrives, and two tasks arriving

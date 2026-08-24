@@ -247,7 +247,13 @@ Declaration order still decides which of the ready tasks starts first — cheap
 gates before slow ones — but nothing makes them finish in that order. A failure
 stops what has not started; it does not reach into what is running, because
 killing a task would leave whatever it was half-way through in whatever state
-that half is.
+that half is. Whichever way it ran, the summary then names what did not run:
+
+```
+failed   format (exit 1)
+skipped  analyze — the run stopped at an earlier failure
+skipped  check — needs `format`, which did not pass
+```
 
 ## Exit codes
 
