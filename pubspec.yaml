@@ -1,0 +1,54 @@
+name: xtask
+description: >-
+  A task runner whose tasks are data. The graph lives in xtask.yaml; a job body
+  is either an external process (argv, never a shell) or a verb the project
+  implements in Dart.
+version: 0.1.0
+repository: https://github.com/pro100andrey/xtask
+issue_tracker: https://github.com/pro100andrey/xtask/issues
+
+# What `dart install` puts on the PATH. Its own help says an absent section
+# means "install every `bin/*.dart`"; it does not — the install fails with
+# `The pubspec.yaml contained no executables section`, which is how this was
+# found: by running the command the README tells a newcomer to run.
+executables:
+  xtask:
+
+topics:
+  - task-runner
+  - automation
+  - ci
+  - build
+
+# The example is a package of its own — it has to be, so that `dart run :xtask`
+# inside it reaches its own entry point. A workspace keeps that one `pub get`
+# and one `dart analyze` away from rotting.
+workspace:
+  - example
+
+environment:
+  # The floor is the toolchain's, not the code's. This package uses sealed
+  # classes, patterns and class modifiers — Dart 3.0 — while `pro_lints 6.2.0`
+  # requires ^3.12.0, and pub resolves dev dependencies too, so the declared
+  # constraint has to satisfy them. Written down because it is a constraint a
+  # consumer pays for and this package's whole premise is being depended on:
+  # if it ever wants a lower floor, the lint package is the thing to move, and
+  # lowering the number alone silently downgrades the rule set instead.
+  sdk: ^3.12.0
+
+dependencies:
+  # §4.2 says globs are expanded by the engine, not by a shell — this is the
+  # engine doing it.
+  glob: ^2.1.3
+  # Windows path rules, on a machine that is not Windows: `Context(style:
+  # windows)` is what lets §5.4's resolution be tested rather than asserted.
+  path: ^1.9.1
+  # Direct rather than reached through `yaml`: this package calls
+  # `SourceSpan.message()` itself to build the errors §8 promises, and a
+  # transitive dependency you call into is one that can move under you.
+  source_span: ^1.10.2
+  yaml: ^3.1.3
+
+dev_dependencies:
+  pro_lints: ^6.2.0
+  test: ^1.31.2

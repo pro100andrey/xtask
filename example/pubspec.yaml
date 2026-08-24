@@ -1,0 +1,13 @@
+# Its own package, so `dart run :xtask` inside this directory resolves to the
+# entry point beside it rather than to the engine's. That is the whole point
+# of the example: a verb is a function THIS project wrote.
+name: xtask_example
+publish_to: none
+
+environment:
+  sdk: ^3.12.0
+
+resolution: workspace
+
+dependencies:
+  xtask: ^0.1.0

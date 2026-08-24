@@ -1,0 +1,109 @@
+# This repository's own tasks. xtask is the subject of the work here, so it is
+# also the first thing to be run by it: what a person types before calling a
+# task done, and what the CI job runs, are one list and it is this one.
+#
+# Section numbers below (§4.3, §7.1) are the design document's, which is no
+# longer kept. They survive as the coordinates of the reasoning, not as
+# something to go and look up; the README is the record now.
+
+# Editor support, and the path is relative on purpose: it works in a fresh
+# clone with no network and no per-person settings. The file it points at is
+# generated and committed —
+#
+#   dart run :xtask --emit-schema > xtask.schema.json
+#
+# — and test/dogfood_test.dart fails if the committed one has fallen behind.
+# The redirect is a person's shell because a task cannot do it: `>` is shell,
+# and §5.2 says a task's description has none.
+# yaml-language-server: $schema=./xtask.schema.json
+version: 1
+
+tasks:
+  # Order inside the gate is the order written here, and it is the one place
+  # ordering is implicit (§4.3). Cheapest first: an unformatted file is one
+  # command to fix, and finding that out after the tests have run is two
+  # minutes spent to learn something that took a tenth of a second to check.
+  format:
+    desc: fail if any Dart file is unformatted
+    gate: [check]
+    run: [dart, format, --output=none, --set-exit-if-changed, .]
+
+  analyze:
+    # --fatal-infos is not decoration. The house rule set (package:pro_lints)
+    # reports most of what it has to say at info severity, so without it this
+    # task passes a file the rules reject.
+    desc: refuse anything the analyzer or the house rules object to
+    gate: [check]
+    run: [dart, analyze, --fatal-infos]
+
+  test:
+    # From the repository root, which is the run that counts: a test that only
+    # passes from its own directory is red here.
+    desc: run the suite
+    gate: [check]
+    run: [dart, test]
+
+  check:
+    desc: everything that must pass before work is called done
+    collects: check
+
+  # In its own gate set, and that is the whole point — which trying the other
+  # arrangement taught, in four seconds.
+  #
+  # `--dry-run` exits 65 when a checked-in file is modified in git. `check`
+  # runs before the commit, so putting this there is red on every run a person
+  # makes while working and green in CI's clean checkout: a check that fails
+  # only for the person and passes only for the machine is the one people learn
+  # to route around.
+  #
+  # A second gate set is §7.1's answer to exactly that — one job per gate set,
+  # and this one's job runs where the tree is clean by construction. Leaving it
+  # ungated instead would have reopened the hole it was written to close: the
+  # licence was missing not because nobody thought of it, but because nothing
+  # ran.
+  #
+  # It stays in the file because it earned its place the day it ran: this
+  # package had no LICENSE at all, through every green gate, because nothing
+  # in the gate knew what pub.dev asks. Keeping it as data means it is not our
+  # copy of pub's rules — it IS pub's rules, run — and the twenty validations
+  # nobody would have written by hand come with it.
+  publishable:
+    desc: refuse a package that could not be published as it stands
+    gate: [release]
+    run: [dart, pub, publish, --dry-run]
+
+  release:
+    desc: everything that must hold before this package can be published
+    collects: release
+
+  # A person's convenience, and the one task in this file no gate reaches.
+  #
+  # Not in `check`, because compiling costs two seconds and produces something
+  # only one machine can run: the binary is platform-specific, so CI cannot use
+  # the one you built and gains nothing by building its own. It is written here
+  # rather than left in somebody's shell history for the reason §1 gives — a
+  # command a person types is still a command that drifts.
+  #
+  # It freezes the CODE, not the data. `xtask.yaml` is read at run time, so
+  # tasks, gates and `each:` change without recompiling; verbs are Dart (§9),
+  # so after editing one, run this again.
+  #
+  # The output goes where `.gitignore` already reaches. Ten milliseconds
+  # against `dart run`'s five hundred buys nothing on `check` — that gate
+  # spends seconds inside `dart test` — and buys the whole of the cheap modes:
+  # --gate-members, --dry-run, --why, --validate, --emit-schema.
+  aot:
+    desc: compile this repository's own entry point to a native binary
+    run: [dart, compile, exe, bin/xtask.dart, -o, .dart_tool/xtask]
+
+# There is no `install` task running `dart pub get`, deliberately. §7.1 draws
+# the line at what must EXIST before xtask runs, and that side belongs to the
+# CI file; `dart run` resolves the package on its own, so a task doing it would
+# be a second place that says so and a wait a person pays for locally.
+#
+# There are two gate sets, and they are not two copies. A `ci` set beside
+# `check` WOULD have been — the same three tasks written twice, which is the
+# defect §1 exists to remove and is not made acceptable by both copies living
+# in one file. `release` holds something `check` cannot hold at all: a check
+# that only a clean tree can pass. Different members, different job, different
+# question.

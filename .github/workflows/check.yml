@@ -1,0 +1,51 @@
+# One job per gate set, and one invocation per job.
+#
+# What runs is not written here. `dart run :xtask check` runs the `check` gate,
+# and its members live in xtask.yaml; a `run:` step naming a command directly
+# would be the duplicate list this repository exists to remove, so
+# test/dogfood_test.dart refuses one.
+#
+# What IS written here is what must exist before xtask can run: the checkout
+# and the toolchain. §7.1 puts the line there deliberately — a `requires:` key
+# that installed a toolchain would make this a build system, which §10 rules
+# out. `dart run` resolves the package itself, so there is no `pub get` step
+# either.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Three platforms, because §5.4 makes promises about all three and one of
+  # them had never been run. The engine resolves executables itself — walking
+  # `PATH`, honouring `PATHEXT`, knowing `CreateProcess` cannot start a `.bat`
+  # — and the suite was written for that: `resolve_test.dart` carries a
+  # `skip: Platform.isWindows` and the SIGTERM escalation a `testOn:
+  # '!windows'`. Guards written for a run that never happened are guesses.
+  #
+  # `fail-fast: false` so a red platform does not hide the other two, which is
+  # the whole reason to run them.
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart run :xtask check
+
+  # The second gate set, and it needs a job of its own rather than a step in
+  # the one above: `dart pub publish --dry-run` exits 65 while any checked-in
+  # file is modified, so it can only pass where the tree is clean by
+  # construction. That is here and not a desk, which is why the member sits in
+  # `release` instead of `check` — xtask.yaml says the rest.
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart run :xtask release

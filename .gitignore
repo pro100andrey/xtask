@@ -1,0 +1,6 @@
+# Dart pub workspace (root resolution)
+.dart_tool/
+.claude/
+.tm
+CLAUDE.md
+xtask.md
