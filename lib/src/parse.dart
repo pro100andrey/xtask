@@ -102,8 +102,7 @@ NamedSet _namedSet(YamlNode node, String name, SourceSpan keySpan) {
     return ListSet(_stringList(node, 'set `$name`'), span: keySpan);
   }
   if (node is YamlMap) {
-    const globKeys = {'include', 'exclude'};
-    _refuseUnknownKeys(node, globKeys, 'key in glob set `$name`');
+    _refuseUnknownKeys(node, globSetKeys, 'key in glob set `$name`');
     final include = node.nodes['include'];
     if (include == null) {
       throw XtaskFormatException(

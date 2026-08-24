@@ -4,6 +4,17 @@
 #
 # The design is xtask.md, which is not in the clone. Section numbers below
 # refer to it.
+
+# Editor support, and the path is relative on purpose: it works in a fresh
+# clone with no network and no per-person settings. The file it points at is
+# generated and committed —
+#
+#   dart run :xtask --emit-schema > xtask.schema.json
+#
+# — and test/dogfood_test.dart fails if the committed one has fallen behind.
+# The redirect is a person's shell because a task cannot do it: `>` is shell,
+# and §5.2 says a task's description has none.
+# yaml-language-server: $schema=./xtask.schema.json
 version: 1
 
 tasks:

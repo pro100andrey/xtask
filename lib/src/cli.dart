@@ -17,6 +17,7 @@ import 'parse.dart';
 import 'primitives.dart';
 import 'reporting.dart';
 import 'resolve.dart';
+import 'schema.dart';
 import 'sets.dart';
 import 'validate.dart';
 
@@ -73,6 +74,17 @@ final class Validate extends Request {
   const Validate();
 }
 
+/// `xtask --emit-schema` — print the JSON Schema for the file format.
+///
+/// **The one request that does not want a file.** It describes what an
+/// `xtask.yaml` may contain, which is a fact about the engine and not about
+/// any repository — so it is answered before the file is looked for, and works
+/// in a directory that has none. That is the point: it is how a repository
+/// gets its first one.
+final class EmitSchema extends Request {
+  const EmitSchema();
+}
+
 /// The usage text, printed on request and as the error message.
 final class ShowUsage extends Request {
   const ShowUsage([this.problem]);
@@ -82,7 +94,12 @@ final class ShowUsage extends Request {
 }
 
 /// The modes, exactly §7's list.
-const _modes = {'--list', '--gates', '--validate', '--dry-run'};
+///
+/// Public because the usage text has to name every one of them, and a test
+/// that checked it against a list of its own would be a third copy of this —
+/// drift between the parser and its own help being the sort that survives
+/// review, since both halves read plausibly on their own.
+const modes = {'--list', '--gates', '--validate', '--dry-run', '--emit-schema'};
 
 /// What [args] asked for, or a [ShowUsage] naming what was wrong with it.
 ///
@@ -96,7 +113,7 @@ Request parseArguments(List<String> args) {
     return const ShowUsage('nothing to do');
   }
 
-  final modes = <String>[];
+  final written = <String>[];
   final operands = <String>[];
   String? gate;
   var narrowed = false;
@@ -122,8 +139,8 @@ Request parseArguments(List<String> args) {
       continue;
     }
 
-    if (_modes.contains(argument)) {
-      modes.add(argument);
+    if (modes.contains(argument)) {
+      written.add(argument);
       continue;
     }
 
@@ -134,13 +151,14 @@ Request parseArguments(List<String> args) {
     operands.add(argument);
   }
 
-  if (modes.length > 1) {
+  if (written.length > 1) {
     return ShowUsage(
-      '`${modes[0]}` and `${modes[1]}` ask for different things; write one',
+      '`${written[0]}` and `${written[1]}` ask for different things; '
+      'write one',
     );
   }
 
-  final mode = modes.isEmpty ? null : modes.single;
+  final mode = written.isEmpty ? null : written.single;
 
   if (narrowed && mode != '--list') {
     // The two names differ by one letter and mean opposite kinds of thing,
@@ -158,6 +176,15 @@ Request parseArguments(List<String> args) {
         : ShowUsage(
             '`--list` takes no task name — to narrow it, write '
             '`--list --gate <name>`, and it was given `${operands.first}`',
+          );
+  }
+
+  if (mode == '--emit-schema') {
+    return operands.isEmpty
+        ? const EmitSchema()
+        : ShowUsage(
+            '`--emit-schema` describes the file format and takes nothing '
+            'else, and it was given `${operands.first}`',
           );
   }
 
@@ -199,6 +226,7 @@ const usage = [
   "  xtask --gates <name>        that gate set's task names, one per line",
   '  xtask --validate            parse and check the file; run nothing',
   '  xtask --dry-run <task>      print the resolved plan; run nothing',
+  '  xtask --emit-schema         print the JSON Schema for this file format',
   '',
   'the file is `$xtaskFileName`, at the repository root.',
 ];
@@ -257,6 +285,14 @@ Future<int> runCli(
     return ExitCode.invalidFile;
   }
 
+  // Answered before the file is looked for, because it is not about a file:
+  // it says what an `xtask.yaml` may contain, which is how a repository that
+  // has not got one yet gets its first.
+  if (request is EmitSchema) {
+    out(xtaskJsonSchema().trimRight());
+    return ExitCode.success;
+  }
+
   // A project verb shadowing a primitive would change what `do: remove` means
   // without anything saying so, and §6 is a closed list precisely so that the
   // answer to "what does this verb do" is one place. Refusing costs a project
@@ -308,7 +344,7 @@ Future<int> runCli(
 
   try {
     switch (request) {
-      case ShowUsage():
+      case ShowUsage() || EmitSchema():
         throw StateError('answered above');
 
       case Validate():

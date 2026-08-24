@@ -8,6 +8,7 @@ import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/primitives.dart';
+import 'package:xtask/src/schema.dart';
 import 'package:xtask/src/sets.dart';
 import 'package:xtask/src/validate.dart';
 import 'package:yaml/yaml.dart';
@@ -75,6 +76,46 @@ void main() {
         file.tasks.keys.toSet().difference(reached),
         isEmpty,
         reason: 'these tasks are in the file and nothing runs them',
+      );
+    });
+  });
+
+  group('the schema beside it is the one this engine emits', () {
+    // The committed file is generated, and generated files rot the moment
+    // nothing compares them. There is no `--check-schema` mode for this: a
+    // task cannot write the file either, because `>` is shell and §5.2 says a
+    // task's description has none — so writing stays a person's deliberate
+    // act and checking is the gate's, which is the right way round.
+    late File schema;
+
+    setUpAll(() => schema = File(p.join(root, 'xtask.schema.json')));
+
+    test('it is there at all', () {
+      expect(
+        schema.existsSync(),
+        isTrue,
+        reason:
+            'an editor points at this file, and a clone without it is a '
+            'clone with no key completion and no red squiggle',
+      );
+    });
+
+    test('and it has not fallen behind the model it describes', () {
+      expect(
+        schema.readAsStringSync(),
+        xtaskJsonSchema(),
+        reason:
+            'the schema is out of date. Regenerate it:\n'
+            '  dart run :xtask --emit-schema > xtask.schema.json',
+      );
+    });
+
+    test('and the file points at it, by a path that survives a clone', () {
+      // Relative, so it needs no network and no per-person editor setting.
+      final text = File(p.join(root, xtaskFileName)).readAsStringSync();
+      expect(
+        text,
+        contains(r'# yaml-language-server: $schema=./xtask.schema.json'),
       );
     });
   });

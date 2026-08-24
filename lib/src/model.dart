@@ -34,6 +34,13 @@ const taskKeys = <String>{
 /// Every key the document may carry at the top level (§4.1).
 const topLevelKeys = <String>{'version', 'sets', 'tasks'};
 
+/// Every key a glob set may carry (§4.2).
+///
+/// Here rather than beside the parser for the reason above: `--emit-schema`
+/// projects it into a JSON Schema, and a second spelling of `include` is a
+/// second spelling that an editor would accept and the engine would refuse.
+const globSetKeys = <String>{'include', 'exclude'};
+
 /// The keys that name a task's body. Exactly one, or none (§4.3).
 const bodyKeys = <String>{'run', 'do'};
 
