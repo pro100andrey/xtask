@@ -255,6 +255,16 @@ registry will not accept that version again.
 | `then` | continuations, run **after** this task's body |
 | `gate` | the gate sets this task belongs to |
 | `collects` | names a gate set this task is the composite of |
+| `timeout` | seconds a `run:` body may take before it is killed — per member under `each:` |
+
+`timeout:` is asked of the process, not waited out by the engine: the body is
+sent SIGTERM, given a moment to write what it has, and then SIGKILL. What it
+does **not** do is reach the process's own children — Windows has job objects,
+POSIX has process groups, and neither is what Dart exposes — so a task that
+spawns a server and hangs may leave the server behind. A `do:` cannot carry a
+`timeout:` at all: a verb is a Dart function, nothing outside it can stop one,
+and a limit that passed while the verb kept writing to disk would be worse than
+none. That is refused when the file is read, not discovered at runtime.
 
 A set is a list of members or a glob with exclusions, expanded by the engine
 rather than by a shell, in a deterministic order:

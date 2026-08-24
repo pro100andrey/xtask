@@ -658,4 +658,76 @@ tasks: {}
       );
     });
   });
+
+  group('`timeout:` is refused where it could not be honoured', () {
+    test('a whole number of seconds is kept', () {
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n  a: {desc: x, timeout: 300, run: [dart]}\n',
+      );
+      expect(file.tasks['a']!.timeout, 300);
+    });
+
+    test('and its absence is no limit, not a default one', () {
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n',
+      );
+      expect(file.tasks['a']!.timeout, isNull);
+    });
+
+    test('something that is not a number is refused', () {
+      expect(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n  a: {desc: x, timeout: 5m, run: [dart]}\n',
+        ),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('seconds'),
+          ),
+        ),
+      );
+    });
+
+    test('and so is a length of time that is not one', () {
+      // Zero would mean "kill it before it starts", which nobody means; a
+      // negative is a typo.
+      for (final value in [0, -1]) {
+        expect(
+          () => parseXtaskFile(
+            'version: 1\ntasks:\n'
+            '  a: {desc: x, timeout: $value, run: [dart]}\n',
+          ),
+          throwsA(isA<XtaskFormatException>()),
+          reason: '`timeout: $value` was accepted',
+        );
+      }
+    });
+
+    test('a `do:` cannot carry one, and the message says why', () {
+      // Dart cannot stop a running function from outside, so the limit would
+      // pass while the verb carried on writing to the disk.
+      expect(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n  a: {desc: x, timeout: 5, do: regen}\n',
+        ),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('verb'), contains('inside the verb')),
+          ),
+        ),
+      );
+    });
+
+    test('and neither can a task with no body to spend it', () {
+      expect(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n  a: {desc: x, timeout: 5, collects: g}\n',
+        ),
+        throwsA(isA<XtaskFormatException>()),
+      );
+    });
+  });
 }

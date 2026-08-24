@@ -29,6 +29,7 @@ const taskKeys = <String>{
   'then',
   'gate',
   'collects',
+  'timeout',
 };
 
 /// Every key the document may carry at the top level (§4.1).
@@ -153,6 +154,7 @@ final class Task with Located {
     this.then = const [],
     this.gate = const [],
     this.collects,
+    this.timeout,
   });
 
   @override
@@ -197,6 +199,15 @@ final class Task with Located {
 
   /// The gate sets this task belongs to.
   final List<String> gate;
+
+  /// Seconds a `run:` body may take before it is killed, or null for no
+  /// limit.
+  ///
+  /// **A `run:` body only.** A verb is a Dart function, and Dart cannot stop
+  /// one from outside: a deadline on it would report a timeout while the verb
+  /// carried on writing to the disk, which is worse than no deadline at all.
+  /// `parse` refuses the combination rather than letting it half-work.
+  final int? timeout;
 
   /// Names a gate set this task is the composite of (§4.3). Deliberately
   /// spelled nothing like `gate:`: the two mean opposite things, and a

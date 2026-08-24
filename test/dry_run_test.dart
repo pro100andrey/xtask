@@ -340,6 +340,21 @@ void main() {
       expect(output(), contains('check: nothing of its own to run'));
     });
 
+    test('a limit on a task is part of what will happen', () async {
+      // A dry run that hid it would promise a command with no deadline and
+      // then run one with a deadline.
+      await dry(
+        'version: 1\ntasks:\n  a: {desc: x, timeout: 90, run: [dart, test]}\n',
+        'a',
+      );
+      expect(output(), contains('for  at most 90s'));
+    });
+
+    test('and a task without one says nothing about time', () async {
+      await dry('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n', 'a');
+      expect(output(), isNot(contains('at most')));
+    });
+
     test('and a Windows shim says the shell is coming', () async {
       // The one thing §5.4 rule 3 makes visible, and the reason an argument
       // can be refused on one platform and not another.

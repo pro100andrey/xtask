@@ -48,11 +48,15 @@ abstract interface class ProcessStarter {
   ///
   /// Output goes straight through as it arrives; §5.2 requires it never be
   /// buffered to the end, because a long test run has to be watchable.
+  /// [timeout], where a task set one, is the starter's to enforce — not the
+  /// caller's. Only whoever holds the process can kill it, and a deadline
+  /// applied by waiting less would report a timeout while the process ran on.
   Future<int> start(
     String executable,
     List<String> arguments, {
     required String workingDirectory,
     required Map<String, String> environment,
     required bool runInShell,
+    Duration? timeout,
   });
 }

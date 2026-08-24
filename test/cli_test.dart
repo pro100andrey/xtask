@@ -31,6 +31,7 @@ final class FakeStarter implements ProcessStarter {
     required String workingDirectory,
     required Map<String, String> environment,
     required bool runInShell,
+    Duration? timeout,
   }) async {
     started.add(Started(executable, arguments, workingDirectory));
     return codes[p.basename(executable)] ?? ExitCode.success;

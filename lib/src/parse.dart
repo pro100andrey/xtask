@@ -164,11 +164,14 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     );
   }
 
+  final body = _body(map, name);
+
   return Task(
     name: name,
     span: keySpan,
     desc: _description(desc, name),
-    body: _body(map, name),
+    body: body,
+    timeout: _timeout(map, name, body),
     args: List.unmodifiable(_optionalStringList(map, 'args', name)),
     argvFrom: _optionalString(map, 'argv-from', name),
     each: _optionalString(map, 'each', name),
@@ -182,6 +185,53 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     gate: _names(map, 'gate', name),
     collects: _optionalString(map, 'collects', name),
   );
+}
+
+/// `timeout:` in seconds, refused where it cannot be honoured.
+///
+/// **A `run:` body only, and refused rather than half-applied on a verb.** A
+/// verb is a Dart function, and Dart cannot stop one from outside: a deadline
+/// would report a timeout while the verb carried on writing to the disk. A
+/// verb that wants a deadline is the place to implement one — R1 put the logic
+/// there deliberately.
+int? _timeout(YamlMap map, String taskName, Body? body) {
+  final node = map.nodes['timeout'];
+  if (node == null) {
+    return null;
+  }
+  final value = node.value;
+  if (value is! int) {
+    throw XtaskFormatException(
+      '`timeout:` of task `$taskName` must be a whole number of seconds',
+      node.span,
+    );
+  }
+  if (value <= 0) {
+    // Zero would mean "kill it before it starts", which nobody means; a
+    // negative is a typo. Neither is a limit.
+    throw XtaskFormatException(
+      '`timeout:` of task `$taskName` is $value, which is not a length of '
+      'time. Leave it out to run without a limit',
+      node.span,
+    );
+  }
+  if (body is DoBody) {
+    throw XtaskFormatException(
+      'task `$taskName` puts a `timeout:` on a `do:`, and the engine cannot '
+      'honour it: a verb is a Dart function and nothing outside it can stop '
+      'one, so the limit would pass while the verb kept running. Put the '
+      'deadline inside the verb, where R1 puts the logic anyway',
+      node.span,
+    );
+  }
+  if (body == null) {
+    throw XtaskFormatException(
+      'task `$taskName` has a `timeout:` and no body to spend it, so there is '
+      'nothing for the limit to be a limit on',
+      node.span,
+    );
+  }
+  return value;
 }
 
 Body? _body(YamlMap map, String taskName) {
