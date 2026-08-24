@@ -1,0 +1,8 @@
+# One line ending in the repository, on every platform.
+#
+# The `check` gate begins with `dart format --set-exit-if-changed`, and the
+# formatter keeps whatever ending a file already has. Without this, a Windows
+# checkout under the default `core.autocrlf` is a working tree that differs
+# from what CI formatted — the class of red that has nothing to do with the
+# change being made.
+* text=auto eol=lf
