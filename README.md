@@ -24,11 +24,10 @@ Install the engine once. Your repository needs no `pubspec.yaml` and no Dart in
 it at all — only the Dart SDK on the machine doing the installing:
 
 ```shell
-dart install 'xtask@{git: {url: https://github.com/pro100andrey/xtask}}'
+dart install xtask
 ```
 
-Once it is on pub.dev that becomes `dart install xtask`. Either way what lands
-on the PATH is a command called `xtask`.
+What lands on the PATH is a command called `xtask`.
 
 Then write `xtask.yaml` at the repository root. This is a whole one:
 
@@ -49,6 +48,15 @@ tasks:
   check:
     desc: everything that must pass before work is called done
     collects: check
+```
+
+Those two are a Python repository's tools; put in whatever your own repository
+already runs. Naming a program that is not installed is not a silent pass —
+the run stops and says which one:
+
+```
+error: task `lint`: `ruff` is not installed, or is not on PATH — nothing
+runnable by that name in the 39 directories on PATH
 ```
 
 And run it:
@@ -178,10 +186,8 @@ xtask --version              print which engine this is
 the current directory **upwards**, so the command works from a subdirectory and
 every path inside the file stays relative to the repository root.
 
-Once this is on pub.dev, `dart install xtask` will put a real `xtask` on the
-PATH — the manifest names no `executables:`, so `bin/xtask.dart` is what gets
-installed, already compiled. For a repository whose tasks are all `run:`, that
-is the pleasant way to work and there is nothing wrong with it.
+`dart install xtask` puts a real `xtask` on the PATH, compiled, and for a
+repository whose tasks are all `run:` that is the pleasant way to work.
 
 It stops working the moment a project registers a **verb**, and that is the
 design rather than a limitation. What gets installed is this package's own
