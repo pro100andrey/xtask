@@ -102,85 +102,24 @@ final class Executor {
     return code;
   }
 
+  /// Walks the plan, starting what is ready and waiting for what is running.
+  ///
+  /// **One walk, not two.** There used to be a sequential one and a parallel
+  /// one, with the same epilogue written twice — and they had drifted: "the
+  /// first failure" meant first-by-declaration in one and first-by-completion
+  /// in the other, and only the first was pinned by a test. At one task in
+  /// flight the two orders are the same order, so the divergence had nowhere
+  /// left to live once the loop was one loop.
+  ///
+  /// A step may begin when everything it waits on has **finished**. The plan's
+  /// order decides only which of the ready ones is begun first, so §4.3's
+  /// cheap-before-slow survives as a preference rather than a guarantee.
+  ///
+  /// A failure stops new tasks from being started but does not reach into the
+  /// ones already running: killing a task would leave whatever it was half-way
+  /// through in whatever state that half is. Under `--keep-going`, nothing is
+  /// stopped at all.
   Future<int> _walk(
-    Plan plan,
-    Map<String, Duration> took,
-    Map<String, int> failed,
-    Map<String, Skipped> skipped,
-  ) async {
-    if (concurrency > 1) {
-      return _walkTogether(plan, took, failed, skipped);
-    }
-
-    int? answer;
-
-    for (final step in plan.steps) {
-      final blocker = _blockedBy(step, {...failed.keys, ...skipped.keys});
-      if (blocker != null) {
-        // Named, not dropped. A task that silently did not happen is
-        // indistinguishable from one that passed, which is the whole failure
-        // this tool is about.
-        skipped[step.task.name] = blocker;
-        continue;
-      }
-
-      final started = now();
-      try {
-        await _runTask(step.task);
-      } on RunFailure catch (failure) {
-        // Closes the open section and annotates, in that order and for that
-        // reason: an `::error::` inside a group is folded away with it, so
-        // the one line somebody needs would be the one they have to expand a
-        // section to reach.
-        markers.error(failure.message).forEach(log);
-        failed[step.task.name] = failure.code;
-
-        if (step.isContinuation) {
-          // **Always 4, whatever went wrong inside it.** The distinction the
-          // code carries is not what failed but WHERE: the body already
-          // succeeded, so the publish happened. Letting a missing tool inside
-          // a continuation answer 3 would lose that, and 3 is not a
-          // recoverable-in-the-wrong-direction problem.
-          log(ExitCode.continuationNotice);
-        }
-
-        // **The first failure's code, however many follow.** A code is §5.3's
-        // shortest possible bug report about ONE failure, and a run with three
-        // cannot honestly claim to be about all of them — combining them into
-        // a worst-of would invent a severity order the section does not have.
-        // The summary below is where the others are.
-        answer ??= step.isContinuation
-            ? ExitCode.continuationFailed
-            : failure.code;
-
-        if (!keepGoing) {
-          return answer;
-        }
-      } finally {
-        // In a `finally`, so the task that FAILED is timed too. Where the run
-        // spent itself before it broke is most of what somebody wants from a
-        // red job.
-        took[step.task.name] = now().difference(started);
-      }
-    }
-
-    return answer ?? ExitCode.success;
-  }
-
-  /// The same walk with more than one task in flight — `--parallel`.
-  ///
-  /// A step may begin when everything it waits on has **finished**, which is
-  /// what `_blockedBy` already decides; the plan's order decides only which of
-  /// the ready ones is begun first, so §4.3's cheap-before-slow survives as a
-  /// preference. Each task collects its own output and prints it whole, under
-  /// its own section, when it ends — the price §5.2 is charged for this, and
-  /// the reason it is not the default.
-  ///
-  /// A failure stops new tasks from being started, exactly as it does
-  /// sequentially, but does not reach into the ones already running: killing
-  /// them would leave whatever they were half-way through in whatever state
-  /// that half is. Under `--keep-going`, nothing is stopped at all.
-  Future<int> _walkTogether(
     Plan plan,
     Map<String, Duration> took,
     Map<String, int> failed,
@@ -189,6 +128,12 @@ final class Executor {
     final waiting = [...plan.steps];
     final running = <String, Future<void>>{};
     final finished = <String>{};
+
+    // **Buffering is the price of running two at once, so it is paid only
+    // then.** At one task in flight §5.2 holds unchanged: the lines go
+    // straight out as they arrive, because there is no second task whose
+    // output they could be confused with.
+    final buffered = concurrency > 1;
     int? answer;
 
     while (waiting.isNotEmpty || running.isNotEmpty) {
@@ -198,9 +143,11 @@ final class Executor {
           break;
         }
         final step = waiting[at];
-        final stopped = {...failed.keys, ...skipped.keys};
-        final blocker = _blockedBy(step, stopped);
+        final blocker = _blockedBy(step, {...failed.keys, ...skipped.keys});
         if (blocker != null) {
+          // Named, not dropped. A task that silently did not happen is
+          // indistinguishable from one that passed, which is the whole failure
+          // this tool is about.
           skipped[step.task.name] = blocker;
           waiting.removeAt(at--);
           began = true;
@@ -222,7 +169,9 @@ final class Executor {
         waiting.removeAt(at--);
         began = true;
         final name = step.task.name;
-        running[name] = _runOne(step, took, failed).then((code) {
+        running[name] = _runOne(step, took, failed, buffered: buffered).then((
+          code,
+        ) {
           // `removeWhere`, not `remove`: the map's values are futures, so
           // `remove` hands one back and dropping it is a discarded future.
           running.removeWhere((running, _) => running == name);
@@ -235,8 +184,7 @@ final class Executor {
 
       if (running.isEmpty && !began) {
         // Nothing running and nothing startable: whatever is left is waiting
-        // on something that will never finish. `_blockedBy` names it on the
-        // next turn of the loop, so this cannot spin.
+        // on something that will never finish.
         for (final step in waiting) {
           skipped[step.task.name] = const NeverStartable();
         }
@@ -251,31 +199,52 @@ final class Executor {
     return answer ?? ExitCode.success;
   }
 
-  /// One task, with its own buffer, reported whole when it ends.
+  /// One task, timed, and reported where the mode says to report it.
   Future<int?> _runOne(
     PlanStep step,
     Map<String, Duration> took,
-    Map<String, int> failed,
-  ) async {
-    final lines = <String>[];
+    Map<String, int> failed, {
+    required bool buffered,
+  }) async {
+    final lines = buffered ? <String>[] : null;
+    final say = lines == null ? log : lines.add;
     final started = now();
     try {
-      await _runTask(step.task, lines.add);
+      await _runTask(step.task, lines?.add);
       return null;
     } on RunFailure catch (failure) {
+      // Closes the open section and annotates, in that order and for that
+      // reason: an `::error::` inside a group is folded away with it, so the
+      // one line somebody needs would be the one they have to expand a
+      // section to reach.
+      markers.error(failure.message).forEach(say);
       failed[step.task.name] = failure.code;
-      markers.error(failure.message).forEach(lines.add);
+
       if (step.isContinuation) {
-        lines.add(ExitCode.continuationNotice);
+        // **Always 4, whatever went wrong inside it.** The distinction the
+        // code carries is not what failed but WHERE: the body already
+        // succeeded, so the publish happened. Letting a missing tool inside a
+        // continuation answer 3 would lose that, and 3 is not a
+        // recoverable-in-the-wrong-direction problem.
+        say(ExitCode.continuationNotice);
         return ExitCode.continuationFailed;
       }
+
+      // **The first failure's code, however many follow.** A code is §5.3's
+      // shortest possible bug report about ONE failure, and a run with three
+      // cannot honestly claim to be about all of them — combining them into a
+      // worst-of would invent a severity order the section does not have. The
+      // summary is where the others are.
       return failure.code;
     } finally {
+      // In a `finally`, so the task that FAILED is timed too. Where the run
+      // spent itself before it broke is most of what somebody wants from a red
+      // job.
       took[step.task.name] = now().difference(started);
       // **Printed here, all at once, and this is the whole cost of the mode.**
       // §5.2 wanted these lines as they arrived; two tasks arriving at once
       // would have made a transcript belonging to neither.
-      lines.forEach(log);
+      lines?.forEach(log);
     }
   }
 
