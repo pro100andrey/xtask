@@ -105,6 +105,29 @@ void main() {
       expect(body.verb, 'regen');
       expect(called, isFalse, reason: 'resolving is not running');
     });
+
+    test('and a verb is given the three sources in one list, in order', () {
+      // Asked of the document by a reviewer and answerable only here: `args:`,
+      // then the expanded `argv-from`, then whatever the command line passed
+      // after `--`. A verb is reached by `--` exactly as a process is, and
+      // nothing said so — `VerbContext.args` was documented as the first two.
+      for (final member in ['pkg/a', 'pkg/b']) {
+        Directory(p.join(root.path, member)).createSync(recursive: true);
+      }
+      final body =
+          resolve(
+                'version: 1\n'
+                    'sets:\n  packages:\n    include: [pkg/*]\n'
+                    'tasks:\n'
+                    '  a: {desc: x, do: regen, args: [--first], '
+                    'argv-from: packages}\n',
+                'a',
+                verbs: {'regen': (_) async => 0},
+                passed: ['--last'],
+              ).single
+              as ResolvedVerb;
+      expect(body.arguments, ['--first', 'pkg/a', 'pkg/b', '--last']);
+    });
   });
 
   group('everything that makes a task unrunnable is found here', () {
