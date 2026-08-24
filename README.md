@@ -109,6 +109,21 @@ xtask --version              print which engine this is
 the current directory **upwards**, so the command works from a subdirectory and
 every path inside the file stays relative to the repository root.
 
+Once this is on pub.dev, `dart install xtask` will put a real `xtask` on the
+PATH — the manifest names no `executables:`, so `bin/xtask.dart` is what gets
+installed, already compiled. For a repository whose tasks are all `run:`, that
+is the pleasant way to work and there is nothing wrong with it.
+
+It stops working the moment a project registers a **verb**, and that is the
+design rather than a limitation. What gets installed is this package's own
+entry point, and it passes no verbs, because it cannot know yours: `do: notify`
+then meets *"the engine ships no project verbs"*, correctly, since the `notify`
+the file means is a Dart function in your repository and not in the tool. That
+is why the entry point belongs to the project — a global install is the engine,
+and `dart run :xtask` is the engine plus what you wrote. The second thing is
+also pinned by your `pubspec.yaml`, where a globally installed tool is a version
+of its own that no repository can see.
+
 That shorthand pays the JIT's start-up — around half a second, every
 invocation. It is nothing against a gate that spends seconds inside a test
 runner, and it is the entire cost of `--gate-members`, `--why` or `--dry-run`, which
