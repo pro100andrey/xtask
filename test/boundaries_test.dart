@@ -23,15 +23,20 @@ void main() {
 
   setUpAll(() {
     final root = findRoot(Directory.current.path)!;
+    // `bin/` as well as `lib/`, and the omission was not free: the entry point
+    // went on naming the deleted design document for a day after every other
+    // file stopped, because it is the one source outside `lib/` — and it is
+    // the file the README tells every consumer to copy.
     sources = {
-      for (final file in Directory(
-        p.join(root, 'lib'),
-      ).listSync(recursive: true).whereType<File>())
-        if (file.path.endsWith('.dart'))
-          // Joined with `/` whatever the host uses, because the exception
-          // below is written once and read on three platforms.
-          p.posix.joinAll(p.split(p.relative(file.path, from: root))): file
-              .readAsStringSync(),
+      for (final directory in ['lib', 'bin'])
+        for (final file in Directory(
+          p.join(root, directory),
+        ).listSync(recursive: true).whereType<File>())
+          if (file.path.endsWith('.dart'))
+            // Joined with `/` whatever the host uses, because the exception
+            // below is written once and read on three platforms.
+            p.posix.joinAll(p.split(p.relative(file.path, from: root))): file
+                .readAsStringSync(),
     };
     expect(sources, isNotEmpty, reason: 'no sources were read at all');
   });
