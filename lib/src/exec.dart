@@ -1,6 +1,7 @@
 /// Running the bodies a plan resolved to — §5.2 of `xtask.md`.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -134,6 +135,7 @@ final class Executor {
     this.now = DateTime.now,
     this.passedThrough,
     this.keepGoing = false,
+    this.concurrency = 1,
   }) : _sets = SetExpander(root: root);
 
   final XtaskFile file;
@@ -192,6 +194,24 @@ final class Executor {
   /// pipeline wants the earliest possible red.
   final bool keepGoing;
 
+  /// How many tasks may be in flight at once. 1 is §5.2's run.
+  ///
+  /// **This is the one place a documented promise is deliberately broken, and
+  /// only when asked.** §5.2 says a task's output passes through as it arrives
+  /// and is never buffered to the end, because a long test run has to be
+  /// watchable. Two tasks writing to one terminal at once produce a transcript
+  /// belonging to neither, and a §7.1 section that folds lines from two tasks
+  /// folds nothing — so above 1, each task's output is collected and printed
+  /// whole when it finishes. There is no arrangement that keeps both promises;
+  /// the choice is sequential and watchable, or parallel and buffered, and
+  /// which one is wanted is the caller's to say.
+  ///
+  /// §4.3's declaration order survives as a preference rather than a
+  /// guarantee: it still decides which of the ready tasks starts first, so
+  /// cheap gates are begun before slow ones, but nothing makes them finish in
+  /// that order.
+  final int concurrency;
+
   /// What followed `--` on the command line, and the one task it is for.
   ///
   /// **One task, not the plan.** `xtask check -- --name x` names the composite;
@@ -220,9 +240,10 @@ final class Executor {
     final failed = <String, int>{};
     final skipped = <String, String>{};
 
+    final began = now();
     final code = await _walk(plan, took, failed, skipped);
     if (dryRun == null) {
-      _reportTiming(took);
+      _reportTiming(took, now().difference(began));
       // Last, because it is the part somebody has to act on and the terminal
       // scrolls. The timing above is background; this is the work.
       _reportStopped(failed, skipped);
@@ -236,6 +257,10 @@ final class Executor {
     Map<String, int> failed,
     Map<String, String> skipped,
   ) async {
+    if (concurrency > 1 && dryRun == null) {
+      return _walkTogether(plan, took, failed, skipped);
+    }
+
     int? answer;
 
     for (final step in plan.steps) {
@@ -291,6 +316,118 @@ final class Executor {
     return answer ?? ExitCode.success;
   }
 
+  /// The same walk with more than one task in flight — `--parallel`.
+  ///
+  /// A step may begin when everything it waits on has **finished**, which is
+  /// what `_blockedBy` already decides; the plan's order decides only which of
+  /// the ready ones is begun first, so §4.3's cheap-before-slow survives as a
+  /// preference. Each task collects its own output and prints it whole, under
+  /// its own section, when it ends — the price §5.2 is charged for this, and
+  /// the reason it is not the default.
+  ///
+  /// A failure stops new tasks from being started, exactly as it does
+  /// sequentially, but does not reach into the ones already running: killing
+  /// them would leave whatever they were half-way through in whatever state
+  /// that half is. Under `--keep-going`, nothing is stopped at all.
+  Future<int> _walkTogether(
+    Plan plan,
+    Map<String, Duration> took,
+    Map<String, int> failed,
+    Map<String, String> skipped,
+  ) async {
+    final waiting = [...plan.steps];
+    final running = <String, Future<void>>{};
+    final finished = <String>{};
+    int? answer;
+
+    while (waiting.isNotEmpty || running.isNotEmpty) {
+      var began = false;
+      for (var at = 0; at < waiting.length; at++) {
+        if (running.length >= concurrency) {
+          break;
+        }
+        final step = waiting[at];
+        final stopped = {...failed.keys, ...skipped.keys};
+        final blocker = _blockedBy(step, stopped);
+        if (blocker != null) {
+          skipped[step.task.name] = blocker;
+          waiting.removeAt(at--);
+          began = true;
+          continue;
+        }
+        if (answer != null && !keepGoing) {
+          // Something has failed and this run is not keeping going: what has
+          // not started must not start. What IS running is left alone.
+          skipped[step.task.name] = 'a failure elsewhere';
+          waiting.removeAt(at--);
+          began = true;
+          continue;
+        }
+        if (!step.task.needs.every(finished.contains) ||
+            (step.continuationOf != null &&
+                !finished.contains(step.continuationOf))) {
+          continue;
+        }
+        waiting.removeAt(at--);
+        began = true;
+        final name = step.task.name;
+        running[name] = _runOne(step, took, failed).then((code) {
+          // `removeWhere`, not `remove`: the map's values are futures, so
+          // `remove` hands one back and dropping it is a discarded future.
+          running.removeWhere((running, _) => running == name);
+          finished.add(name);
+          if (code != null) {
+            answer ??= code;
+          }
+        });
+      }
+
+      if (running.isEmpty && !began) {
+        // Nothing running and nothing startable: whatever is left is waiting
+        // on something that will never finish. `_blockedBy` names it on the
+        // next turn of the loop, so this cannot spin.
+        for (final step in waiting) {
+          skipped[step.task.name] = 'something it needs never ran';
+        }
+        waiting.clear();
+        break;
+      }
+      if (running.isNotEmpty) {
+        await Future.any(running.values);
+      }
+    }
+
+    return answer ?? ExitCode.success;
+  }
+
+  /// One task, with its own buffer, reported whole when it ends.
+  Future<int?> _runOne(
+    PlanStep step,
+    Map<String, Duration> took,
+    Map<String, int> failed,
+  ) async {
+    final lines = <String>[];
+    final started = now();
+    try {
+      await _runTask(step.task, lines.add);
+      return null;
+    } on RunFailure catch (failure) {
+      failed[step.task.name] = failure.code;
+      markers.error(failure.message).forEach(lines.add);
+      if (step.isContinuation) {
+        lines.add(ExitCode.continuationNotice);
+        return ExitCode.continuationFailed;
+      }
+      return failure.code;
+    } finally {
+      took[step.task.name] = now().difference(started);
+      // **Printed here, all at once, and this is the whole cost of the mode.**
+      // §5.2 wanted these lines as they arrived; two tasks arriving at once
+      // would have made a transcript belonging to neither.
+      lines.forEach(log);
+    }
+  }
+
   /// What stopped [step] from running, or null if nothing did.
   ///
   /// A task whose requirement failed must not run: its own failure would be a
@@ -333,7 +470,7 @@ final class Executor {
   /// place to print it, beside the task, is the wrong one: a line inside a
   /// `::group::` is folded away with it, and the moment somebody wants a
   /// duration is exactly the moment they have not expanded anything.
-  void _reportTiming(Map<String, Duration> took) {
+  void _reportTiming(Map<String, Duration> took, Duration wall) {
     if (took.isEmpty) {
       return;
     }
@@ -357,9 +494,16 @@ final class Executor {
     took.forEach((name, _) {
       log('${name.padRight(width)}  ${numbers[index++].padLeft(column)}');
     });
-    if (sums) {
-      log('${total.padRight(width)}  ${numbers.last.padLeft(column)}');
+    if (!sums) {
+      return;
     }
+    // **Two numbers, and only where they differ.** Sequentially the sum of the
+    // tasks IS how long the run took. Run together they are different
+    // questions — how much work there was, and how long you waited — and
+    // printing only the first would report three minutes for a run that took
+    // one.
+    final spent = '${total.padRight(width)}  ${numbers.last.padLeft(column)}';
+    log(concurrency > 1 ? '$spent spent, ${_asTime(wall)} taken' : spent);
   }
 
   /// A duration a person reads, not one a machine parses.
@@ -371,7 +515,7 @@ final class Executor {
     return '${took.inMinutes}m ${seconds}s';
   }
 
-  Future<void> _runTask(Task task) async {
+  Future<void> _runTask(Task task, [void Function(String line)? sink]) async {
     // **A section per task, opened before anything that can fail inside it.**
     // §7.1 rests on this: a CI job is one invocation, and what keeps that no
     // worse than a step per task is that each task folds and the failing one
@@ -382,16 +526,17 @@ final class Executor {
     // A dry run has no sections. It performs nothing, so there is no output
     // to fold, and its own report is already the plan.
     final sections = dryRun == null;
+    final say = sink ?? log;
     if (sections) {
-      markers.open(task.name).forEach(log);
+      markers.open(task.name).forEach(say);
     }
-    await _runTaskBody(task);
+    await _runTaskBody(task, sink);
     if (sections) {
-      markers.close().forEach(log);
+      markers.close().forEach(say);
     }
   }
 
-  Future<void> _runTaskBody(Task task) async {
+  Future<void> _runTaskBody(Task task, void Function(String line)? sink) async {
     // Before the body, and that is the whole value of the key: it turns "a
     // browser test failed somewhere inside" into "task `web-e2e` requires
     // CHROMEDRIVER, which is not set" (§7.1). The engine installs nothing.
@@ -411,7 +556,7 @@ final class Executor {
     if (body == null) {
       // A pure composite. Its `needs:` have already run; there is nothing of
       // its own to do, and saying so is more useful than silence.
-      log('${task.name}: nothing of its own to run');
+      (sink ?? log)('${task.name}: nothing of its own to run');
       return;
     }
 
@@ -420,11 +565,16 @@ final class Executor {
         : _expand(task, task.each!);
 
     for (final member in members) {
-      await _runBody(task, body, member);
+      await _runBody(task, body, member, sink);
     }
   }
 
-  Future<void> _runBody(Task task, Body body, String? member) async {
+  Future<void> _runBody(
+    Task task,
+    Body body,
+    String? member,
+    void Function(String line)? sink,
+  ) async {
     final resolved = _resolve(task, body, member);
 
     final report = dryRun;
@@ -435,7 +585,7 @@ final class Executor {
       return;
     }
 
-    final code = await _perform(resolved);
+    final code = await _perform(resolved, sink);
     if (code != ExitCode.success) {
       // **A killed process is reported as killed, not as "exit code 124".**
       // The number is what a killed process answers with and what a shell
@@ -545,7 +695,8 @@ final class Executor {
   }
 
   /// Does what [body] resolved to, and answers with its exit code.
-  Future<int> _perform(Resolved body) {
+  Future<int> _perform(Resolved body, void Function(String line)? sink) {
+    final say = sink ?? log;
     switch (body) {
       case ResolvedVerb(:final implementation):
         return implementation(
@@ -553,7 +704,7 @@ final class Executor {
             args: body.arguments,
             env: body.environment,
             workingDirectory: body.workingDirectory,
-            log: log,
+            log: say,
           ),
         );
 
@@ -566,7 +717,7 @@ final class Executor {
         // failure: six identical lines from one `each:` over six packages is
         // a log that makes somebody run all six again to find out which.
         final member = body.member;
-        log(
+        say(
           '${body.task.name}${member == null ? '' : ' [$member]'}: '
           '${[executable, ...body.arguments].join(' ')}',
         );
@@ -577,6 +728,7 @@ final class Executor {
           environment: body.environment,
           runInShell: runInShell,
           timeout: timeout,
+          output: sink,
         );
     }
   }
@@ -697,6 +849,7 @@ final class SystemProcessStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    void Function(String line)? output,
   }) async {
     // **Flushed before the child starts, not for tidiness.** Dart's `stdout`
     // is asynchronous when it is a pipe, which is what it is on CI — and the
@@ -706,6 +859,7 @@ final class SystemProcessStarter implements ProcessStarter {
     // exactly where nobody can reproduce it.
     await stdout.flush();
 
+    Future<void>? collecting;
     final process = await Process.start(
       executable,
       arguments,
@@ -718,11 +872,38 @@ final class SystemProcessStarter implements ProcessStarter {
       // gives that for nothing: the child writes to this process's own stdout,
       // with no copy, no line buffer and nothing to get the ordering of two
       // streams wrong.
-      mode: ProcessStartMode.inheritStdio,
+      // **Streaming by not being in the way, unless somebody asked for
+      // parallelism.** Inheriting gives §5.2's promise for nothing: the child
+      // writes to this process's own stdout, with no copy, no line buffer and
+      // nothing to get the ordering of two streams wrong. A parallel run
+      // cannot have that — two children writing to one terminal produce a
+      // transcript belonging to neither — so it pipes instead, and pays for it
+      // by not seeing anything until the task ends.
+      mode: output == null
+          ? ProcessStartMode.inheritStdio
+          : ProcessStartMode.normal,
     );
 
+    if (output != null) {
+      // Both streams into one buffer, in arrival order, because that is what
+      // a terminal would have shown. Kept as futures so the collecting is not
+      // waited on before the process is.
+      collecting = Future.wait([
+        process.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .forEach(output),
+        process.stderr
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .forEach(output),
+      ]);
+    }
+
     if (timeout == null) {
-      return process.exitCode;
+      final code = await process.exitCode;
+      await collecting;
+      return code;
     }
 
     // **Asked to stop, then made to.** SIGTERM lets a test runner write its
@@ -740,6 +921,7 @@ final class SystemProcessStarter implements ProcessStarter {
         .then<int?>((code) => code)
         .timeout(timeout, onTimeout: () => null);
     if (finished != null) {
+      await collecting;
       return finished;
     }
 
@@ -751,6 +933,7 @@ final class SystemProcessStarter implements ProcessStarter {
       process.kill(ProcessSignal.sigkill);
       await process.exitCode;
     }
+    await collecting;
     return timedOut;
   }
 
