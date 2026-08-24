@@ -1,9 +1,6 @@
 # xtask
 
-A task runner whose tasks are **data**. The name is `cargo xtask`'s, the Rust
-convention of keeping a repository's automation in the repository, in a
-language it already builds — this takes the idea and keeps the composition out
-of code, where it can be read without being run.
+A task runner whose tasks are **data**.
 
 Write an `xtask.yaml`, and run `xtask <task>`. It resolves the dependency
 graph, runs each task once, in declared order, **without a shell**.
