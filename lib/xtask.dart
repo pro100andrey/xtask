@@ -1,9 +1,9 @@
 /// `xtask` — a task runner whose tasks are data.
 ///
-/// The design this implements is `xtask.md` in this repository. Read it before
-/// changing anything here: it states three rules and a list of anti-goals, and
-/// each one is there because it prevents a failure that has already happened
-/// somewhere.
+/// The README is the record of what this is and why it refuses what it
+/// refuses — three rules and a list of anti-goals, each there because it
+/// prevents a failure that has already happened somewhere. Read it before
+/// changing anything here.
 library;
 
 import 'dart:io';
@@ -19,7 +19,7 @@ import 'src/executables.dart';
 export 'src/context.dart' show Verb, VerbContext;
 
 /// Runs `xtask` with the verbs this project supplies, and answers with the
-/// process exit code — see §5.3 of `xtask.md` for what each code means.
+/// process exit code — the README's exit code table says what each means.
 ///
 /// This is the whole public surface. A project depends on `xtask`, writes
 /// `bin/xtask.dart` calling this, and `dart run :xtask <task>` reaches it by

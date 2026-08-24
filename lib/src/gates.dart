@@ -1,4 +1,4 @@
-/// Gate sets and the `collects:` derivation — §4.3 and §7.1 of `xtask.md`.
+/// Gate sets and the `collects:` derivation.
 library;
 
 import 'model.dart';

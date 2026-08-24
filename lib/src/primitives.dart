@@ -1,4 +1,4 @@
-/// The built-in verbs — §6 of `xtask.md`, and the whole of it.
+/// The built-in verbs, and the whole of the list.
 library;
 
 import 'dart:io';

@@ -63,15 +63,15 @@ void main() {
   });
 
   test('and no message sends a reader to a document they do not have', () {
-    // The design is `xtask.md`, and it is not in the clone — deliberately, so
-    // it is not in the package archive either. Seven messages used to end in
-    // `(§9)` or `(§4.1)`, which reads to us as "see section 9" and to somebody
-    // who installed this from pub.dev as nothing at all. `R1` was the same
-    // thing without the marker.
+    // Eleven messages used to end in `(§9)`, `(§4.1)` or a bare `R1` — a
+    // citation of the design document this was written against. It was never
+    // in the clone and is now not anywhere: the numbering survives only in
+    // the comments, as the coordinates of the reasoning they were written
+    // beside.
     //
-    // The citations stay in the doc comments, where the reader is working in
-    // this repository and does have the document. What cannot carry one is a
-    // string, because a string is read by somebody who does not.
+    // A comment is read by somebody holding the source and can be read as
+    // that. A message is read by somebody holding a failed command, and a
+    // pointer they cannot follow is a dead end at the worst moment.
     final citation = RegExp(r"'[^']*(§|\bR[123]\b)");
     final offenders = {
       for (final MapEntry(key: file, value: source) in sources.entries)
@@ -86,6 +86,25 @@ void main() {
           'a message cites a section of a document the reader has no copy of. '
           'Say the thing instead — the sentence is usually already complete '
           'without it',
+    );
+  });
+
+  test('and nothing names the design document, which no longer exists', () {
+    // Nineteen doc comments pointed at `xtask.md`, one of them the library
+    // header that pub.dev renders — telling a consumer to read a file that
+    // was never in the archive and is now not in the repository either.
+    //
+    // Narrower than the citation guard above and for a different reason: a
+    // section number is a coordinate that can be read as one, while a file
+    // name is a claim that the file is there. This one holds in comments too.
+    final named = {
+      for (final MapEntry(key: file, value: source) in sources.entries)
+        if (source.contains('xtask.md')) file,
+    };
+    expect(
+      named,
+      isEmpty,
+      reason: 'this file is gone; say the thing rather than pointing at it',
     );
   });
 

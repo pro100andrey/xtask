@@ -1,5 +1,4 @@
-/// Turning a task into the thing that will actually happen — §4.3 and §5.4 of
-/// `xtask.md`.
+/// Turning a task into the thing that will actually happen.
 ///
 /// **The engine's largest job, and it is not execution.** What a task comes to
 /// — the set expanded, the member `$each` stands for, the directory it lands

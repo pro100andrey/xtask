@@ -1,4 +1,4 @@
-/// What the process answers with — §5.3 of `xtask.md`.
+/// What the process answers with.
 ///
 /// Five codes, and the last two exist because collapsing them into the first
 /// three sends the wrong person to look. That is the whole design: an exit

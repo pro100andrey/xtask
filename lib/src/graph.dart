@@ -1,4 +1,4 @@
-/// Resolving what runs, and in what order — §5.1 of `xtask.md`.
+/// Resolving what runs, and in what order.
 ///
 /// **Planning is separate from running.** This answers "what would happen",
 /// which is the same question `--dry-run` asks (§7) and the same one an

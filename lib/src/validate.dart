@@ -1,4 +1,4 @@
-/// `--validate` — §8 of `xtask.md`, the first gate any project should adopt.
+/// `--validate` — the first gate any project should adopt.
 library;
 
 import 'errors.dart';

@@ -2,8 +2,9 @@
 # also the first thing to be run by it: what a person types before calling a
 # task done, and what the CI job runs, are one list and it is this one.
 #
-# The design is xtask.md, which is not in the clone. Section numbers below
-# refer to it.
+# Section numbers below (§4.3, §7.1) are the design document's, which is no
+# longer kept. They survive as the coordinates of the reasoning, not as
+# something to go and look up; the README is the record now.
 
 # Editor support, and the path is relative on purpose: it works in a fresh
 # clone with no network and no per-person settings. The file it points at is

@@ -1,4 +1,4 @@
-/// The command surface — §7 of `xtask.md`.
+/// The command surface.
 library;
 
 import 'dart:io';
