@@ -164,7 +164,7 @@ Future<int> regen(VerbContext context) async {
   context.log('regenerating ${context.args.length} files');
   // context.args     `args:`, then the expanded `argv-from`, then anything
   //                  the command line passed after `--`
-  // context.env      the process environment, with this task's `env:` on top
+  // context.env      this machine's environment, with `env:` winning a clash
   // context.workingDirectory
   return 0;
 }
