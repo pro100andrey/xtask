@@ -75,7 +75,7 @@ directions. `gate: [check]` is written on a check and means *I am a member of
 the group called `check`*. `collects: check` is written on the task you type
 and means *I run that whole group*, in the order the file writes it. A task
 named `check` collecting a gate named `check` is the ordinary case and not a
-cycle — [Gate sets](#gate-sets-and-what-they-are-for) says why, and why the
+cycle — [Gate sets](#gate-sets-and-ci) says why, and why the
 whole tool exists for those two keys.
 
 ## Using it from Dart

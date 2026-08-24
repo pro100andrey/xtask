@@ -244,6 +244,40 @@ void main() {
     });
   });
 
+  group('and its internal links point at headings it has', () {
+    // `[Gate sets](#gate-sets-and-what-they-are-for)` outlived the heading it
+    // named by one commit: the section was renamed and the link was not, which
+    // renders as a link that quietly does nothing. Nothing in a markdown file
+    // complains, and a reader who follows it lands at the top of the page and
+    // assumes they missed something.
+    test('every one of them', () {
+      final readme = File(p.join(root, 'README.md')).readAsStringSync();
+      // GitHub's own rule: lower-case, punctuation dropped, spaces hyphenated.
+      String slug(String heading) =>
+          '#${heading.toLowerCase().replaceAll(RegExp('[^a-z0-9 -]'), '')}'
+              .replaceAll(' ', '-');
+      final anchors = {
+        for (final heading in RegExp(
+          r'^#+ (.+)$',
+          multiLine: true,
+        ).allMatches(readme))
+          slug(heading.group(1)!),
+      };
+      final links = [
+        for (final link in RegExp(r'\]\((#[a-z0-9-]+)\)').allMatches(readme))
+          link.group(1)!,
+      ];
+      expect(
+        links,
+        isNotEmpty,
+        reason: 'the README used to link inside itself',
+      );
+      for (final link in links) {
+        expect(anchors, contains(link), reason: 'no heading makes `$link`');
+      }
+    });
+  });
+
   group('the version in code is the version in the manifest', () {
     // The number has to be in `pubspec.yaml` because pub needs it there, and
     // in code because a compiled entry point has no manifest beside it to
