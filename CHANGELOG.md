@@ -15,7 +15,7 @@ First release. Enough to replace one repository's `make`, and no more.
 - `env-required`, checked before a body runs. The engine installs nothing.
 - Sets: lists and globs with exclusions, expanded by the engine in a
   deterministic order. An expansion matching nothing is an error.
-- Gate sets, the `collects:` derivation, `--list` and `--gates`, and
+- Gate sets, the `collects:` derivation, `--list` and `--gate-members`, and
   log-grouping markers on a host that folds output.
 - The `remove` primitive, which is the whole built-in list.
 - `--dry-run`, printing what a run resolves to rather than what is written.

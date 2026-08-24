@@ -88,21 +88,21 @@ repository's business. Its only built-in is `remove`.
 ## The command
 
 ```shell
-xtask <task>                run a task and everything it needs
-xtask <task> -- <args>      and pass those arguments to its body
-xtask <task> --keep-going   report every failure, not just the first
-xtask <task> --parallel     run independent tasks at once — which costs
-                            seeing their output as it arrives
-xtask --list                every task, with its description
-xtask --list --gate <name>  only the tasks in that gate set
-xtask --gates <name>        that gate set's task names, one per line
-xtask --why <task>          what puts that task in a plan, and by which
-                            `needs:` or `then:`
-xtask --validate            parse and check the file; run nothing
-xtask --check-ci            does the CI file still run the gate sets?
-xtask --dry-run <task>      print the resolved plan; run nothing
-xtask --emit-schema         print the JSON Schema for this file format
-xtask --version             print which engine this is
+xtask <task>                 run a task and everything it needs
+xtask <task> -- <args>       and pass those arguments to its body
+xtask <task> --keep-going    report every failure, not just the first
+xtask <task> --parallel      run independent tasks at once — which costs
+                             seeing their output as it arrives
+xtask --list                 every task, with its description
+xtask --list --gate <name>   only the tasks in that gate set
+xtask --gate-members <name>  that gate set's task names, one per line
+xtask --why <task>           what puts that task in a plan, and by which
+                             `needs:` or `then:`
+xtask --validate             parse and check the file; run nothing
+xtask --check-ci             does the CI file still run the gate sets?
+xtask --dry-run <task>       print the resolved plan; run nothing
+xtask --emit-schema          print the JSON Schema for this file format
+xtask --version              print which engine this is
 ```
 
 `xtask` above is shorthand for `dart run :xtask`. The file is looked for from
@@ -111,7 +111,7 @@ every path inside the file stays relative to the repository root.
 
 That shorthand pays the JIT's start-up — around half a second, every
 invocation. It is nothing against a gate that spends seconds inside a test
-runner, and it is the entire cost of `--gates`, `--why` or `--dry-run`, which
+runner, and it is the entire cost of `--gate-members`, `--why` or `--dry-run`, which
 is where a shell loop or a file being written notices it. `dart compile exe
 bin/xtask.dart` removes it. The binary still reads `xtask.yaml` at run time, so
 tasks, gates and sets keep changing without recompiling; verbs are Dart, so a

@@ -62,7 +62,7 @@ void main() {
       expect(parseArguments(['--list']), isA<ListTasks>());
       expect(parseArguments(['--validate']), isA<Validate>());
       expect(
-        (parseArguments(['--gates', 'ci-web']) as GateMembers).gate,
+        (parseArguments(['--gate-members', 'ci-web']) as GateMembers).gate,
         'ci-web',
       );
       expect((parseArguments(['--dry-run', 'a']) as DryRunTask).task, 'a');
@@ -81,11 +81,14 @@ void main() {
     });
 
     test('and on its own it is refused, pointing at the other name', () {
-      // `--gate` and `--gates` differ by one letter and mean opposite kinds
-      // of thing. Ignoring the flag, or listing everything as though it had
-      // not been written, is the answer that costs somebody an afternoon.
+      // `--gate` narrows `--list`; it is not a mode of its own. They used to
+      // be `--gate` and `--gates`, one letter apart and meaning opposite
+      // kinds of thing, and this refusal is what stood between them. The
+      // names no longer collide and the refusal stays, because ignoring a
+      // flag — or listing everything as though it had not been written — is
+      // still the answer that costs somebody an afternoon.
       final usage = parseArguments(['--gate', 'ci-web']) as ShowUsage;
-      expect(usage.problem, contains('--gates'));
+      expect(usage.problem, contains('--gate-members'));
     });
 
     test('two modes ask for different things', () {
@@ -100,7 +103,10 @@ void main() {
     });
 
     test('a mode that needs a name and is given none', () {
-      expect((parseArguments(['--gates']) as ShowUsage).problem, isNotNull);
+      expect(
+        (parseArguments(['--gate-members']) as ShowUsage).problem,
+        isNotNull,
+      );
       expect((parseArguments(['--dry-run']) as ShowUsage).problem, isNotNull);
       expect((parseArguments(['--gate']) as ShowUsage).problem, isNotNull);
     });
@@ -130,7 +136,7 @@ void main() {
       });
 
       test('a mode that runs nothing has nowhere to put them', () {
-        for (final mode in ['--list', '--validate', '--gates']) {
+        for (final mode in ['--list', '--validate', '--gate-members']) {
           expect(
             parseArguments([mode, 'x', '--', '-n']),
             isA<ShowUsage>(),
@@ -381,10 +387,10 @@ tasks:
       });
     });
 
-    group('--gates', () {
+    group('--gate-members', () {
       test('the members, one per line and nothing else', () async {
         writeFile(lake);
-        expect(await run(['--gates', 'check']), ExitCode.success);
+        expect(await run(['--gate-members', 'check']), ExitCode.success);
         expect(out, ['analyze', 'lake-format']);
       });
 
@@ -396,18 +402,21 @@ tasks:
   alpha: {desc: slow, gate: [check], run: [dart]}
   check: {desc: c, collects: check}
 ''');
-        await run(['--gates', 'check']);
+        await run(['--gate-members', 'check']);
         expect(out, ['zebra', 'alpha']);
       });
     });
 
     group('a gate set nobody has heard of is a typo, not an empty set', () {
-      // The answer to a misspelt gate must not be an empty list: `--gates
-      // ci-analize` printing nothing reads as "that job checks nothing",
-      // which is the failure this tool is about.
-      test('--gates says so, and names the ones there are', () async {
+      // The answer to a misspelt gate must not be an empty list:
+      // `--gate-members ci-analize` printing nothing reads as "that job
+      // checks nothing", which is the failure this tool is about.
+      test('--gate-members says so, and names the ones there are', () async {
         writeFile(lake);
-        expect(await run(['--gates', 'ci-analize']), ExitCode.invalidFile);
+        expect(
+          await run(['--gate-members', 'ci-analize']),
+          ExitCode.invalidFile,
+        );
         expect(complained(), contains('ci-analize'));
         expect(complained(), contains('ci-analyze'));
         expect(out, isEmpty);
