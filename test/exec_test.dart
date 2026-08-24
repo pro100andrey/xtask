@@ -7,7 +7,21 @@ import 'package:xtask/src/exec.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/parse.dart';
+import 'package:xtask/src/reporting.dart';
 import 'package:xtask/src/resolve.dart';
+
+/// A clock that advances by [step] every time it is read.
+///
+/// Every task reads it twice — once before and once after — so each takes
+/// exactly [step], and a summary a test can assert to the tenth of a second.
+DateTime Function() ticking(Duration step) {
+  var at = DateTime.utc(2026);
+  return () {
+    final was = at;
+    at = at.add(step);
+    return was;
+  };
+}
 
 /// One process the executor asked for.
 final class Started {
@@ -91,6 +105,8 @@ void main() {
     Map<String, Verb> verbs = const {},
     Map<String, String> environment = const {},
     ExecutableResolver? resolver,
+    LogMarkers markers = const PlainMarkers(),
+    Duration step = const Duration(milliseconds: 100),
   }) {
     final file = parseXtaskFile(yaml);
     return Executor(
@@ -101,6 +117,8 @@ void main() {
       log: logged.add,
       verbs: verbs,
       environment: environment,
+      markers: markers,
+      now: ticking(step),
     ).run(planRun(file, task));
   }
 
@@ -256,6 +274,131 @@ void main() {
       );
       expect(code, ExitCode.invalidFile);
       expect(logged.join('\n'), contains('task `a` cannot run'));
+    });
+  });
+
+  group('what each task took, after everything, outside every section', () {
+    // §7.1 has a CI job run one invocation, so the job's own duration is the
+    // duration of the whole gate and "which task took four minutes" has no
+    // answer anywhere else.
+    test('one line per task that ran, in the order it ran', () async {
+      await runFile(
+        'version: 1\ntasks:\n'
+            '  install: {desc: x, run: [dart, pub, get]}\n'
+            '  build: {desc: x, needs: [install], run: [dart, compile]}\n',
+        'build',
+      );
+      expect(logged, containsAllInOrder(['install  0.1s', 'build    0.1s']));
+    });
+
+    test('and a total, once there is more than one of them', () async {
+      await runFile(
+        'version: 1\ntasks:\n'
+            '  install: {desc: x, run: [dart, pub, get]}\n'
+            '  build: {desc: x, needs: [install], run: [dart, compile]}\n',
+        'build',
+      );
+      expect(logged.last, 'total    0.2s');
+    });
+
+    test(
+      'but no total for a single task, which would just repeat it',
+      () async {
+        await runFile('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n', 'a');
+        expect(logged.last, 'a  0.1s');
+        expect(logged.join('\n'), isNot(contains('total')));
+      },
+    );
+
+    test('the task that FAILED is timed too', () async {
+      // Where a run spent itself before it broke is most of what somebody
+      // wants from a red job, and it is the one the naive version drops.
+      starter = FakeStarter({'dart': 1});
+      await runFile(
+        'version: 1\ntasks:\n  boom: {desc: x, run: [dart, test]}\n',
+        'boom',
+      );
+      expect(logged.last, 'boom  0.1s');
+    });
+
+    test('a long one is minutes and seconds, not 154.0s', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n',
+        'a',
+        step: const Duration(seconds: 94),
+      );
+      expect(logged.last, 'a  1m 34s');
+    });
+
+    test('and it lands AFTER the last section closes', () async {
+      // A line inside a `::group::` is folded away with it, and the moment
+      // somebody wants a duration is exactly the moment they have expanded
+      // nothing.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n',
+        'a',
+        markers: const GitHubMarkers(),
+      );
+      expect(
+        logged.lastIndexOf('::endgroup::'),
+        lessThan(logged.indexWhere((l) => l.startsWith('a  '))),
+      );
+    });
+  });
+
+  group('the line that says it broke is the line that reproduces it', () {
+    test('the command and the directory, not just the exit code', () async {
+      starter = FakeStarter({'dart': 1});
+      await runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, in: sub, run: [dart, test],'
+            ' args: ["--name", "two words"]}\n',
+        'a',
+      );
+      final failure = logged.firstWhere((l) => l.contains('failed'));
+      expect(failure, contains("run  /bin/dart test --name 'two words'"));
+      expect(failure, contains('in   ${p.join(root.path, 'sub')}'));
+    });
+
+    test("and under `each:` it is that member's directory", () async {
+      starter = FakeStarter({'dart': 1});
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs: [one, two]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}'
+            '\n',
+        'a',
+      );
+      final failure = logged.firstWhere((l) => l.contains('failed'));
+      expect(failure, contains('failed at `one`'));
+      expect(failure, contains('in   ${p.join(root.path, 'one')}'));
+    });
+
+    test('a verb reports the name written in the file', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: regen, args: [--all]}\n',
+        'a',
+        verbs: {'regen': (context) async => 3},
+      );
+      final failure = logged.firstWhere((l) => l.contains('failed'));
+      expect(failure, contains('do   regen --all'));
+    });
+
+    test('and it is rendered by the same code `--dry-run` prints', () async {
+      // Two renderings of one value would drift, and the drift shows up as a
+      // dry run promising a command a failure then reports differently.
+      starter = FakeStarter({'dart': 1});
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n',
+        'a',
+      );
+      final failure = logged.firstWhere((l) => l.contains('failed'));
+      expect(failure, endsWith('  in   ${root.path}'));
+      // And the task's name is not repeated under itself: `describe`'s first
+      // line is a header for a plan listing, and the failure already said
+      // which task this is.
+      expect(failure.split('\n')[1], startsWith('  run  '));
     });
   });
 

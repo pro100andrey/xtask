@@ -123,6 +123,7 @@ final class Executor {
     this.environment = const {},
     this.dryRun,
     this.markers = const PlainMarkers(),
+    this.now = DateTime.now,
   }) : _sets = SetExpander(root: root);
 
   final XtaskFile file;
@@ -165,11 +166,28 @@ final class Executor {
   /// for the ambient environment itself could not be tested for either host.
   final LogMarkers markers;
 
+  /// Where the clock comes from.
+  ///
+  /// Injected for the ordinary reason: a summary whose numbers are whatever
+  /// the machine happened to take is a summary no test can assert. Nothing
+  /// here needs a real clock to be right.
+  final DateTime Function() now;
+
   final SetExpander _sets;
 
   /// Runs every step, and answers with the code §5.3 gives the outcome.
   Future<int> run(Plan plan) async {
+    final took = <String, Duration>{};
+    final code = await _walk(plan, took);
+    if (dryRun == null) {
+      _reportTiming(took);
+    }
+    return code;
+  }
+
+  Future<int> _walk(Plan plan, Map<String, Duration> took) async {
     for (final step in plan.steps) {
+      final started = now();
       try {
         await _runTask(step.task);
       } on RunFailure catch (failure) {
@@ -188,9 +206,60 @@ final class Executor {
           return ExitCode.continuationFailed;
         }
         return failure.code;
+      } finally {
+        // In a `finally`, so the task that FAILED is timed too. Where the run
+        // spent itself before it broke is most of what somebody wants from a
+        // red job.
+        took[step.task.name] = now().difference(started);
       }
     }
     return ExitCode.success;
+  }
+
+  /// What each task took, after the last one, outside every section.
+  ///
+  /// **Outside, and that is the whole design of it.** §7.1 has a CI job run
+  /// one invocation, so the job's own duration is the duration of everything —
+  /// and "which task took four minutes" has no answer anywhere. The obvious
+  /// place to print it, beside the task, is the wrong one: a line inside a
+  /// `::group::` is folded away with it, and the moment somebody wants a
+  /// duration is exactly the moment they have not expanded anything.
+  void _reportTiming(Map<String, Duration> took) {
+    if (took.isEmpty) {
+      return;
+    }
+    const total = 'total';
+    // A total under one number is that number written twice, so a single task
+    // gets none — and then the column must not be widened for a word that is
+    // not going to be printed.
+    final sums = took.length > 1;
+    final width = took.keys.fold(
+      sums ? total.length : 0,
+      (w, n) => n.length > w ? n.length : w,
+    );
+    final numbers = [
+      ...took.values.map(_asTime),
+      if (sums) _asTime(took.values.reduce((a, b) => a + b)),
+    ];
+    final column = numbers.fold(0, (w, n) => n.length > w ? n.length : w);
+
+    log('');
+    var index = 0;
+    took.forEach((name, _) {
+      log('${name.padRight(width)}  ${numbers[index++].padLeft(column)}');
+    });
+    if (sums) {
+      log('${total.padRight(width)}  ${numbers.last.padLeft(column)}');
+    }
+  }
+
+  /// A duration a person reads, not one a machine parses.
+  static String _asTime(Duration took) {
+    if (took.inMinutes < 1) {
+      return '${(took.inMilliseconds / 1000).toStringAsFixed(1)}s';
+    }
+    final seconds = (took.inSeconds % 60).toString().padLeft(2, '0');
+    return '${took.inMinutes}m ${seconds}s';
   }
 
   Future<void> _runTask(Task task) async {
@@ -261,12 +330,22 @@ final class Executor {
     if (code != ExitCode.success) {
       throw RunFailure(
         ExitCode.taskFailed,
-        member == null
-            ? 'task `${task.name}` failed with exit code $code'
-            // Named, because §5.2 says a failure under `each:` stops at that
-            // member — and "the tests failed" over six packages is a report
-            // that makes somebody run all six again by hand.
-            : 'task `${task.name}` failed at `$member` with exit code $code',
+        [
+          // The member is named, because §5.2 says a failure under `each:`
+          // stops at that member — and "the tests failed" over six packages is
+          // a report that makes somebody run all six again by hand.
+          if (member == null)
+            'task `${task.name}` failed with exit code $code'
+          else
+            'task `${task.name}` failed at `$member` with exit code $code',
+          // **The line that says it broke is the line that reproduces it.**
+          // On a host that folds, the failing task's output is collapsed and
+          // the annotation is all somebody sees; without the command and the
+          // directory, "how do I run this myself" means expanding the fold and
+          // hunting upwards for it. Rendered by `describe`, so what a failure
+          // reports and what `--dry-run` promised cannot disagree.
+          ...describe(resolved).skip(1),
+        ].join('\n'),
       );
     }
   }
@@ -502,3 +581,56 @@ final class SystemProcessStarter implements ProcessStarter {
     return process.exitCode;
   }
 }
+
+/// How a [Resolved] body is written down: what runs, where, and with what.
+///
+/// **Here rather than beside `--dry-run`, because two callers need it.** It
+/// is what `--dry-run` prints, and it is what a failure prints so that the
+/// line saying a task failed is also the line that reproduces it. Two
+/// renderings of one value would drift, and the drift would show up as a
+/// dry run promising a command a failure then reports differently.
+///
+/// §13 keeps output *formats* out of this milestone — there is no `--json` and
+/// no key to choose one. This is the one human-readable form, and the thing it
+/// has to get right is that a person can check it against what they meant.
+List<String> describe(Resolved body) {
+  final member = body.member;
+  return [
+    if (member == null) body.task.name else '${body.task.name}  [$member]',
+    switch (body) {
+      ResolvedProcess(:final executable, :final arguments) =>
+        '  run  ${_command(executable, arguments)}',
+      // The name written in the file, not the Dart function it found: a verb
+      // is the project's, and `Closure: (VerbContext) => Future<int>` tells
+      // the reader nothing they can check.
+      ResolvedVerb(:final verb, :final arguments) =>
+        '  do   ${_command(verb, arguments)}',
+    },
+    '  in   ${body.workingDirectory}',
+    // **The task's own `env:`, not the environment the body will see.** The
+    // second is this machine's environment with two entries changed, and
+    // printing it would bury the two lines that are part of the plan under a
+    // hundred that are part of the terminal. What `env-required` asked for is
+    // not printed either: by the time a body resolves, it is set.
+    for (final variable in body.task.env.entries)
+      '  env  ${variable.key}=${_quoted(variable.value)}',
+    if (body case ResolvedProcess(runInShell: true))
+      '  via  cmd.exe, which is the only way to start a batch file (§5.4)',
+  ];
+}
+
+String _command(String head, List<String> arguments) =>
+    [head, ...arguments].map(_quoted).join(' ');
+
+/// [word] written so that its edges are visible.
+///
+/// A plan that cannot tell one argument from two is not one anybody can check
+/// against what they meant: `dart test a b` and `dart test 'a b'` are
+/// different commands, and an argument that is the empty string disappears
+/// entirely. This is for **reading** — xtask starts no shell (§5.4), so there
+/// is no shell for it to be correct for, and it does not claim to be.
+String _quoted(String word) => word.isEmpty || _needsQuotes.hasMatch(word)
+    ? "'${word.replaceAll("'", r"\'")}'"
+    : word;
+
+final _needsQuotes = RegExp(r'''[\s'"]''');
