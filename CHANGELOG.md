@@ -21,7 +21,17 @@ First release. Enough to replace one repository's `make`, and no more.
 - `--dry-run`, printing what a run resolves to rather than what is written.
 - `--emit-schema`, a JSON Schema for editors, generated from the same key lists
   the parser refuses unknown keys with.
+- `--why`, which names every entry point that reaches a task and spells the
+  route edge by edge, saying whether each edge is a `needs:` or a `then:`.
+- `--check-ci`, which reads the workflow files and reports a shell step that
+  names a command instead of a gate set, and a gate set with no job to run it.
+- `--keep-going`, and `--parallel`, which is the one place a promise is
+  deliberately broken: output is collected per task and printed when that task
+  ends, so the run says how wide it is and that the silence is expected.
+- What each task took, printed after the last section rather than beside the
+  task, because a line inside a fold is invisible to somebody who has expanded
+  nothing.
 
 Deliberately not here: `--emit-ci`, `--dry-run` output formats, a watch mode,
-task timing, coloured output, shell completion. Each is a real convenience and
-each is a place to hide a second list.
+coloured output, shell completion. Each is a real convenience and each is a
+place to hide a second list.

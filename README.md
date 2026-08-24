@@ -266,7 +266,9 @@ reason is a real cost rather than caution: normally a task's output passes
 through as it arrives and each task is a section that folds, and two tasks
 writing to one terminal at once break both — the transcript belongs to neither.
 So a parallel run collects each task's output and prints it whole when that
-task ends. You get the answer sooner and you watch it happen less.
+task ends. You get the answer sooner and you watch it happen less — and it says
+so on the first line, because a run that goes quiet for eight seconds without
+explaining itself is indistinguishable from one that has hung.
 
 The summary then says both numbers, because they answer different questions:
 

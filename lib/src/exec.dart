@@ -94,19 +94,28 @@ final class Executor {
     final failed = <String, int>{};
     final skipped = <String, Skipped>{};
 
+    // **Asked once, here, and handed down.** Two tasks writing to one terminal
+    // is what buffering is for, and a plan of one task cannot have two: asking
+    // for `--parallel` on a single task would otherwise cost §5.2's live
+    // output and buy nothing at all. It is also what the announcement is
+    // about, so computing it twice would be two answers to one question.
+    final concurrent = concurrency > 1 && plan.steps.length > 1;
+
     // Before the walk, so it is the first thing on the stream rather than the
     // first thing after a wait it was meant to explain.
-    if (concurrency > 1) {
+    if (concurrent) {
       starting(plan.steps.length, concurrency).forEach(log);
     }
 
     final began = now();
-    final code = await _walk(plan, took, failed, skipped);
-    timing(
+    final code = await _walk(
+      plan,
       took,
-      now().difference(began),
-      concurrent: concurrency > 1,
-    ).forEach(log);
+      failed,
+      skipped,
+      concurrent: concurrent,
+    );
+    timing(took, now().difference(began), concurrent: concurrent).forEach(log);
     // Last, because it is the part somebody has to act on and the terminal
     // scrolls. The timing above is background; this is the work.
     summary(failed, skipped).forEach(log);
@@ -134,8 +143,9 @@ final class Executor {
     Plan plan,
     Map<String, Duration> took,
     Map<String, int> failed,
-    Map<String, Skipped> skipped,
-  ) async {
+    Map<String, Skipped> skipped, {
+    required bool concurrent,
+  }) async {
     final waiting = [...plan.steps];
     final running = <String, Future<void>>{};
     final finished = <String>{};
@@ -144,7 +154,6 @@ final class Executor {
     // then.** At one task in flight §5.2 holds unchanged: the lines go
     // straight out as they arrive, because there is no second task whose
     // output they could be confused with.
-    final buffered = concurrency > 1;
     int? answer;
 
     while (waiting.isNotEmpty || running.isNotEmpty) {
@@ -180,7 +189,7 @@ final class Executor {
         waiting.removeAt(at--);
         began = true;
         final name = step.task.name;
-        running[name] = _runOne(step, took, failed, buffered: buffered).then((
+        running[name] = _runOne(step, took, failed, buffered: concurrent).then((
           code,
         ) {
           // `removeWhere`, not `remove`: the map's values are futures, so
