@@ -151,6 +151,29 @@ void main() {
       });
     });
 
+    group('--keep-going', () {
+      test('it is a modifier on a run, not a mode of its own', () {
+        final request = parseArguments(['check', '--keep-going']) as RunTask;
+        expect(request.task, 'check');
+        expect(request.keepGoing, isTrue);
+        expect((parseArguments(['check']) as RunTask).keepGoing, isFalse);
+      });
+
+      test('and either side of the task name', () {
+        expect(
+          (parseArguments(['--keep-going', 'check']) as RunTask).keepGoing,
+          isTrue,
+        );
+      });
+
+      test('a mode that runs nothing has no failure to keep going past', () {
+        for (final mode in ['--list', '--validate', '--dry-run']) {
+          final usage = parseArguments([mode, 'x', '--keep-going']);
+          expect(usage, isA<ShowUsage>(), reason: '$mode accepted it');
+        }
+      });
+    });
+
     test('--version is a mode, and takes nothing else', () {
       expect(parseArguments(['--version']), isA<ShowVersion>());
       expect(parseArguments(['--version', 'a']), isA<ShowUsage>());
@@ -600,6 +623,59 @@ tasks:
         await run(['--dry-run', 'a', '--', '-n', 'two words']);
         expect(printed(), contains("run  /bin/dart test -n 'two words'"));
       });
+    });
+
+    group('running with --keep-going', () {
+      test(
+        'the whole gate is attempted and the summary says what broke',
+        () async {
+          starter = FakeStarter({'ruff': 1, 'pytest': 1});
+          writeFile('''
+version: 1
+tasks:
+  lint: {desc: a, gate: [check], run: [ruff]}
+  unit: {desc: b, gate: [check], run: [pytest]}
+  check: {desc: c, collects: check}
+''');
+          expect(await run(['check', '--keep-going']), ExitCode.taskFailed);
+          expect(starter.started, hasLength(2));
+          expect(printed(), contains('failed   lint (exit 1)'));
+          expect(printed(), contains('failed   unit (exit 1)'));
+          expect(printed(), contains('skipped  check (needs lint)'));
+        },
+      );
+
+      test('and without it the same gate stops at the first', () async {
+        starter = FakeStarter({'ruff': 1, 'pytest': 1});
+        writeFile('''
+version: 1
+tasks:
+  lint: {desc: a, gate: [check], run: [ruff]}
+  unit: {desc: b, gate: [check], run: [pytest]}
+  check: {desc: c, collects: check}
+''');
+        expect(await run(['check']), ExitCode.taskFailed);
+        expect(starter.started, hasLength(1));
+      });
+
+      test(
+        'every failure is its own annotation on a host that has them',
+        () async {
+          starter = FakeStarter({'ruff': 1, 'pytest': 1});
+          writeFile('''
+version: 1
+tasks:
+  lint: {desc: a, gate: [check], run: [ruff]}
+  unit: {desc: b, gate: [check], run: [pytest]}
+  check: {desc: c, collects: check}
+''');
+          await run(
+            ['check', '--keep-going'],
+            environment: {'GITHUB_ACTIONS': 'true'},
+          );
+          expect(out.where((l) => l.startsWith('::error::')), hasLength(2));
+        },
+      );
     });
 
     group('--version', () {

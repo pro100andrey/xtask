@@ -90,6 +90,7 @@ repository's business. Its only built-in is `remove`.
 ```
 xtask <task>                run a task and everything it needs
 xtask <task> -- <args>      and pass those arguments to its body
+xtask <task> --keep-going   report every failure, not just the first
 xtask --list                every task, with its description
 xtask --list --gate <name>  only the tasks in that gate set
 xtask --gates <name>        that gate set's task names, one per line
@@ -179,6 +180,25 @@ web-e2e:
 which turns "a browser test failed somewhere inside" into "task `web-e2e`
 requires `CHROMEDRIVER`, which is not set".
 
+`--keep-going` is for the local loop. A gate that stops at the first failure
+makes you fix, rerun, fix, rerun — the same argument `--validate` is built on,
+which is why it collects every problem rather than throwing at the first. With
+the flag, independent tasks still run and the run ends with a summary:
+
+```
+failed   lint (exit 1)
+failed   unit (exit 1)
+skipped  check (needs lint)
+```
+
+A task whose requirement failed does **not** run: its own failure would be a
+consequence of the first one. It is named as skipped rather than dropped,
+because a task that silently did not happen reads exactly like one that passed.
+
+It is off by default. §5.2 promises a run stops at the first failure, and a
+pipeline wants the earliest possible red rather than a broken run read to the
+end.
+
 ## Exit codes
 
 An exit code is not a success flag; it is the shortest possible bug report.
@@ -190,6 +210,10 @@ An exit code is not a success flag; it is the shortest possible bug report.
 | `2` | the file was refused — a bad document, an unknown key, a cycle, a dangling reference, a set that expands to nothing |
 | `3` | a task's executable was not found |
 | `4` | a task's body succeeded and one of its `then:` continuations failed |
+
+With `--keep-going` and more than one failure, the code is the **first**
+failure's. A code is a report about one failure, and a run with three cannot
+honestly claim to be about all of them; the summary is where the others are.
 
 `3` is separate because "Dart is not installed on this machine" and "the code is
 broken" are repaired by different people, and one code sends both to the same
