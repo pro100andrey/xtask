@@ -128,12 +128,22 @@ void main() {
         '    desc: everything\n'
         '    collects: both\n',
       );
-      run = await Process.run(dart, [
-        'run',
-        p.join(Directory.current.path, 'bin', 'xtask.dart'),
-        'both',
-        '--parallel',
-      ], workingDirectory: root.path);
+      run = await Process.run(
+        dart,
+        [
+          'run',
+          p.join(Directory.current.path, 'bin', 'xtask.dart'),
+          'both',
+          '--parallel',
+        ],
+        workingDirectory: root.path,
+        // **Named, not inherited.** Which markers a run prints is read off the
+        // environment, so a test that says nothing about it asserts one shape
+        // on a desk and meets another on a runner — where `GITHUB_ACTIONS` is
+        // set and the sections are `::group::`. This one used to say nothing,
+        // and went red on two of the three platforms the day they were added.
+        environment: {'GITHUB_ACTIONS': 'true'},
+      );
     });
 
     tearDownAll(() => root.deleteSync(recursive: true));
@@ -150,8 +160,8 @@ void main() {
 
     test('and both tasks are in the transcript, whole', () {
       final output = run.stdout as String;
-      expect(output, contains('── one ──'));
-      expect(output, contains('── two ──'));
+      expect(output, contains('::group::one'));
+      expect(output, contains('::group::two'));
       expect(
         output,
         contains('up to'),
