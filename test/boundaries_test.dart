@@ -62,6 +62,33 @@ void main() {
     );
   });
 
+  test('and no message sends a reader to a document they do not have', () {
+    // The design is `xtask.md`, and it is not in the clone — deliberately, so
+    // it is not in the package archive either. Seven messages used to end in
+    // `(§9)` or `(§4.1)`, which reads to us as "see section 9" and to somebody
+    // who installed this from pub.dev as nothing at all. `R1` was the same
+    // thing without the marker.
+    //
+    // The citations stay in the doc comments, where the reader is working in
+    // this repository and does have the document. What cannot carry one is a
+    // string, because a string is read by somebody who does not.
+    final citation = RegExp(r"'[^']*(§|\bR[123]\b)");
+    final offenders = {
+      for (final MapEntry(key: file, value: source) in sources.entries)
+        for (final line in source.split('\n'))
+          if (!line.trimLeft().startsWith('//') && citation.hasMatch(line))
+            file,
+    };
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'a message cites a section of a document the reader has no copy of. '
+          'Say the thing instead — the sentence is usually already complete '
+          'without it',
+    );
+  });
+
   test('an exit code is never a number written at the place it is used', () {
     // §5.3 gives five codes and a paragraph each. A bare `return 2;` is the
     // same value with the paragraph deleted, and the deletion is invisible:

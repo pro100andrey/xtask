@@ -554,7 +554,11 @@ tasks:
         );
         expect(code, ExitCode.invalidFile);
         expect(complained(), contains('remove'));
-        expect(complained(), contains('§6'));
+        // The message used to be pinned by its `(§6)` citation, which was a
+        // pointer into a document nobody outside this clone has. What it has
+        // to say is what it is for: rename yours.
+        expect(complained(), contains('built-in verb'));
+        expect(complained(), contains('Rename'));
       });
     });
 

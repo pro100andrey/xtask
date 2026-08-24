@@ -241,8 +241,12 @@ List<String> _fencedBlockAfter(String markdown, String heading) {
   final lines = markdown.split('\n');
   final at = lines.indexOf(heading);
   expect(at, isNonNegative, reason: 'README.md has no `$heading` section');
-  final opened = lines.indexOf('```', at) + 1;
-  final closed = lines.indexOf('```', opened);
+  // Matched by the fence, not by the whole line: a fence may carry a language
+  // (` ```shell `), and looking for a bare ` ``` ` then finds the CLOSING one
+  // and returns the prose after it — which is how this helper failed the first
+  // time somebody labelled the block.
+  final opened = lines.indexWhere((line) => line.startsWith('```'), at) + 1;
+  final closed = lines.indexWhere((line) => line.startsWith('```'), opened);
   expect(
     closed,
     isNonNegative,

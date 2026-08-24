@@ -227,7 +227,7 @@ final class BodyResolver {
           throw RunFailure(
             ExitCode.invalidFile,
             'task `${task.name}` names the verb `$verb`, which this project '
-            'has not registered. The engine ships no project verbs (§9): a '
+            'has not registered. The engine ships no project verbs: a '
             'verb is a Dart function the project hands to `runXtask`',
           );
         }
@@ -309,7 +309,8 @@ final class BodyResolver {
           'a batch file. Windows starts one through the shell whatever the '
           'caller asks for, so `$character` in that argument would be read as '
           'a shell operator rather than as text. Point the task at a real '
-          'executable, or make it a verb (§9) — R1 puts logic there anyway',
+          'executable, or make it a verb — a Dart function is where logic '
+          'belongs anyway',
         );
       }
     }

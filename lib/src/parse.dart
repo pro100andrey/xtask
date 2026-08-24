@@ -75,7 +75,7 @@ int _version(YamlMap root) {
     throw XtaskFormatException(
       'unknown `version: $value` — this engine reads version '
       '$supportedVersion, and an unknown version is refused rather than read '
-      'as best it can be (§4.1)',
+      'as best it can be',
       node.span,
     );
   }
@@ -220,7 +220,7 @@ int? _timeout(YamlMap map, String taskName, Body? body) {
       'task `$taskName` puts a `timeout:` on a `do:`, and the engine cannot '
       'honour it: a verb is a Dart function and nothing outside it can stop '
       'one, so the limit would pass while the verb kept running. Put the '
-      'deadline inside the verb, where R1 puts the logic anyway',
+      'deadline inside the verb, which is where logic belongs',
       node.span,
     );
   }
@@ -547,7 +547,8 @@ void _refuseUnreadableSyntax(String source, Uri? sourceUrl) {
         anchor
             ? 'a YAML anchor (`&`) is refused. `sets:` already exists to say a '
                   'thing once, and a task has to be readable without leaving '
-                  'it — which is what R2 is for'
+                  'it: what it does is read from its own keys, and an anchor '
+                  'makes that untrue'
             : 'a YAML alias (`*`) is refused, for the reason an anchor is. If '
                   'this was meant as a glob, quote it: YAML reads a value '
                   'beginning with `*` as an alias, whatever you meant',
@@ -559,7 +560,7 @@ void _refuseUnreadableSyntax(String source, Uri? sourceUrl) {
       refuse(
         i,
         'the YAML merge key `<<` is refused. It is inheritance with precedence '
-        'rules, which R2 exists to keep out of this file',
+        'rules, and a task is meant to be read completely from its own keys',
       );
     }
 

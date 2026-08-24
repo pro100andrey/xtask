@@ -91,7 +91,7 @@ void _checkVerb(
     XtaskFormatException(
       'task `${task.name}` names the verb `${body.verb}`, which is neither '
       'built in nor registered by this project. The engine ships no project '
-      'verbs (§9)${knownVerbs.isEmpty ? '' : ' — known: '
+      'verbs${knownVerbs.isEmpty ? '' : ' — known: '
                 '${(knownVerbs.toList()..sort()).join(', ')}'}',
       task.span,
     ),
