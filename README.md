@@ -91,13 +91,15 @@ repository's business. Its only built-in is `remove`.
 xtask <task>                run a task and everything it needs
 xtask <task> -- <args>      and pass those arguments to its body
 xtask <task> --keep-going   report every failure, not just the first
-xtask <task> --parallel     run independent tasks at once
+xtask <task> --parallel     run independent tasks at once — which costs
+                            seeing their output as it arrives
 xtask --list                every task, with its description
 xtask --list --gate <name>  only the tasks in that gate set
 xtask --gates <name>        that gate set's task names, one per line
-xtask --why <task>          what puts that task in a plan
-xtask --check-ci            does the CI file still run the gate sets?
+xtask --why <task>          what puts that task in a plan, and by which
+                            `needs:` or `then:`
 xtask --validate            parse and check the file; run nothing
+xtask --check-ci            does the CI file still run the gate sets?
 xtask --dry-run <task>      print the resolved plan; run nothing
 xtask --emit-schema         print the JSON Schema for this file format
 xtask --version             print which engine this is
