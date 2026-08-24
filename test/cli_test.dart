@@ -80,6 +80,37 @@ void main() {
       expect((parseArguments(['--list']) as ListTasks).gate, isNull);
     });
 
+    test('every mode that takes a name takes it joined by `=` too', () {
+      // `--gate=check` worked and `--why=test` did not, which a person finds
+      // out by being told "`--why=test` is not an option xtask has" — a
+      // refusal that denies the flag exists rather than naming the form it
+      // wanted. Three flags, one spelling rule.
+      expect((parseArguments(['--why=build']) as WhyTask).task, 'build');
+      expect(
+        (parseArguments(['--gate-members=ci']) as GateMembers).gate,
+        'ci',
+      );
+      expect(
+        (parseArguments(['--dry-run=build']) as DryRunTask).task,
+        'build',
+      );
+      expect(
+        (parseArguments(['--list', '--gate=ci']) as ListTasks).gate,
+        'ci',
+        reason: 'the one that already took both spellings still does',
+      );
+    });
+
+    test('and `--parallel` says which form it wants, not what it counted', () {
+      // `--parallel 2` reads as a second task called `2`, and the refusal used
+      // to report that: "xtask runs one task at a time, and it was given
+      // `build` and `2`" — true, useless, and about something the person did
+      // not write. It cannot take a separate word: a bare `--parallel` is
+      // already an answer, and nothing tells that apart from a task named `2`.
+      final usage = parseArguments(['build', '--parallel', '2']) as ShowUsage;
+      expect(usage.problem, contains('--parallel=2'));
+    });
+
     test('and on its own it is refused, pointing at the other name', () {
       // `--gate` narrows `--list`; it is not a mode of its own. They used to
       // be `--gate` and `--gates`, one letter apart and meaning opposite
