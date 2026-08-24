@@ -90,7 +90,7 @@ tasks:
   # The output goes where `.gitignore` already reaches. Ten milliseconds
   # against `dart run`'s five hundred buys nothing on `check` — that gate
   # spends seconds inside `dart test` — and buys the whole of the cheap modes:
-  # --gates, --dry-run, --why, --validate, --emit-schema.
+  # --gate-members, --dry-run, --why, --validate, --emit-schema.
   aot:
     desc: compile this repository's own entry point to a native binary
     run: [dart, compile, exe, bin/xtask.dart, -o, .dart_tool/xtask]

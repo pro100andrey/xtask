@@ -45,7 +45,7 @@ final class Plan {
   /// Every task that will be reached, once each, in order.
   final List<PlanStep> steps;
 
-  /// The names, in order — what `--gates` prints and `--dry-run` walks.
+  /// The names, in order — what `--gate-members` prints and `--dry-run` walks.
   List<String> get names => [for (final step in steps) step.task.name];
 }
 

@@ -77,7 +77,7 @@ final class ListTasks extends Request {
   final String? gate;
 }
 
-/// `xtask --gates <name>` — the members of one gate set, one per line.
+/// `xtask --gate-members <name>` — the members of one gate set, one per line.
 ///
 /// **A window on the data, not the mechanism.** No pipeline consumes this:
 /// the duplicate list disappears because CI stops naming commands and runs one
@@ -145,7 +145,7 @@ const modes = {
   '--check-ci',
   '--list',
   '--why',
-  '--gates',
+  '--gate-members',
   '--validate',
   '--dry-run',
   '--emit-schema',
@@ -249,12 +249,14 @@ Request parseArguments(List<String> args) {
   final mode = written.isEmpty ? null : written.single;
 
   if (narrowed && mode != '--list') {
-    // The two names differ by one letter and mean opposite kinds of thing,
-    // which §7 fixes as the surface; the least this can do is say so rather
-    // than quietly ignoring the flag or listing the wrong thing.
+    // `--gate` is a modifier, not a mode. It used to be one letter away from
+    // `--gates`, which is why this refusal was written; the flag is now
+    // `--gate-members` and cannot be reached by a slip of the finger, but a
+    // `--gate` written without `--list` still has to be answered rather than
+    // quietly ignored or listed past.
     return const ShowUsage(
       '`--gate` narrows `--list`. For the members of one gate set on their '
-      'own, write `--gates <name>`',
+      'own, write `--gate-members <name>`',
     );
   }
 
@@ -334,10 +336,10 @@ Request parseArguments(List<String> args) {
         : const ShowUsage('`--why` needs the name of one task');
   }
 
-  if (mode == '--gates') {
+  if (mode == '--gate-members') {
     return operands.length == 1
         ? GateMembers(operands.single)
-        : const ShowUsage('`--gates` needs the name of one gate set');
+        : const ShowUsage('`--gate-members` needs the name of one gate set');
   }
 
   if (mode == '--dry-run') {
@@ -368,21 +370,21 @@ Request parseArguments(List<String> args) {
 /// §7's list, and the message a refused invocation prints.
 const usage = [
   'usage:',
-  '  xtask <task>                run a task and everything it needs',
-  '  xtask <task> -- <args>      and pass those arguments to its body',
-  '  xtask <task> --keep-going   report every failure, not just the first',
-  '  xtask <task> --parallel     run independent tasks at once — which costs',
-  '                              seeing their output as it arrives',
-  '  xtask --list                every task, with its description',
-  '  xtask --list --gate <name>  only the tasks in that gate set',
-  "  xtask --gates <name>        that gate set's task names, one per line",
-  '  xtask --why <task>          what puts that task in a plan, and by which',
-  '                              `needs:` or `then:`',
-  '  xtask --validate            parse and check the file; run nothing',
-  '  xtask --check-ci            does the CI file still run the gate sets?',
-  '  xtask --dry-run <task>      print the resolved plan; run nothing',
-  '  xtask --emit-schema         print the JSON Schema for this file format',
-  '  xtask --version             print which engine this is',
+  '  xtask <task>                 run a task and everything it needs',
+  '  xtask <task> -- <args>       and pass those arguments to its body',
+  '  xtask <task> --keep-going    report every failure, not just the first',
+  '  xtask <task> --parallel      run independent tasks at once — which costs',
+  '                               seeing their output as it arrives',
+  '  xtask --list                 every task, with its description',
+  '  xtask --list --gate <name>   only the tasks in that gate set',
+  "  xtask --gate-members <name>  that gate set's task names, one per line",
+  '  xtask --why <task>           what puts that task in a plan, and by which',
+  '                               `needs:` or `then:`',
+  '  xtask --validate             parse and check the file; run nothing',
+  '  xtask --check-ci             does the CI file still run the gate sets?',
+  '  xtask --dry-run <task>       print the resolved plan; run nothing',
+  '  xtask --emit-schema          print the JSON Schema for this file format',
+  '  xtask --version              print which engine this is',
   '',
   'the file is `$xtaskFileName`, at the repository root.',
 ];
@@ -626,9 +628,9 @@ void _refuseArgumentsWithNowhereToGo(
 /// [gate], if the file knows the name.
 ///
 /// A gate set nobody is in and nothing collects is a typo, and the answer to a
-/// typo must not be an empty list: `--gates ci-analize` printing nothing reads
-/// as "that job checks nothing", which is the failure this whole tool is
-/// about. Whether a gate that DOES exist is orphaned is `--validate`'s
+/// typo must not be an empty list: `--gate-members ci-analize` printing
+/// nothing reads as "that job checks nothing", which is the failure this whole
+/// tool is about. Whether a gate that DOES exist is orphaned is `--validate`'s
 /// question (§8), not this one's.
 String _gate(XtaskFile file, String gate) {
   final known = gateSets(file);

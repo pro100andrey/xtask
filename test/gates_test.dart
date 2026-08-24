@@ -240,8 +240,8 @@ tasks:
   group('two questions about a gate set, and gates.dart owns both', () {
     // They were three inline expressions across cli.dart, ci.dart and
     // validate.dart. Existing and being runnable are different questions —
-    // §8 judges an orphan, `--gates` only reads the data — so the answer is
-    // two named functions, not one.
+    // §8 judges an orphan, `--gate-members` only reads the data — so the
+    // answer is two named functions, not one.
     const orphaned = '''
 version: 1
 tasks:
