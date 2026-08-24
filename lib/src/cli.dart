@@ -462,7 +462,7 @@ Future<int> runCli(
   if (shadowed.isNotEmpty) {
     err(
       'xtask: this project registers ${shadowed.map((v) => '`$v`').join(', ')}'
-      ', which the engine already ships as a built-in verb (§6). Rename the '
+      ', which the engine already ships as a built-in verb. Rename the '
       "project's verb: two things answering to one name in `do:` is one of "
       'them running when the file says the other',
     );
@@ -473,7 +473,7 @@ Future<int> runCli(
   if (root == null) {
     err(
       'xtask: no `$xtaskFileName` in `$workingDirectory` or any directory '
-      'above it. It belongs at the repository root (§4), and every path in it '
+      'above it. It belongs at the repository root, and every path in it '
       'is relative to wherever it is',
     );
     return ExitCode.invalidFile;

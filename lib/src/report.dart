@@ -257,7 +257,7 @@ List<String> describe(Resolved body, {bool header = true}) {
     if (body case ResolvedProcess(timeout: final limit?))
       '  for  at most ${limit.inSeconds}s, then it is killed',
     if (body case ResolvedProcess(runInShell: true))
-      '  via  cmd.exe, which is the only way to start a batch file (§5.4)',
+      '  via  cmd.exe, which is the only way to start a batch file',
   ];
 }
 
