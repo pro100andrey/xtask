@@ -179,6 +179,38 @@ void main() {
     });
   });
 
+  group("the README's own examples are files this engine would accept", () {
+    // Written after both defects in one example: it had no `version:` at all,
+    // and it wrote a glob as a plain list, which is a literal member that
+    // happens to contain a `*`. Neither is visible by reading, and a reader
+    // copying an example out of the README meets both.
+    //
+    // Only blocks declaring `version:` are examined, which is the line
+    // between a FILE and a fragment: the workflow snippet is not an
+    // `xtask.yaml` and the one-task illustrations are not whole ones.
+    // Parsed rather than validated, because an example may name a verb the
+    // project it belongs to registered and this repository has not.
+    test('every complete one parses', () {
+      final readme = File(p.join(root, 'README.md')).readAsStringSync();
+      final blocks = [
+        for (final block in _fencedBlocks(readme, 'yaml'))
+          if (block.startsWith('version:')) block,
+      ];
+      expect(
+        blocks,
+        hasLength(greaterThan(1)),
+        reason: 'the README used to carry two whole files; find them again',
+      );
+      for (final block in blocks) {
+        expect(
+          () => parseXtaskFile(block, sourceUrl: Uri.parse('README.md')),
+          returnsNormally,
+          reason: block,
+        );
+      }
+    });
+  });
+
   group('the version in code is the version in the manifest', () {
     // The number has to be in `pubspec.yaml` because pub needs it there, and
     // in code because a compiled entry point has no manifest beside it to
@@ -253,4 +285,19 @@ List<String> _fencedBlockAfter(String markdown, String heading) {
     reason: 'the block under `$heading` is unclosed',
   );
   return lines.sublist(opened, closed);
+}
+
+/// Every fenced block in [markdown] tagged with [language], content only.
+List<String> _fencedBlocks(String markdown, String language) {
+  final blocks = <String>[];
+  final lines = markdown.split('\n');
+  for (var at = 0; at < lines.length; at++) {
+    if (lines[at] != '```$language') {
+      continue;
+    }
+    final closed = lines.indexWhere((line) => line.startsWith('```'), at + 1);
+    blocks.add('${lines.sublist(at + 1, closed).join('\n')}\n');
+    at = closed;
+  }
+  return blocks;
 }

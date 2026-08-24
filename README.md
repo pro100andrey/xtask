@@ -147,6 +147,13 @@ job's. A task lists the sets it belongs to; a composite `collects:` a set and
 therefore needs every task in it, in the order they appear in the file (cheap
 gates before slow ones).
 
+`collects:` names **one** set, not a list — a composite is the thing you type,
+and one command gathering two unrelated sets is two commands wearing one name.
+Naming the composite after the set it gathers is the ordinary case and not a
+cycle: a task in gate `check` called `check` does not need itself, because
+gathering a set does not mean gathering yourself. The engine drops it from its
+own members rather than reporting the cycle that would otherwise be there.
+
 That is the whole mechanism for removing the duplicate list. A CI job runs
 **one invocation**:
 
@@ -279,6 +286,12 @@ An exit code is not a success flag; it is the shortest possible bug report.
 | `3` | a task's executable was not found |
 | `4` | a task's body succeeded and one of its `then:` continuations failed |
 
+A `4` stops the run exactly as a `1` does: what has not started does not
+start, what is running is left alone, and the summary names the rest. The code
+says which of the three endings happened, not how much of the plan was
+abandoned — those are different questions and `--keep-going` is the one that
+answers the second.
+
 With `--keep-going` and more than one failure, the code is the **first**
 failure's. A code is a report about one failure, and a run with three cannot
 honestly claim to be about all of them; the summary is where the others are.
@@ -326,6 +339,48 @@ spawns a server and hangs may leave the server behind. A `do:` cannot carry a
 `timeout:` at all: a verb is a Dart function, nothing outside it can stop one,
 and a limit that passed while the verb kept writing to disk would be worse than
 none. That is refused when the file is read, not discovered at runtime.
+
+The example at the top uses four keys because four is what that repository
+needs. Here is one using the rest — a release, which is where `needs:`,
+`then:` and a verb all earn their keep at once:
+
+```yaml
+version: 1
+
+sets:
+  packages:
+    include: [packages/*]
+
+tasks:
+  build:
+    desc: build every package
+    each: packages
+    in: $each
+    run: [dart, run, build_runner, build, --delete-conflicting-outputs]
+
+  publish:
+    desc: publish, and announce it only if that worked
+    needs: [build]
+    then: [announce]
+    env-required: [PUB_TOKEN]
+    timeout: 600
+    run: [dart, pub, publish, --force]
+
+  announce:
+    desc: post the release note
+    do: notify
+    argv-from: packages
+```
+
+`each:` runs the body once per member, sequentially, with `in: $each` putting
+each run in that member's own directory. `needs:` is "before, and once however
+many tasks ask for it"; `then:` is "after, and only if the body worked" —
+which is the whole reason exit code `4` exists, because `publish` succeeding
+and `announce` failing is a third ending and not a failure to publish.
+`env-required:` is checked before anything runs, so a missing token is a
+sentence rather than a broken upload. `do:` names a verb the project wrote in
+Dart and handed to `runXtask`, and `argv-from:` hands it the expanded set as
+arguments.
 
 A set is a list of members or a glob with exclusions, expanded by the engine
 rather than by a shell, in a deterministic order:
@@ -422,6 +477,14 @@ honouring `PATHEXT`, and knowing that `CreateProcess` cannot start a `.bat` or
 a `.cmd` however it is asked. A shim goes through the shell because there is no
 other way; an argument that the shell would reinterpret is **refused** with the
 character named, rather than passed through to mean something else.
+
+Windows has no `argv`. `CreateProcess` takes one string, and the runtime at the
+other end splits it again — so an array is a promise somebody has to keep by
+quoting. Dart's `Process` does that, by the rules `CommandLineToArgvW` reads
+back, and a task written as a list arrives as that list: a path with a space in
+it stays one argument and is not two. Where quoting is not enough the engine
+refuses rather than hopes, and that is the batch shim above — `cmd.exe` parses
+the line a second time, after the quoting, by rules of its own.
 
 ## License
 
