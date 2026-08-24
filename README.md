@@ -207,6 +207,12 @@ and its expanded `argv-from`, and nothing else in the plan sees it — so
 the formatter. A task with no body of its own is refused rather than
 swallowing them.
 
+## Seeing what will happen
+
+Two questions the tool answers without running anything. Both are cheap,
+and both are the fastest way to find out that a file says something other
+than what you meant.
+
 `--dry-run` shows what will actually happen, not what is written — sets
 expanded, `$each` substituted, and the executable resolved on this machine.
 The task names below are this repository's own, from [`xtask.yaml`](xtask.yaml):
@@ -228,7 +234,18 @@ installed yet, naming the one it could not find. That is the same answer a real
 run would give, one step earlier — which is worth knowing before you read it as
 a bug on a machine where the tools are not set up.
 
-## Gate sets, and what they are for
+`--why` answers the other direction — not "what does this run" but "why does
+this run at all". It names each entry point that reaches the task and spells
+the route edge by edge, saying which kind each edge is, because "it runs before
+this" and "it runs after this" are opposite answers:
+
+```shell
+$ xtask --why lint
+check
+  check needs lint
+```
+
+## Gate sets, and CI
 
 A gate set is named after **who runs it** — one person's command, or one CI
 job's. A task lists the sets it belongs to; a composite `collects:` a set and
@@ -261,18 +278,6 @@ a collapsible section, and the failing one is annotated with the command and the
 directory, so the line that says a task failed is also the line that reproduces
 it.
 
-A job that is one invocation has one duration, which answers nothing, so the run
-prints what each task took at the end — after the last section, because a line
-inside a fold is invisible in exactly the state somebody is in when they want a
-number:
-
-```shell
-format    0.4s
-analyze   2.3s
-test     11.7s
-total    14.4s
-```
-
 `--check-ci` keeps that arrangement from rotting. It reads every file under
 `.github/workflows` — GitHub Actions is the only host it knows, and a
 repository without that directory is told so rather than passed — and compares
@@ -303,15 +308,21 @@ web-e2e:
 which turns "a browser test failed somewhere inside" into "task `web-e2e`
 requires `CHROMEDRIVER`, which is not set".
 
-`--why` answers the other direction — not "what does this run" but "why does
-this run at all". It names each entry point that reaches the task and spells
-the route edge by edge, saying which kind each edge is, because "it runs before
-this" and "it runs after this" are opposite answers:
+## Reading a run
+
+What a run tells you while it happens and when it ends — and what changes
+about that when you ask it to go faster.
+
+A run has one duration, which answers nothing on its own, and a CI job that is
+one invocation has only that one. So the run prints what each task took at the
+end — after the last section, because a line inside a fold is invisible in
+exactly the state somebody is in when they want a number:
 
 ```shell
-$ xtask --why lint
-check
-  check needs lint
+format    0.4s
+analyze   2.3s
+test     11.7s
+total    14.4s
 ```
 
 `--keep-going` is for the local loop. A gate that stops at the first failure
