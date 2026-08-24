@@ -32,6 +32,7 @@ Future<int> dryRun({
   required void Function(String line) log,
   Map<String, Verb> verbs = const {},
   Map<String, String> environment = const {},
+  ({String task, List<String> arguments})? passedThrough,
 }) {
   // The order, before anything that can fail to resolve. A plan whose second
   // task names a program this machine has not got is exactly when somebody
@@ -47,6 +48,9 @@ Future<int> dryRun({
     verbs: verbs,
     environment: environment,
     dryRun: (body) => describe(body).forEach(log),
+    // Carried, because a dry run that dropped them would print a command
+    // different from the one the same invocation is about to run.
+    passedThrough: passedThrough,
   ).run(plan);
 }
 

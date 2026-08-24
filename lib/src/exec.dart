@@ -124,6 +124,7 @@ final class Executor {
     this.dryRun,
     this.markers = const PlainMarkers(),
     this.now = DateTime.now,
+    this.passedThrough,
   }) : _sets = SetExpander(root: root);
 
   final XtaskFile file;
@@ -165,6 +166,19 @@ final class Executor {
   /// deliberate — detection is `LogMarkers.forHost`, and a class that reached
   /// for the ambient environment itself could not be tested for either host.
   final LogMarkers markers;
+
+  /// What followed `--` on the command line, and the one task it is for.
+  ///
+  /// **One task, not the plan.** `xtask check -- --name x` names the composite;
+  /// handing `--name x` to every member would give it to the formatter and the
+  /// analyser as well, which is not what anybody typed. So the entry point is
+  /// carried with the arguments and compared by name — a task pulled in
+  /// through `needs:` gets what the file says it gets and nothing else.
+  ///
+  /// They land **after** `args:` and the expanded `argv-from`, where a command
+  /// line belongs: last, and therefore able to add to what the file already
+  /// said rather than being buried in front of it.
+  final ({String task, List<String> arguments})? passedThrough;
 
   /// Where the clock comes from.
   ///
@@ -360,9 +374,11 @@ final class Executor {
   /// code.
   Resolved _resolve(Task task, Body body, String? member) {
     final where = _workingDirectory(task, member);
+    final passed = passedThrough;
     final args = List<String>.unmodifiable([
       ...task.args,
       if (task.argvFrom != null) ..._expand(task, task.argvFrom!),
+      if (passed != null && passed.task == task.name) ...passed.arguments,
     ]);
     final env = Map<String, String>.unmodifiable({
       ...environment,
