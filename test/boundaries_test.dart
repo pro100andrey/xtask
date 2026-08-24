@@ -28,7 +28,10 @@ void main() {
         p.join(root, 'lib'),
       ).listSync(recursive: true).whereType<File>())
         if (file.path.endsWith('.dart'))
-          p.relative(file.path, from: root): file.readAsStringSync(),
+          // Joined with `/` whatever the host uses, because the exception
+          // below is written once and read on three platforms.
+          p.posix.joinAll(p.split(p.relative(file.path, from: root))): file
+              .readAsStringSync(),
     };
     expect(sources, isNotEmpty, reason: 'no sources were read at all');
   });

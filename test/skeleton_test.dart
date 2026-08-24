@@ -60,7 +60,12 @@ void main() {
         'tasks:\n'
         '  version:\n'
         '    desc: print the toolchain\n'
-        '    run: ["${Platform.resolvedExecutable}", --version]\n',
+        // Single-quoted, and that is not a style choice: a double-quoted
+        // YAML scalar reads `\` as an escape, so a Windows path arrives as
+        // `C:hostedtoolcachewindows...` with `\x64` swallowed as a hex
+        // escape. The test written to prove Windows grouping was broken by
+        // Windows quoting.
+        "    run: ['${Platform.resolvedExecutable}', --version]\n",
       );
       run = await Process.run(
         Platform.resolvedExecutable,

@@ -430,8 +430,12 @@ void main() {
       // `context: p.posix` is now a statement of intent rather than something
       // this suite can catch you removing. Saying so beats a test that pins
       // nothing and claims otherwise — which is what this group used to be.
-      given(['a*b.lake', 'axb.lake']);
-      expect(expandGlob([r'a\*b.lake']), ['a*b.lake']);
+      // `[` rather than `*`: Windows will not create a file named `a*b`, so
+      // the case could only have been skipped there — and Windows is exactly
+      // where `\` being the escape is worth asserting, since it is also the
+      // separator.
+      given(['a[b.lake', 'axb.lake']);
+      expect(expandGlob([r'a\[b.lake']), ['a[b.lake']);
     });
 
     test('a pattern with `/` matches on a host that spells paths otherwise', () {
