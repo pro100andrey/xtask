@@ -13,10 +13,10 @@
 /// surface somewhere else.
 library;
 
+import 'bodies.dart';
 import 'ci.dart';
 import 'graph.dart';
 import 'model.dart';
-import 'resolution.dart';
 
 /// Why a task in the plan did not run.
 ///
@@ -90,7 +90,7 @@ final class NeverStartable extends Skipped {
 /// only place it is ever mentioned. Suppressing it left a run that answered 0
 /// having silently not done something, which is the failure this tool is
 /// about.
-List<String> stopped(Map<String, int> failed, Map<String, Skipped> skipped) {
+List<String> summary(Map<String, int> failed, Map<String, Skipped> skipped) {
   if (skipped.isEmpty && failed.length < 2) {
     return const [];
   }

@@ -1,8 +1,8 @@
 import 'package:test/test.dart';
 import 'package:xtask/src/gates.dart';
 import 'package:xtask/src/graph.dart';
+import 'package:xtask/src/markers.dart';
 import 'package:xtask/src/parse.dart';
-import 'package:xtask/src/reporting.dart';
 
 /// Lake's own shape, abbreviated: six gate sets, five of them one CI job.
 const _lake = '''

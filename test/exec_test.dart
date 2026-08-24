@@ -3,14 +3,14 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:xtask/src/bodies.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/exec.dart';
+import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
+import 'package:xtask/src/markers.dart';
 import 'package:xtask/src/parse.dart';
-import 'package:xtask/src/reporting.dart';
-import 'package:xtask/src/resolution.dart';
-import 'package:xtask/src/resolve.dart';
 
 /// A clock that advances by [step] every time it is read.
 ///

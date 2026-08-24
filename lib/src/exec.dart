@@ -4,15 +4,14 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'bodies.dart';
 import 'context.dart';
 import 'errors.dart';
 import 'exit_codes.dart';
 import 'graph.dart';
+import 'markers.dart';
 import 'model.dart';
 import 'report.dart';
-import 'report.dart' as report;
-import 'reporting.dart';
-import 'resolution.dart';
 
 /// Runs a [Plan], in order, stopping at the first failure.
 final class Executor {
@@ -97,12 +96,14 @@ final class Executor {
 
     final began = now();
     final code = await _walk(plan, took, failed, skipped);
-    report
-        .timing(took, now().difference(began), concurrent: concurrency > 1)
-        .forEach(log);
+    timing(
+      took,
+      now().difference(began),
+      concurrent: concurrency > 1,
+    ).forEach(log);
     // Last, because it is the part somebody has to act on and the terminal
     // scrolls. The timing above is background; this is the work.
-    report.stopped(failed, skipped).forEach(log);
+    summary(failed, skipped).forEach(log);
     return code;
   }
 

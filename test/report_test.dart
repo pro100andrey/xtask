@@ -72,12 +72,12 @@ void main() {
 
   group('what failed and what therefore did not run', () {
     test('a lone failure gets no summary — it printed itself already', () {
-      expect(stopped(const {'a': 1}, const {}), isEmpty);
+      expect(summary(const {'a': 1}, const {}), isEmpty);
     });
 
     test('but a lone SKIP does: nothing else ever mentions it', () {
       expect(
-        stopped(const {}, const {'a': RunStopped()}),
+        summary(const {}, const {'a': RunStopped()}),
         contains('skipped  a — the run stopped at an earlier failure'),
       );
     });
@@ -86,7 +86,7 @@ void main() {
       // They were free text in one map through one template, which produced
       // `skipped third (needs a failure elsewhere)` for a task that needs
       // nothing.
-      final lines = stopped(
+      final lines = summary(
         const {'boom': 1},
         const {
           'dependent': NeedsStopped('boom'),

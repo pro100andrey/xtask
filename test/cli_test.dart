@@ -4,8 +4,8 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/cli.dart';
 import 'package:xtask/src/context.dart';
+import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
-import 'package:xtask/src/resolve.dart';
 import 'package:xtask/src/schema.dart';
 import 'package:xtask/src/version.dart';
 

@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
-import 'package:xtask/src/resolve.dart';
+import 'package:xtask/src/executables.dart';
 
 /// A resolver over a made-up filesystem.
 ///
