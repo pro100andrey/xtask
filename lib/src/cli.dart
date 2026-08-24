@@ -34,18 +34,24 @@ sealed class Request {
   const Request();
 }
 
-/// `xtask <task>` — run it and everything it needs.
+/// `xtask <task> [-- <args>]` — run it and everything it needs.
 final class RunTask extends Request {
-  const RunTask(this.task);
+  const RunTask(this.task, [this.arguments = const []]);
 
   final String task;
+
+  /// What followed `--`, for [task]'s body alone.
+  final List<String> arguments;
 }
 
-/// `xtask --dry-run <task>` — print what that would come to (§7).
+/// `xtask --dry-run <task> [-- <args>]` — print what that would come to (§7).
 final class DryRunTask extends Request {
-  const DryRunTask(this.task);
+  const DryRunTask(this.task, [this.arguments = const []]);
 
   final String task;
+
+  /// What followed `--`, for [task]'s body alone.
+  final List<String> arguments;
 }
 
 /// `xtask --list [--gate <name>]` — every task with its description.
@@ -118,9 +124,23 @@ Request parseArguments(List<String> args) {
   String? gate;
   var narrowed = false;
 
+  final passed = <String>[];
+  var separated = false;
+
   final rest = [...args];
   while (rest.isNotEmpty) {
     final argument = rest.removeAt(0);
+
+    // **Everything after it is taken as written, options included.** That is
+    // the whole point of the separator: `xtask test -- --name x` has to reach
+    // the body with `--name` intact, and a parser that kept looking at these
+    // would refuse the first one it did not recognise.
+    if (argument == '--') {
+      separated = true;
+      passed.addAll(rest);
+      rest.clear();
+      continue;
+    }
 
     if (argument == '--help' || argument == '-h') {
       return const ShowUsage();
@@ -170,6 +190,16 @@ Request parseArguments(List<String> args) {
     );
   }
 
+  if (separated && mode != null && mode != '--dry-run') {
+    // Only a body can take arguments, and only running or resolving one
+    // reaches a body. `--list -- --name x` has nothing to hand them to, and
+    // arguments that reach nothing are the silence this tool exists against.
+    return ShowUsage(
+      '`$mode` does not run anything, so there is nothing for the arguments '
+      'after `--` to be arguments to',
+    );
+  }
+
   if (mode == '--list') {
     return operands.isEmpty
         ? ListTasks(gate)
@@ -205,12 +235,18 @@ Request parseArguments(List<String> args) {
 
   if (mode == '--dry-run') {
     return operands.length == 1
-        ? DryRunTask(operands.single)
+        ? DryRunTask(operands.single, passed)
         : const ShowUsage('`--dry-run` needs one task to resolve');
   }
 
+  if (operands.isEmpty && separated) {
+    return const ShowUsage(
+      'the arguments after `--` belong to one task, and no task was named',
+    );
+  }
+
   return operands.length == 1
-      ? RunTask(operands.single)
+      ? RunTask(operands.single, passed)
       : ShowUsage(
           'xtask runs one task at a time, and it was given '
           '${operands.map((o) => '`$o`').join(' and ')}',
@@ -221,6 +257,7 @@ Request parseArguments(List<String> args) {
 const usage = [
   'usage:',
   '  xtask <task>                run a task and everything it needs',
+  '  xtask <task> -- <args>      and pass those arguments to its body',
   '  xtask --list                every task, with its description',
   '  xtask --list --gate <name>  only the tasks in that gate set',
   "  xtask --gates <name>        that gate set's task names, one per line",
@@ -384,7 +421,8 @@ Future<int> runCli(
         }
         return ExitCode.success;
 
-      case DryRunTask(:final task):
+      case DryRunTask(:final task, :final arguments):
+        _refuseArgumentsWithNowhereToGo(collected, task, arguments);
         return await dryRun(
           file: collected,
           root: root,
@@ -393,9 +431,11 @@ Future<int> runCli(
           log: out,
           verbs: known,
           environment: environment,
+          passedThrough: (task: task, arguments: arguments),
         );
 
-      case RunTask(:final task):
+      case RunTask(:final task, :final arguments):
+        _refuseArgumentsWithNowhereToGo(collected, task, arguments);
         return await Executor(
           file: collected,
           root: root,
@@ -405,12 +445,36 @@ Future<int> runCli(
           verbs: known,
           environment: environment,
           markers: LogMarkers.forHost(environment),
+          passedThrough: (task: task, arguments: arguments),
         ).run(planRun(collected, task));
     }
   } on XtaskFormatException catch (problem) {
     err('$problem');
     return ExitCode.invalidFile;
   }
+}
+
+/// Refuses arguments handed to a task that has no body to hand them to.
+///
+/// A composite gathers other tasks and runs nothing of its own, so `xtask
+/// check -- --name x` has nowhere to put `--name x`. Passing them silently to
+/// nothing is the exact shape of failure this tool exists against: a command
+/// that looks as though it did what was asked.
+void _refuseArgumentsWithNowhereToGo(
+  XtaskFile file,
+  String name,
+  List<String> arguments,
+) {
+  final task = file.tasks[name];
+  if (arguments.isEmpty || task == null || task.body != null) {
+    return;
+  }
+  throw XtaskFormatException(
+    'task `$name` has no `run:` and no `do:` of its own, so there is nothing '
+    'for ${arguments.map((a) => '`$a`').join(' ')} to be an argument to. Name '
+    'the task that takes them',
+    task.span,
+  );
 }
 
 /// [gate], if the file knows the name.

@@ -102,6 +102,54 @@ void main() {
       expect((parseArguments(['--gate']) as ShowUsage).problem, isNotNull);
     });
 
+    group('`--` hands the rest to one task', () {
+      test('a task and its arguments', () {
+        final request =
+            parseArguments(['test', '--', '-n', 'a name']) as RunTask;
+        expect(request.task, 'test');
+        expect(request.arguments, ['-n', 'a name']);
+      });
+
+      test('and --dry-run takes them too, or it would print a lie', () {
+        final request =
+            parseArguments(['--dry-run', 'test', '--', '-n', 'x'])
+                as DryRunTask;
+        expect(request.task, 'test');
+        expect(request.arguments, ['-n', 'x']);
+      });
+
+      test('everything after it is taken as written, options included', () {
+        // The whole point of the separator: a parser still looking at these
+        // would refuse `--list` as a second mode and `-n` as an unknown flag.
+        final request =
+            parseArguments(['test', '--', '--list', '-n', '--']) as RunTask;
+        expect(request.arguments, ['--list', '-n', '--']);
+      });
+
+      test('a mode that runs nothing has nowhere to put them', () {
+        for (final mode in ['--list', '--validate', '--gates']) {
+          expect(
+            parseArguments([mode, 'x', '--', '-n']),
+            isA<ShowUsage>(),
+            reason: '$mode took arguments for a body it never reaches',
+          );
+        }
+      });
+
+      test('and neither does an invocation that named no task', () {
+        // The message is the whole point here, not the refusal: without the
+        // guard this still refuses, with the message "xtask runs one task at
+        // a time, and it was given" and nothing after it.
+        final usage = parseArguments(['--', '-n']) as ShowUsage;
+        expect(usage.problem, contains('--'));
+        expect(usage.problem, contains('no task was named'));
+      });
+
+      test('a bare `--` is simply no arguments', () {
+        expect((parseArguments(['test', '--']) as RunTask).arguments, isEmpty);
+      });
+    });
+
     test('--emit-schema is a mode, and takes nothing else', () {
       expect(parseArguments(['--emit-schema']), isA<EmitSchema>());
       expect(parseArguments(['--emit-schema', 'a']), isA<ShowUsage>());
@@ -498,6 +546,53 @@ tasks:
         await run(['a']);
         expect(printed(), contains('a'));
         expect(printed(), isNot(contains('::group::')));
+      });
+    });
+
+    group('arguments after `--`', () {
+      test('reach the named task, and the plan shows them', () async {
+        writeFile('''
+version: 1
+tasks:
+  install: {desc: x, run: [dart, pub, get]}
+  test: {desc: x, needs: [install], run: [dart, test]}
+''');
+        expect(
+          await run(['test', '--', '-n', 'one test']),
+          ExitCode.success,
+        );
+        expect(starter.started.last.arguments, ['test', '-n', 'one test']);
+      });
+
+      test('and only it — a dependency gets what the file says', () async {
+        writeFile('''
+version: 1
+tasks:
+  install: {desc: x, run: [dart, pub, get]}
+  test: {desc: x, needs: [install], run: [dart, test]}
+''');
+        await run(['test', '--', '-n', 'x']);
+        expect(starter.started.first.arguments, ['pub', 'get']);
+      });
+
+      test('a task with nothing of its own to run is refused', () async {
+        // A composite gathers other tasks. Handing it arguments that reach
+        // nothing is a command that looks as though it did what was asked.
+        writeFile(lake);
+        expect(await run(['check', '--', '-n', 'x']), ExitCode.invalidFile);
+        expect(complained(), contains('`-n`'));
+        expect(starter.started, isEmpty);
+      });
+
+      test('but the same composite runs fine without them', () async {
+        writeFile(lake);
+        expect(await run(['check']), ExitCode.success);
+      });
+
+      test('and --dry-run prints what will actually be run', () async {
+        writeFile('version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n');
+        await run(['--dry-run', 'a', '--', '-n', 'two words']);
+        expect(printed(), contains("run  /bin/dart test -n 'two words'"));
       });
     });
 

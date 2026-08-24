@@ -89,6 +89,7 @@ repository's business. Its only built-in is `remove`.
 
 ```
 xtask <task>                run a task and everything it needs
+xtask <task> -- <args>      and pass those arguments to its body
 xtask --list                every task, with its description
 xtask --list --gate <name>  only the tasks in that gate set
 xtask --gates <name>        that gate set's task names, one per line
@@ -100,6 +101,12 @@ xtask --emit-schema         print the JSON Schema for this file format
 `xtask` above is shorthand for `dart run :xtask`. The file is looked for from
 the current directory **upwards**, so the command works from a subdirectory and
 every path inside the file stays relative to the repository root.
+
+Everything after `--` reaches the body of the **named** task, after its `args:`
+and its expanded `argv-from`, and nothing else in the plan sees it — so
+`xtask test -- -n "one test"` narrows the tests without also handing `-n` to
+the formatter. A task with no body of its own is refused rather than
+swallowing them.
 
 `--dry-run` shows what will actually happen, not what is written — sets
 expanded, `$each` substituted, and the executable resolved on this machine:

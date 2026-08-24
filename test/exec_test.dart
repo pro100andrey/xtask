@@ -102,6 +102,7 @@ void main() {
   Future<int> runFile(
     String yaml,
     String task, {
+    List<String> passed = const [],
     Map<String, Verb> verbs = const {},
     Map<String, String> environment = const {},
     ExecutableResolver? resolver,
@@ -119,6 +120,7 @@ void main() {
       environment: environment,
       markers: markers,
       now: ticking(step),
+      passedThrough: (task: task, arguments: passed),
     ).run(planRun(file, task));
   }
 
@@ -399,6 +401,62 @@ void main() {
       // line is a header for a plan listing, and the failure already said
       // which task this is.
       expect(failure.split('\n')[1], startsWith('  run  '));
+    });
+  });
+
+  group('arguments from the command line land last', () {
+    test('after `args:` and after the expanded `argv-from`', () async {
+      // Where a command line belongs: able to add to what the file already
+      // said, rather than buried in front of it.
+      given(['lib/a.dart']);
+      await runFile(
+        'version: 1\n'
+            'sets:\n  src:\n    include: [lib/*.dart]\n'
+            'tasks:\n'
+            '  a: {desc: x, run: [dart, format], args: [--fix],'
+            ' argv-from: src}\n',
+        'a',
+        passed: ['--line-length', '100'],
+      );
+      expect(starter.started.single.arguments, [
+        'format',
+        '--fix',
+        'lib/a.dart',
+        '--line-length',
+        '100',
+      ]);
+    });
+
+    test('every member of an `each:` gets them', () async {
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs: [one, two]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}'
+            '\n',
+        'a',
+        passed: ['-n', 'x'],
+      );
+      expect(starter.started.map((s) => s.arguments), [
+        ['test', '-n', 'x'],
+        ['test', '-n', 'x'],
+      ]);
+    });
+
+    test('and a verb is handed them like any other argument', () async {
+      late List<String> seen;
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: regen, args: [--all]}\n',
+        'a',
+        passed: ['--only', 'x'],
+        verbs: {
+          'regen': (context) async {
+            seen = context.args;
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(seen, ['--all', '--only', 'x']);
     });
   });
 
