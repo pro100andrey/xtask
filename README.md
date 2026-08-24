@@ -54,7 +54,7 @@ Those two are a Python repository's tools; put in whatever your own repository
 already runs. Naming a program that is not installed is not a silent pass —
 the run stops and says which one:
 
-```
+```log
 error: task `lint`: `ruff` is not installed, or is not on PATH — nothing
 runnable by that name in the 39 directories on PATH
 ```
@@ -96,7 +96,7 @@ dart run xtask:xtask <task>
 
 ### Your own entry point
 
-The third step, and the only one that needs Dart code, is a **verb**: a
+The second, and the only thing here that needs Dart code, is a **verb**: a
 function of your own for a job with real logic in it. An engine somebody else
 shipped cannot contain your function, so you hand it over from a file of yours:
 
@@ -110,6 +110,29 @@ from, and an empty left side means yours. Without a `bin/xtask.dart` of your
 own the short spelling fails with `Could not find bin/xtask.dart in package
 <yours>`, which is a truthful error and a baffling one if nobody said the file
 was optional.
+
+`dart install xtask` puts a real `xtask` on the PATH, compiled, and for a
+repository whose tasks are all `run:` that is the pleasant way to work.
+
+It stops working the moment a project registers a **verb**, and that is the
+design rather than a limitation. What gets installed is this package's own
+entry point, and it passes no verbs, because it cannot know yours: `do: notify`
+then meets *"the engine ships no project verbs"*, correctly, since the `notify`
+the file means is a Dart function in your repository and not in the tool. That
+is why the entry point belongs to the project — a global install is the engine,
+and `dart run :xtask` is the engine plus what you wrote. The second thing is
+also pinned by your `pubspec.yaml`, where a globally installed tool is a version
+of its own that no repository can see.
+
+`dart run` pays the JIT's start-up — around half a second, every invocation. It
+is nothing against a gate that spends seconds inside a test runner, and it is
+the entire cost of `--gate-members`, `--why` or `--dry-run`, which is where a
+shell loop or a file being written notices it. `dart compile exe
+bin/xtask.dart` removes it. The binary still reads `xtask.yaml` at run time, so
+tasks, gates and sets keep changing without recompiling; verbs are Dart, so a
+binary holds the ones it was built with and wants rebuilding after one changes.
+This repository keeps its own invocation as the `aot` task rather than a second
+copy in this file — `xtask --dry-run aot` prints it.
 
 The rest of this README writes the short spelling, because this repository has
 a `bin/xtask.dart`. If you installed the engine and wrote no Dart, read every
@@ -146,21 +169,11 @@ Future<int> regen(VerbContext context) async {
 }
 ```
 
-The engine ships **no** project verbs. `spec-check`, `regen`, `publish` are one
-repository's business. Its only built-in is `remove`.
+The engine ships **no** project verbs — `regen` above is one repository's
+business, not the tool's. Its only built-in is `remove`.
 
 The file name *is* the declaration: `dart run :xtask` resolves to
 `bin/xtask.dart` and nothing else, so no manifest entry names it.
-
-### This repository's own file
-
-Not quoted here, on purpose. It is [`xtask.yaml`](xtask.yaml) in this
-repository, it has seven tasks and two gate sets, and it carries its reasoning
-in comments that a copy would strip. A README that quoted it would be keeping
-the same list twice, which is the defect this tool exists to remove — and the
-copy that used to sit here had already drifted: it showed four tasks and one
-gate, while the paragraph above it pointed at an `aot` task the copy did not
-contain.
 
 ## The command
 
@@ -182,32 +195,11 @@ xtask --emit-schema          print the JSON Schema for this file format
 xtask --version              print which engine this is
 ```
 
-`xtask` above is whichever spelling you arrived at — the installed command, `dart run xtask:xtask`, or `dart run :xtask`. The flags are the same in all three. The file is looked for from
-the current directory **upwards**, so the command works from a subdirectory and
-every path inside the file stays relative to the repository root.
-
-`dart install xtask` puts a real `xtask` on the PATH, compiled, and for a
-repository whose tasks are all `run:` that is the pleasant way to work.
-
-It stops working the moment a project registers a **verb**, and that is the
-design rather than a limitation. What gets installed is this package's own
-entry point, and it passes no verbs, because it cannot know yours: `do: notify`
-then meets *"the engine ships no project verbs"*, correctly, since the `notify`
-the file means is a Dart function in your repository and not in the tool. That
-is why the entry point belongs to the project — a global install is the engine,
-and `dart run :xtask` is the engine plus what you wrote. The second thing is
-also pinned by your `pubspec.yaml`, where a globally installed tool is a version
-of its own that no repository can see.
-
-That shorthand pays the JIT's start-up — around half a second, every
-invocation. It is nothing against a gate that spends seconds inside a test
-runner, and it is the entire cost of `--gate-members`, `--why` or `--dry-run`, which
-is where a shell loop or a file being written notices it. `dart compile exe
-bin/xtask.dart` removes it. The binary still reads `xtask.yaml` at run time, so
-tasks, gates and sets keep changing without recompiling; verbs are Dart, so a
-binary holds the ones it was built with and wants rebuilding after one changes.
-This repository keeps its own invocation as the `aot` task rather than a second
-copy in this file — `xtask --dry-run aot` prints it.
+`xtask` above is whichever spelling you arrived at — the installed command,
+`dart run xtask:xtask`, or `dart run :xtask`. The flags are the same in all
+three. The file is looked for from the current directory **upwards**, so the
+command works from a subdirectory and every path inside the file stays relative
+to the repository root.
 
 Everything after `--` reaches the body of the **named** task, after its `args:`
 and its expanded `argv-from`, and nothing else in the plan sees it — so
@@ -224,10 +216,10 @@ $ xtask --dry-run check
 plan: format, analyze, test, check
 format
   run  /opt/homebrew/bin/dart format --output=none --set-exit-if-changed .
-  in   /Users/you/project
+  in   /home/you/xtask
 analyze
   run  /opt/homebrew/bin/dart analyze --fatal-infos
-  in   /Users/you/project
+  in   /home/you/xtask
 ...
 ```
 
@@ -245,10 +237,9 @@ gates before slow ones).
 
 `collects:` names **one** set, not a list — a composite is the thing you type,
 and one command gathering two unrelated sets is two commands wearing one name.
-Naming the composite after the set it gathers is the ordinary case and not a
-cycle: a task in gate `check` called `check` does not need itself, because
-gathering a set does not mean gathering yourself. The engine drops it from its
-own members rather than reporting the cycle that would otherwise be there.
+And the composite named after its own set, which the first example writes, is
+not the cycle it looks like: the engine drops a composite from the members it
+gathers, because gathering a set does not mean gathering yourself.
 
 That is the whole mechanism for removing the duplicate list. A CI job runs
 **one invocation**:
@@ -260,7 +251,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
-      - run: dart run :xtask check
+      - run: xtask check
 ```
 
 Run-once still holds, because a job is one invocation. Parallelism is preserved,
@@ -285,12 +276,12 @@ total    14.4s
 `--check-ci` keeps that arrangement from rotting. It reads every file under
 `.github/workflows` — GitHub Actions is the only host it knows, and a
 repository without that directory is told so rather than passed — and compares
-what it finds with the gate sets in both directions: a `run:` step that is not one
-invocation of one gate set is refused, because that is exactly how the duplicate
-list grows back — somebody writes `- run: dart analyze` instead of adding a task.
-A gate set no job runs is reported rather than refused: gate sets are named after
-who runs them, and that is the jobs *plus the people*, which nothing in the file
-distinguishes.
+what it finds with the gate sets in both directions: a `run:` step that is not
+one invocation of one gate set is refused, because that is exactly how the
+duplicate list grows back — somebody writes `- run: dart analyze` instead of
+adding a task. A gate set no job runs is reported rather than refused: gate
+sets are named after who runs them, and that is the jobs *plus the people*,
+which nothing in the file distinguishes.
 
 It does not generate the workflow. Doing that would mean generating the
 checkout, the toolchain and the artifact upload too, which needs a template
@@ -476,9 +467,9 @@ many tasks ask for it"; `then:` is "after, and only if the body worked" —
 which is the whole reason exit code `4` exists, because `publish` succeeding
 and `announce` failing is a third ending and not a failure to publish.
 `env-required:` is checked before that task's body runs — not at the start of
-the run — so a missing token is a sentence rather than a broken upload. `do:` names a verb the project wrote in
-Dart and handed to `runXtask`, and `argv-from:` hands it the expanded set as
-arguments.
+the run — so a missing token is a sentence rather than a broken upload. `do:`
+names a verb the project wrote in Dart and handed to `runXtask`, and
+`argv-from:` hands it the expanded set as arguments.
 
 A set is a list of members or a glob with exclusions, expanded by the engine
 rather than by a shell, in a deterministic order:
@@ -502,7 +493,7 @@ your repository and point at it with a relative path, so a fresh clone needs
 neither the network nor a per-person editor setting:
 
 ```shell
-dart run :xtask --emit-schema > xtask.schema.json
+xtask --emit-schema > xtask.schema.json
 ```
 
 ```yaml
