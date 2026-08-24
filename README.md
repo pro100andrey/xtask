@@ -7,8 +7,10 @@ graph, runs each task once, in declared order, **without a shell**.
 
 That is the whole of it, and the repository does not have to be a Dart one:
 the engine starts programs, so `[pytest, -q]` is as ordinary a task as
-`[dart, test]`. Two things are worth adding later, each when something makes
-you want it — see [The shape](#the-shape).
+`[dart, test]`. Later you may want to pin the engine's version in a
+`pubspec.yaml` instead of installing it, or to write a task in Dart rather
+than name a program — [The shape](#the-shape) is those two steps, and neither
+is needed to start.
 
 The point is not convenience. It is that a repository stops keeping the same
 list twice. A `Makefile` names the commands, the CI workflow names them again,
@@ -17,8 +19,12 @@ the first time somebody is in a hurry. Here CI stops naming commands at all: a
 job runs one task, and what that task is made of lives in one file.
 
 ```shell
-dart run :xtask check
+xtask check
 ```
+
+That is what a person types before calling work done, and it is also the whole
+of the CI job — the same command, because there is only one list and it is not
+in either of them.
 
 ## The shape
 
