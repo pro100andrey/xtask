@@ -102,6 +102,7 @@ void main() {
   Future<int> runFile(
     String yaml,
     String task, {
+    bool keepGoing = false,
     List<String> passed = const [],
     Map<String, Verb> verbs = const {},
     Map<String, String> environment = const {},
@@ -121,6 +122,7 @@ void main() {
       markers: markers,
       now: ticking(step),
       passedThrough: (task: task, arguments: passed),
+      keepGoing: keepGoing,
     ).run(planRun(file, task));
   }
 
@@ -457,6 +459,150 @@ void main() {
         },
       );
       expect(seen, ['--all', '--only', 'x']);
+    });
+  });
+
+  group('--keep-going reports every failure, not the first', () {
+    // §8's own argument, applied where it also holds: "a gate that reports one
+    // problem per run makes somebody fix, rerun, fix, rerun" is word for word
+    // `xtask check` — formatting red, fix, analyser red, fix, tests red.
+    const three =
+        'version: 1\ntasks:\n'
+        '  fmt: {desc: a, run: [dart, format]}\n'
+        '  lint: {desc: b, needs: [fmt], run: [ruff]}\n'
+        '  unit: {desc: c, needs: [fmt], run: [pytest]}\n'
+        '  all: {desc: d, needs: [lint, unit]}\n';
+
+    test(
+      'without it, the run stops at the first — still the default',
+      () async {
+        starter = FakeStarter({'ruff': 1, 'pytest': 1});
+        expect(await runFile(three, 'all'), ExitCode.taskFailed);
+        expect(
+          starter.started.map((s) => p.basename(s.executable)),
+          ['dart', 'ruff'],
+          reason: 'pytest must not have been reached',
+        );
+      },
+    );
+
+    test('with it, the independent ones still run', () async {
+      starter = FakeStarter({'ruff': 1, 'pytest': 1});
+      expect(
+        await runFile(three, 'all', keepGoing: true),
+        ExitCode.taskFailed,
+      );
+      expect(
+        starter.started.map((s) => p.basename(s.executable)),
+        ['dart', 'ruff', 'pytest'],
+      );
+    });
+
+    test('and every one of them is reported where it happened', () async {
+      starter = FakeStarter({'ruff': 1, 'pytest': 1});
+      await runFile(three, 'all', keepGoing: true);
+      expect(logged.join('\n'), contains('task `lint` failed'));
+      expect(logged.join('\n'), contains('task `unit` failed'));
+    });
+
+    test('a task whose requirement failed does NOT run', () async {
+      // Its own failure would be a consequence of the first one, and a mode
+      // that reported both would bury the cause in its own noise.
+      starter = FakeStarter({'dart': 1});
+      await runFile(three, 'all', keepGoing: true);
+      expect(starter.started, hasLength(1), reason: 'only `fmt` was reached');
+    });
+
+    test('and it is NAMED, because a task that silently did not happen '
+        'reads exactly like one that passed', () async {
+      starter = FakeStarter({'dart': 1});
+      await runFile(three, 'all', keepGoing: true);
+      expect(logged.join('\n'), contains('skipped  lint (needs fmt)'));
+      expect(logged.join('\n'), contains('skipped  unit (needs fmt)'));
+    });
+
+    test('skipping carries through a task that was itself skipped', () async {
+      starter = FakeStarter({'dart': 1});
+      await runFile(three, 'all', keepGoing: true);
+      expect(logged.join('\n'), contains('skipped  all (needs lint)'));
+    });
+
+    test('the summary lists what failed and what did not run', () async {
+      starter = FakeStarter({'ruff': 1, 'pytest': 1});
+      await runFile(three, 'all', keepGoing: true);
+      expect(logged, contains('failed   lint (exit 1)'));
+      expect(logged, contains('failed   unit (exit 1)'));
+      expect(logged, contains('skipped  all (needs lint)'));
+    });
+
+    test('and it is the last thing printed, after the timing', () async {
+      starter = FakeStarter({'ruff': 1, 'pytest': 1});
+      await runFile(three, 'all', keepGoing: true);
+      expect(logged.last, startsWith('skipped'));
+      expect(
+        logged.indexWhere((l) => l.startsWith('total')),
+        lessThan(logged.indexWhere((l) => l.startsWith('failed'))),
+      );
+    });
+
+    test(
+      'a single failure gets no summary, which would summarise nothing',
+      () async {
+        starter = FakeStarter({'dart': 1});
+        await runFile(
+          'version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n',
+          'a',
+          keepGoing: true,
+        );
+        expect(logged.join('\n'), isNot(contains('failed   a')));
+      },
+    );
+
+    test('the exit code is the FIRST failure, however many follow', () async {
+      // A code is §5.3's shortest possible bug report about one failure, and a
+      // run with two cannot honestly claim to be about both. Here the first is
+      // a missing tool (3) and the second a task that ran and failed (1).
+      starter = FakeStarter({'pytest': 1});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  lint: {desc: a, run: [missing-linter]}\n'
+            '  unit: {desc: b, run: [pytest]}\n'
+            '  all: {desc: c, needs: [lint, unit]}\n',
+        'all',
+        keepGoing: true,
+      );
+      expect(code, ExitCode.missingTool);
+      expect(logged.join('\n'), contains('failed   unit (exit 1)'));
+    });
+
+    test('a failed publish is not announced anyway', () async {
+      // The `then:` rule does not change: a continuation runs after a body
+      // that SUCCEEDED, and --keep-going does not turn it into "run it either
+      // way".
+      starter = FakeStarter({'publish': 1});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  publish: {desc: a, then: [announce], run: [publish]}\n'
+            '  announce: {desc: b, run: [announce]}\n',
+        'publish',
+        keepGoing: true,
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(starter.started.map((s) => p.basename(s.executable)), ['publish']);
+      expect(logged.join('\n'), contains('skipped  announce'));
+    });
+
+    test('and a continuation that fails on its own is still 4', () async {
+      starter = FakeStarter({'announce': 1});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  publish: {desc: a, then: [announce], run: [publish]}\n'
+            '  announce: {desc: b, run: [announce]}\n',
+        'publish',
+        keepGoing: true,
+      );
+      expect(code, ExitCode.continuationFailed);
+      expect(logged.join('\n'), contains(ExitCode.continuationNotice));
     });
   });
 

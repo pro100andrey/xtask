@@ -12,17 +12,30 @@ import 'model.dart';
 
 /// One task, in the position the run reaches it.
 final class PlanStep {
-  const PlanStep(this.task, {required this.isContinuation});
+  const PlanStep(this.task, {this.continuationOf});
 
   final Task task;
 
+  /// The task whose `then:` began the continuation this step is inside, or
+  /// null when the run reached it directly.
+  ///
+  /// **The origin, not the immediate parent.** `b then c`, `c needs d` puts d
+  /// before c, so asking "did c fail" when d is reached answers about a task
+  /// that has not run yet. What decides whether this step should happen is
+  /// whether the task whose `then:` opened the whole subtree succeeded, and
+  /// that is what is carried down.
+  ///
+  /// It exists for two things. §5.3 gives a continuation its own exit code —
+  /// a body that succeeded and a continuation that failed is a third outcome,
+  /// not a failure of the body — and `--keep-going` needs to know that a
+  /// publish which failed must not be announced anyway.
+  final String? continuationOf;
+
   /// Whether the run arrived here through a `then:`, at any depth.
   ///
-  /// Carried because §5.3 gives that case its own exit code: a body that
-  /// succeeded and a continuation that failed is a third outcome, not a
-  /// failure of the body. A task pulled in by a continuation's own `needs:` is
-  /// inside the continuation too — if it fails, the publish still happened.
-  final bool isContinuation;
+  /// Derived rather than stored beside [continuationOf]: two fields saying one
+  /// thing are two fields that can disagree.
+  bool get isContinuation => continuationOf != null;
 }
 
 /// The order a run will take.
@@ -45,8 +58,7 @@ final class Plan {
 /// Throws [XtaskFormatException] — exit code 2 — for a name that does not
 /// exist and for a cycle, which is reported with the cycle spelled out.
 Plan planRun(XtaskFile file, String taskName) {
-  final planner = _Planner(file)
-    ..resolve(taskName, isContinuation: false, from: null);
+  final planner = _Planner(file)..resolve(taskName, from: null);
   return Plan(List.unmodifiable(planner.steps));
 }
 
@@ -82,8 +94,8 @@ final class _Planner {
 
   void resolve(
     String name, {
-    required bool isContinuation,
     required Task? from,
+    String? continuationOf,
   }) {
     if (_done.contains(name)) {
       return;
@@ -113,7 +125,9 @@ final class _Planner {
 
     _open.add(name);
     for (final need in task.needs) {
-      resolve(need, isContinuation: isContinuation, from: task);
+      // Inside the same continuation as whatever needed it: a task pulled in
+      // by a continuation's own `needs:` is part of that continuation.
+      resolve(need, from: task, continuationOf: continuationOf);
     }
     _open.removeLast();
 
@@ -121,7 +135,7 @@ final class _Planner {
     // continuation rather than a dependency: the body has happened by the time
     // anything in `then:` is reached.
     _done.add(name);
-    steps.add(PlanStep(task, isContinuation: isContinuation));
+    steps.add(PlanStep(task, continuationOf: continuationOf));
 
     for (final next in task.then) {
       if (_open.contains(next)) {
@@ -132,7 +146,7 @@ final class _Planner {
         // says nothing contradictory.
         continue;
       }
-      resolve(next, isContinuation: true, from: task);
+      resolve(next, from: task, continuationOf: name);
     }
   }
 }

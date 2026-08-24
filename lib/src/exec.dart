@@ -125,6 +125,7 @@ final class Executor {
     this.markers = const PlainMarkers(),
     this.now = DateTime.now,
     this.passedThrough,
+    this.keepGoing = false,
   }) : _sets = SetExpander(root: root);
 
   final XtaskFile file;
@@ -167,6 +168,22 @@ final class Executor {
   /// for the ambient environment itself could not be tested for either host.
   final LogMarkers markers;
 
+  /// Whether a failure ends the run, or only that task.
+  ///
+  /// **Off by default, and the argument for it is §8's own.** That section
+  /// explains why `--validate` collects every problem rather than throwing at
+  /// the first: "a gate that reports one problem per run makes somebody fix,
+  /// rerun, fix, rerun", and a gate people stop running is worse than none.
+  /// Word for word that is `xtask check` — formatting red, fix, analyser red,
+  /// fix, tests red — three rounds where the same reasoning already asked for
+  /// one.
+  ///
+  /// It is not the default, because §5.2 promises the run stops at the first
+  /// failure and because on CI reading a broken run to the end costs more than
+  /// failing at once. A person fixing things locally wants the whole list; a
+  /// pipeline wants the earliest possible red.
+  final bool keepGoing;
+
   /// What followed `--` on the command line, and the one task it is for.
   ///
   /// **One task, not the plan.** `xtask check -- --name x` names the composite;
@@ -192,15 +209,37 @@ final class Executor {
   /// Runs every step, and answers with the code §5.3 gives the outcome.
   Future<int> run(Plan plan) async {
     final took = <String, Duration>{};
-    final code = await _walk(plan, took);
+    final failed = <String, int>{};
+    final skipped = <String, String>{};
+
+    final code = await _walk(plan, took, failed, skipped);
     if (dryRun == null) {
       _reportTiming(took);
+      // Last, because it is the part somebody has to act on and the terminal
+      // scrolls. The timing above is background; this is the work.
+      _reportStopped(failed, skipped);
     }
     return code;
   }
 
-  Future<int> _walk(Plan plan, Map<String, Duration> took) async {
+  Future<int> _walk(
+    Plan plan,
+    Map<String, Duration> took,
+    Map<String, int> failed,
+    Map<String, String> skipped,
+  ) async {
+    int? answer;
+
     for (final step in plan.steps) {
+      final blocker = _blockedBy(step, {...failed.keys, ...skipped.keys});
+      if (blocker != null) {
+        // Named, not dropped. A task that silently did not happen is
+        // indistinguishable from one that passed, which is the whole failure
+        // this tool is about.
+        skipped[step.task.name] = blocker;
+        continue;
+      }
+
       final started = now();
       try {
         await _runTask(step.task);
@@ -210,6 +249,8 @@ final class Executor {
         // the one line somebody needs would be the one they have to expand a
         // section to reach.
         markers.error(failure.message).forEach(log);
+        failed[step.task.name] = failure.code;
+
         if (step.isContinuation) {
           // **Always 4, whatever went wrong inside it.** The distinction the
           // code carries is not what failed but WHERE: the body already
@@ -217,9 +258,20 @@ final class Executor {
           // a continuation answer 3 would lose that, and 3 is not a
           // recoverable-in-the-wrong-direction problem.
           log(ExitCode.continuationNotice);
-          return ExitCode.continuationFailed;
         }
-        return failure.code;
+
+        // **The first failure's code, however many follow.** A code is §5.3's
+        // shortest possible bug report about ONE failure, and a run with three
+        // cannot honestly claim to be about all of them — combining them into
+        // a worst-of would invent a severity order the section does not have.
+        // The summary below is where the others are.
+        answer ??= step.isContinuation
+            ? ExitCode.continuationFailed
+            : failure.code;
+
+        if (!keepGoing) {
+          return answer;
+        }
       } finally {
         // In a `finally`, so the task that FAILED is timed too. Where the run
         // spent itself before it broke is most of what somebody wants from a
@@ -227,7 +279,42 @@ final class Executor {
         took[step.task.name] = now().difference(started);
       }
     }
-    return ExitCode.success;
+
+    return answer ?? ExitCode.success;
+  }
+
+  /// What stopped [step] from running, or null if nothing did.
+  ///
+  /// A task whose requirement failed must not run: its own failure would be a
+  /// consequence of the first one, and a `--keep-going` that reported both
+  /// would bury the cause in its own noise. Checking the DIRECT `needs:` is
+  /// enough because the plan is already in order — anything further back
+  /// stopped whatever is between them first.
+  String? _blockedBy(PlanStep step, Set<String> stopped) {
+    for (final need in step.task.needs) {
+      if (stopped.contains(need)) {
+        return need;
+      }
+    }
+    final origin = step.continuationOf;
+    // A publish that failed must not be announced anyway.
+    return origin != null && stopped.contains(origin) ? origin : null;
+  }
+
+  /// Everything that failed and everything that therefore did not run.
+  ///
+  /// Printed only when there is more than one thing to say. One failure has
+  /// already been reported where it happened, and repeating it under a heading
+  /// is a summary that summarises nothing.
+  void _reportStopped(Map<String, int> failed, Map<String, String> skipped) {
+    if (failed.length + skipped.length < 2) {
+      return;
+    }
+    log('');
+    failed.forEach((name, code) => log('failed   $name (exit $code)'));
+    skipped.forEach(
+      (name, blocker) => log('skipped  $name (needs $blocker)'),
+    );
   }
 
   /// What each task took, after the last one, outside every section.

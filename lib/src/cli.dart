@@ -37,12 +37,19 @@ sealed class Request {
 
 /// `xtask <task> [-- <args>]` — run it and everything it needs.
 final class RunTask extends Request {
-  const RunTask(this.task, [this.arguments = const []]);
+  const RunTask(
+    this.task, {
+    this.arguments = const [],
+    this.keepGoing = false,
+  });
 
   final String task;
 
   /// What followed `--`, for [task]'s body alone.
   final List<String> arguments;
+
+  /// `--keep-going`: report every failure rather than the first.
+  final bool keepGoing;
 }
 
 /// `xtask --dry-run <task> [-- <args>]` — print what that would come to (§7).
@@ -140,6 +147,7 @@ Request parseArguments(List<String> args) {
   final operands = <String>[];
   String? gate;
   var narrowed = false;
+  var keepGoing = false;
 
   final passed = <String>[];
   var separated = false;
@@ -176,6 +184,11 @@ Request parseArguments(List<String> args) {
       continue;
     }
 
+    if (argument == '--keep-going') {
+      keepGoing = true;
+      continue;
+    }
+
     if (modes.contains(argument)) {
       written.add(argument);
       continue;
@@ -204,6 +217,15 @@ Request parseArguments(List<String> args) {
     return const ShowUsage(
       '`--gate` narrows `--list`. For the members of one gate set on their '
       'own, write `--gates <name>`',
+    );
+  }
+
+  if (keepGoing && mode != null) {
+    // It changes what a RUN does when something fails, and none of the modes
+    // run anything. `--validate` in particular already collects every problem
+    // it can find, which is the argument this flag borrows.
+    return ShowUsage(
+      '`--keep-going` is about a run, and `$mode` does not run anything',
     );
   }
 
@@ -272,7 +294,7 @@ Request parseArguments(List<String> args) {
   }
 
   return operands.length == 1
-      ? RunTask(operands.single, passed)
+      ? RunTask(operands.single, arguments: passed, keepGoing: keepGoing)
       : ShowUsage(
           'xtask runs one task at a time, and it was given '
           '${operands.map((o) => '`$o`').join(' and ')}',
@@ -284,6 +306,7 @@ const usage = [
   'usage:',
   '  xtask <task>                run a task and everything it needs',
   '  xtask <task> -- <args>      and pass those arguments to its body',
+  '  xtask <task> --keep-going   report every failure, not just the first',
   '  xtask --list                every task, with its description',
   '  xtask --list --gate <name>  only the tasks in that gate set',
   "  xtask --gates <name>        that gate set's task names, one per line",
@@ -466,7 +489,7 @@ Future<int> runCli(
           passedThrough: (task: task, arguments: arguments),
         );
 
-      case RunTask(:final task, :final arguments):
+      case RunTask(:final task, :final arguments, :final keepGoing):
         _refuseArgumentsWithNowhereToGo(collected, task, arguments);
         return await Executor(
           file: collected,
@@ -478,6 +501,7 @@ Future<int> runCli(
           environment: environment,
           markers: LogMarkers.forHost(environment),
           passedThrough: (task: task, arguments: arguments),
+          keepGoing: keepGoing,
         ).run(planRun(collected, task));
     }
   } on XtaskFormatException catch (problem) {
