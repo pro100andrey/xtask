@@ -95,6 +95,7 @@ xtask --list                every task, with its description
 xtask --list --gate <name>  only the tasks in that gate set
 xtask --gates <name>        that gate set's task names, one per line
 xtask --why <task>          what puts that task in a plan
+xtask --check-ci            does the CI file still run the gate sets?
 xtask --validate            parse and check the file; run nothing
 xtask --dry-run <task>      print the resolved plan; run nothing
 xtask --emit-schema         print the JSON Schema for this file format
@@ -164,6 +165,18 @@ analyze   2.3s
 test     11.7s
 total    14.4s
 ```
+
+`--check-ci` keeps that arrangement from rotting. It reads the workflow and
+compares it with the gate sets in both directions: a `run:` step that is not one
+invocation of one gate set is refused, because that is exactly how the duplicate
+list grows back — somebody writes `- run: dart analyze` instead of adding a task.
+A gate set no job runs is reported rather than refused: gate sets are named after
+who runs them, and that is the jobs *plus the people*, which nothing in the file
+distinguishes.
+
+It does not generate the workflow. Doing that would mean generating the
+checkout, the toolchain and the artifact upload too, which needs a template
+inside `xtask.yaml` — and templating is where an expression language starts.
 
 The workflow file still owns what must **exist** before anything runs: the
 checkout, the toolchain, a browser driver. `xtask` owns what runs. There is no

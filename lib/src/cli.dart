@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'ci.dart';
 import 'context.dart';
 import 'dry_run.dart';
 import 'errors.dart';
@@ -83,6 +84,11 @@ final class GateMembers extends Request {
   final String gate;
 }
 
+/// `xtask --check-ci` — does the workflow still run the gate sets (§7.1)?
+final class CheckCi extends Request {
+  const CheckCi();
+}
+
 /// `xtask --validate` — parse and check, run nothing (§8).
 final class Validate extends Request {
   const Validate();
@@ -130,6 +136,7 @@ final class ShowUsage extends Request {
 /// drift between the parser and its own help being the sort that survives
 /// review, since both halves read plausibly on their own.
 const modes = {
+  '--check-ci',
   '--list',
   '--why',
   '--gates',
@@ -274,6 +281,15 @@ Request parseArguments(List<String> args) {
           );
   }
 
+  if (mode == '--check-ci') {
+    return operands.isEmpty
+        ? const CheckCi()
+        : ShowUsage(
+            '`--check-ci` checks the whole workflow and takes no name, and it '
+            'was given `${operands.first}`',
+          );
+  }
+
   if (mode == '--validate') {
     return operands.isEmpty
         ? const Validate()
@@ -327,6 +343,7 @@ const usage = [
   '  xtask --why <task>          what puts that task in a plan, and by which',
   '                              `needs:` or `then:`',
   '  xtask --validate            parse and check the file; run nothing',
+  '  xtask --check-ci            does the CI file still run the gate sets?',
   '  xtask --dry-run <task>      print the resolved plan; run nothing',
   '  xtask --emit-schema         print the JSON Schema for this file format',
   '  xtask --version             print which engine this is',
@@ -471,6 +488,32 @@ Future<int> runCli(
           '$path: ${_count(file.tasks.length, 'task')}, '
           '${_count(file.sets.length, 'set')}, nothing wrong',
         );
+        return ExitCode.success;
+
+      case CheckCi():
+        final report = checkCi(file, root: root);
+        for (final invocation in report.invocations) {
+          out(
+            '${invocation.step.workflow}: job `${invocation.step.job}` runs '
+            'the gate set `${invocation.gate}`',
+          );
+        }
+        if (!report.ok) {
+          report.problems.forEach(err);
+          return ExitCode.invalidFile;
+        }
+        if (report.unrun.isNotEmpty) {
+          // Reported and not judged: a gate set is named after who runs it,
+          // and §7.1 says that is the jobs plus the people. Nothing in the
+          // file tells those apart, and a key that claimed to would be a
+          // second place saying what the workflow already says.
+          out('');
+          out(
+            'no job runs: ${report.unrun.map((g) => '`$g`').join(', ')} — '
+            'right if somebody runs them by hand, wrong if a job was '
+            'forgotten, and xtask cannot tell those apart',
+          );
+        }
         return ExitCode.success;
 
       case ListTasks(:final gate):

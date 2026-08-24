@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:xtask/src/ci.dart';
 import 'package:xtask/src/cli.dart';
 import 'package:xtask/src/gates.dart';
 import 'package:xtask/src/graph.dart';
@@ -12,7 +13,6 @@ import 'package:xtask/src/schema.dart';
 import 'package:xtask/src/sets.dart';
 import 'package:xtask/src/validate.dart';
 import 'package:xtask/src/version.dart';
-import 'package:yaml/yaml.dart';
 
 /// This repository's own `xtask.yaml`, checked by this repository's own suite.
 ///
@@ -145,67 +145,35 @@ void main() {
   });
 
   group('the workflow runs gates, not commands', () {
-    // §7.1's other residual, and the one that grows back quietly: somebody
-    // adds `- run: dart analyze` to the workflow instead of a task to the
-    // file, and the two lists start drifting the same afternoon. A `uses:`
-    // step is untouched — actions are what §7.1 leaves to the CI file, being
-    // what must EXIST before xtask runs rather than what runs.
-    late List<String> commands;
-    late Set<String> collected;
+    // §7.1's residual, and the one that grows back quietly: somebody adds
+    // `- run: dart analyze` to the workflow instead of a task to the file, and
+    // the two lists start drifting the same afternoon.
+    //
+    // Asked of the TOOL rather than reimplemented here. This test used to walk
+    // the workflow itself, which made it a second answer to the same question
+    // — and a second answer in the guard against second answers.
+    late CiReport report;
 
-    setUpAll(() {
-      collected = {
-        for (final task in file.tasks.values)
-          if (task.collects != null) task.collects!,
-      };
-      commands = [
-        for (final workflow in Directory(
-          p.join(root, '.github', 'workflows'),
-        ).listSync().whereType<File>())
-          ..._shellSteps(loadYaml(workflow.readAsStringSync()) as YamlMap),
-      ];
-    });
-
-    test('there is a workflow, and it runs something', () {
-      expect(commands, isNotEmpty);
-    });
+    setUpAll(() => report = checkCi(file, root: root));
 
     test('every shell step is one invocation of one gate set', () {
-      final invocation = RegExp(r'^dart run :xtask (\S+)$');
-      for (final command in commands) {
-        final match = invocation.firstMatch(command);
-        expect(
-          match,
-          isNotNull,
-          reason:
-              '`$command` is a command the workflow names itself. What runs '
-              'belongs in `$xtaskFileName`, as a task in a gate set; the '
-              'workflow runs the gate',
-        );
-        expect(
-          collected,
-          contains(match!.group(1)),
-          reason: '`${match.group(1)}` is not a gate set anything collects',
-        );
-      }
+      expect(
+        report.problems,
+        isEmpty,
+        reason: report.problems.join('\n'),
+      );
+      expect(report.invocations, isNotEmpty);
     });
 
-    test("and this repository's own gate is actually one of them", () {
-      // Not implied by the rule above: a workflow running no gate at all
-      // satisfies it vacuously, and would be a repository whose checks are
-      // described and never run.
-      expect(commands, contains('dart run :xtask check'));
+    test("and this repository's own gate is one of them", () {
+      expect(report.invocations.map((i) => i.gate), contains('check'));
+    });
+
+    test('and no gate set is left with no job to run it', () {
+      // True here because there is one gate and one job. In a repository with
+      // human-only entry points it would not be, which is why the tool reports
+      // this rather than refusing it.
+      expect(report.unrun, isEmpty);
     });
   });
-}
-
-/// Every `run:` step of every job in [workflow], in order.
-Iterable<String> _shellSteps(YamlMap workflow) sync* {
-  for (final job in (workflow['jobs'] as YamlMap).values.cast<YamlMap>()) {
-    for (final step in (job['steps'] as YamlList).cast<YamlMap>()) {
-      if (step['run'] case final String command) {
-        yield command.trim();
-      }
-    }
-  }
 }

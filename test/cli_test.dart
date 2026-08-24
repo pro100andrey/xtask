@@ -181,6 +181,11 @@ void main() {
       });
     });
 
+    test('--check-ci is a mode, and takes nothing else', () {
+      expect(parseArguments(['--check-ci']), isA<CheckCi>());
+      expect(parseArguments(['--check-ci', 'a']), isA<ShowUsage>());
+    });
+
     test('--version is a mode, and takes nothing else', () {
       expect(parseArguments(['--version']), isA<ShowVersion>());
       expect(parseArguments(['--version', 'a']), isA<ShowUsage>());
@@ -759,6 +764,68 @@ tasks:
         writeFile(chain);
         expect(await run(['--why', 'instal']), ExitCode.invalidFile);
         expect(complained(), contains('instal'));
+      });
+    });
+
+    group('--check-ci', () {
+      void workflow(String yaml) {
+        File(p.join(root.path, '.github', 'workflows', 'ci.yml'))
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync(yaml);
+      }
+
+      test('a workflow that runs gates passes and says which', () async {
+        writeFile(lake);
+        workflow('''
+jobs:
+  analyze:
+    steps:
+      - uses: actions/checkout@v4
+      - run: dart run :xtask ci-analyze
+  web:
+    steps:
+      - run: dart run :xtask ci-web
+''');
+        expect(await run(['--check-ci']), ExitCode.success);
+        expect(
+          printed(),
+          contains(
+            'job `analyze` runs the gate set '
+            '`ci-analyze`',
+          ),
+        );
+      });
+
+      test('a step naming a command is refused, and named', () async {
+        writeFile(lake);
+        workflow('''
+jobs:
+  analyze:
+    steps:
+      - run: dart analyze --fatal-infos
+''');
+        expect(await run(['--check-ci']), ExitCode.invalidFile);
+        expect(complained(), contains('dart analyze --fatal-infos'));
+      });
+
+      test('a gate no job runs is said out loud and still passes', () async {
+        writeFile(lake);
+        workflow('''
+jobs:
+  analyze:
+    steps:
+      - run: dart run :xtask ci-analyze
+''');
+        expect(await run(['--check-ci']), ExitCode.success);
+        expect(printed(), contains('no job runs'));
+        expect(printed(), contains('`ci-web`'));
+      });
+
+      test('and no workflow at all is refused, not passed', () async {
+        // Otherwise a gate asking this question goes green the day somebody
+        // deletes the CI file.
+        writeFile(lake);
+        expect(await run(['--check-ci']), ExitCode.invalidFile);
       });
     });
 
