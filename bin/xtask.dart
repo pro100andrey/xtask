@@ -1,4 +1,4 @@
-// This repository's own entry point, and the shape §9 of xtask.md asks every
+// This repository's own entry point, and the shape the README asks every
 // consumer to write: the project owns the entry point, because the project owns
 // the verbs. A project with verbs passes them here —
 //
