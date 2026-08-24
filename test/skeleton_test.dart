@@ -163,19 +163,22 @@ void main() {
   group('runXtask is the whole public surface (§9)', () {
     // In-process, because what is being asserted is the function a consumer
     // calls rather than the file it is called from.
+    //
+    // The directory is passed, not assigned. `Directory.current` is one value
+    // for the whole process and `dart test` runs the suites of a run inside
+    // it, so a group that pointed itself at a temporary directory pointed
+    // every other suite at it too — and then deleted it. That is what the
+    // groups above were failing on, about one run in eight, with the child
+    // process reporting `Error determining current directory`.
+    //
+    // Nothing here asserts the DEFAULT, and a test that did would have to
+    // assign to `Directory.current` again. The shipped binary proves it: the
+    // groups above run `dart run :xtask` in a temporary directory of their
+    // own, as a separate process, and it finds the file there.
     late Directory root;
-    late String previous;
 
-    setUp(() {
-      root = Directory.systemTemp.createTempSync('xtask_public_');
-      previous = Directory.current.path;
-      Directory.current = root;
-    });
-
-    tearDown(() {
-      Directory.current = previous;
-      root.deleteSync(recursive: true);
-    });
+    setUp(() => root = Directory.systemTemp.createTempSync('xtask_public_'));
+    tearDown(() => root.deleteSync(recursive: true));
 
     test(
       'a project with no verbs still gets the built-ins and the file',
@@ -183,7 +186,10 @@ void main() {
         File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
           'version: 1\ntasks:\n  a: {desc: x, do: remove, args: [gone]}\n',
         );
-        expect(await runXtask(['--validate']), 0);
+        expect(
+          await runXtask(['--validate'], workingDirectory: root.path),
+          0,
+        );
       },
     );
 
@@ -192,7 +198,7 @@ void main() {
       () async {
         // The outcome §7.1 makes dangerous: a CI job is one invocation, so a 0
         // from an xtask that found nothing to do is a permanently green job.
-        expect(await runXtask(['a']), 2);
+        expect(await runXtask(['a'], workingDirectory: root.path), 2);
       },
     );
   });

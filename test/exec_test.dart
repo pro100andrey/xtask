@@ -764,6 +764,28 @@ void main() {
       await running;
     });
 
+    test('but a plan of one task is not made to wait for itself', () async {
+      // Buffering exists because two tasks writing to one terminal produce a
+      // transcript belonging to neither. One task cannot do that, so asking
+      // for `--parallel` on a single task used to cost §5.2's live output and
+      // buy nothing — and announce a width it had no use for.
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(three, 'boom', concurrency: 2);
+      await pumpEventQueue();
+      expect(
+        logged,
+        containsAllInOrder(['── boom ──', 'boom: /bin/ruff']),
+        reason: 'it arrived while the only task was still running',
+      );
+      expect(
+        logged.where((line) => line.contains('up to')),
+        isEmpty,
+        reason: 'nothing is running beside it to explain',
+      );
+      starter.holds['ruff']!.complete();
+      await running;
+    });
+
     test('and at two, everything waits for the task to end', () async {
       starter = FakeStarter()
         ..holds['ruff'] = Completer<void>()

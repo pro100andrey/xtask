@@ -35,9 +35,19 @@ export 'src/context.dart' show Verb, VerbContext;
 Future<int> runXtask(
   List<String> args, {
   Map<String, Verb> verbs = const {},
+  String? workingDirectory,
 }) => runCli(
   args,
-  workingDirectory: Directory.current.path,
+  // **A default, not a reading.** The file is looked for from here upwards,
+  // and for a command that is what the process was started in. It is a
+  // parameter because `Directory.current` is one thing for a whole process:
+  // anything wanting to point xtask at a directory — an embedding CLI, or a
+  // test — otherwise has to assign to it and hand every other isolate in the
+  // process a directory it did not ask for. That is not hypothetical. It cost
+  // this suite a flaky failure that read `dartdev embedder initialization
+  // failed: Error determining current directory`, from a temporary directory
+  // deleted by one test while another was starting a process in it.
+  workingDirectory: workingDirectory ?? Directory.current.path,
   environment: Platform.environment,
   // The engine's own reports go to stdout, with the bodies' output rather
   // than beside it: §7.1's grouping markers only fold what is on the same

@@ -1,4 +1,4 @@
-# One job per gate set, and one invocation per job — xtask.md §7.1.
+# One job per gate set, and one invocation per job.
 #
 # What runs is not written here. `dart run :xtask check` runs the `check` gate,
 # and its members live in xtask.yaml; a `run:` step naming a command directly
