@@ -30,12 +30,16 @@ in either of them.
 
 ### One file, and a command
 
-Install the engine once, write the file, run it. Nothing else — no
-`pubspec.yaml`, no Dart in the repository at all:
+Install the engine once, write the file, run it. Your repository needs no
+`pubspec.yaml` and no Dart in it at all — only the Dart SDK on the machine
+doing the installing:
 
 ```shell
-dart install xtask
+dart install 'xtask@{git: {url: https://github.com/pro100andrey/xtask}}'
 ```
+
+Once it is on pub.dev that becomes `dart install xtask`. Either way what lands
+on the PATH is a command called `xtask`.
 
 The file is `xtask.yaml` at the repository root, and this is a whole one:
 
@@ -89,7 +93,9 @@ own the short spelling fails with `Could not find bin/xtask.dart in package
 was optional.
 
 The rest of this README writes the short spelling, because this repository has
-one.
+a `bin/xtask.dart`. If you installed the engine and wrote no Dart, read every
+`dart run :xtask` below as plain `xtask`: the flags and the file are the same,
+and only the way the program is reached differs.
 
 ```dart
 import 'dart:io';
@@ -104,7 +110,6 @@ Future<void> main(List<String> args) async {
     args,
     verbs: {
       'regen': regen,
-      'publish': publish,
     },
   );
 }
@@ -116,7 +121,7 @@ A verb is ordinary Dart — testable, typed, debuggable:
 Future<int> regen(VerbContext context) async {
   context.log('regenerating ${context.args.length} files');
   // context.args     the task's `args:` with its `argv-from` set expanded
-  // context.env      the environment for this task only
+  // context.env      the process environment, with this task's `env:` on top
   // context.workingDirectory
   return 0;
 }
@@ -128,32 +133,15 @@ repository's business. Its only built-in is `remove`.
 The file name *is* the declaration: `dart run :xtask` resolves to
 `bin/xtask.dart` and nothing else, so no manifest entry names it.
 
-### This repository's own file, in full
+### This repository's own file
 
-```yaml
-version: 1
-
-tasks:
-  format:
-    desc: fail if any Dart file is unformatted
-    gate: [check]
-    run: [dart, format, --output=none, --set-exit-if-changed, .]
-
-  analyze:
-    desc: refuse anything the analyzer or the house rules object to
-    gate: [check]
-    run: [dart, analyze, --fatal-infos]
-
-  test:
-    desc: run the suite
-    gate: [check]
-    run: [dart, test]
-
-  check:
-    desc: everything that must pass before work is called done
-    collects: check
-```
-
+Not quoted here, on purpose. It is [`xtask.yaml`](xtask.yaml) in this
+repository, it has seven tasks and two gate sets, and it carries its reasoning
+in comments that a copy would strip. A README that quoted it would be keeping
+the same list twice, which is the defect this tool exists to remove — and the
+copy that used to sit here had already drifted: it showed four tasks and one
+gate, while the paragraph above it pointed at an `aot` task the copy did not
+contain.
 
 ## The command
 
@@ -175,7 +163,7 @@ xtask --emit-schema          print the JSON Schema for this file format
 xtask --version              print which engine this is
 ```
 
-`xtask` above is shorthand for `dart run :xtask`. The file is looked for from
+`xtask` above is whichever spelling you arrived at — the installed command, `dart run xtask:xtask`, or `dart run :xtask`. The flags are the same in all three. The file is looked for from
 the current directory **upwards**, so the command works from a subdirectory and
 every path inside the file stays relative to the repository root.
 
@@ -211,10 +199,11 @@ the formatter. A task with no body of its own is refused rather than
 swallowing them.
 
 `--dry-run` shows what will actually happen, not what is written — sets
-expanded, `$each` substituted, and the executable resolved on this machine:
+expanded, `$each` substituted, and the executable resolved on this machine.
+The task names below are this repository's own, from [`xtask.yaml`](xtask.yaml):
 
 ```shell
-$ dart run :xtask --dry-run check
+$ xtask --dry-run check
 plan: format, analyze, test, check
 format
   run  /opt/homebrew/bin/dart format --output=none --set-exit-if-changed .
@@ -224,6 +213,11 @@ analyze
   in   /Users/you/project
 ...
 ```
+
+Because it resolves them, `--dry-run` answers `3` when a program is not
+installed yet, naming the one it could not find. That is the same answer a real
+run would give, one step earlier — which is worth knowing before you read it as
+a bug on a machine where the tools are not set up.
 
 ## Gate sets, and what they are for
 
@@ -271,8 +265,10 @@ test     11.7s
 total    14.4s
 ```
 
-`--check-ci` keeps that arrangement from rotting. It reads the workflow and
-compares it with the gate sets in both directions: a `run:` step that is not one
+`--check-ci` keeps that arrangement from rotting. It reads every file under
+`.github/workflows` — GitHub Actions is the only host it knows, and a
+repository without that directory is told so rather than passed — and compares
+what it finds with the gate sets in both directions: a `run:` step that is not one
 invocation of one gate set is refused, because that is exactly how the duplicate
 list grows back — somebody writes `- run: dart analyze` instead of adding a task.
 A gate set no job runs is reported rather than refused: gate sets are named after
@@ -305,10 +301,9 @@ the route edge by edge, saying which kind each edge is, because "it runs before
 this" and "it runs after this" are opposite answers:
 
 ```shell
-$ dart run :xtask --why install
+$ xtask --why lint
 check
   check needs lint
-  lint needs install
 ```
 
 `--keep-going` is for the local loop. A gate that stops at the first failure
@@ -319,16 +314,15 @@ the flag, independent tasks still run and the run ends with a summary:
 ```shell
 failed   lint (exit 1)
 failed   unit (exit 1)
-skipped  check (needs lint)
+skipped  check — needs `lint`, which did not pass
 ```
 
 A task whose requirement failed does **not** run: its own failure would be a
 consequence of the first one. It is named as skipped rather than dropped,
 because a task that silently did not happen reads exactly like one that passed.
 
-It is off by default. §5.2 promises a run stops at the first failure, and a
-pipeline wants the earliest possible red rather than a broken run read to the
-end.
+It is off by default, because a pipeline wants the earliest possible red
+rather than a broken run read to the end.
 
 `--parallel` runs tasks that do not depend on each other at once, up to the
 number of processors or `--parallel=N`. It is **not** the default, and the
@@ -343,10 +337,10 @@ explaining itself is indistinguishable from one that has hung.
 The summary then says both numbers, because they answer different questions:
 
 ```shell
-lint    1.0s
-unit    1.0s
-types   1.0s
-total   3.1s spent, 1.1s taken
+lint   1.0s
+unit   1.0s
+types  1.0s
+total  3.1s spent, 1.1s taken
 ```
 
 Declaration order still decides which of the ready tasks starts first — cheap
@@ -464,8 +458,8 @@ each run in that member's own directory. `needs:` is "before, and once however
 many tasks ask for it"; `then:` is "after, and only if the body worked" —
 which is the whole reason exit code `4` exists, because `publish` succeeding
 and `announce` failing is a third ending and not a failure to publish.
-`env-required:` is checked before anything runs, so a missing token is a
-sentence rather than a broken upload. `do:` names a verb the project wrote in
+`env-required:` is checked before that task's body runs — not at the start of
+the run — so a missing token is a sentence rather than a broken upload. `do:` names a verb the project wrote in
 Dart and handed to `runXtask`, and `argv-from:` hands it the expanded set as
 arguments.
 
