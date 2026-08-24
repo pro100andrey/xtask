@@ -1,4 +1,4 @@
-/// The typed shape of `xtask.yaml` — §4 of `xtask.md`.
+/// The typed shape of `xtask.yaml`.
 ///
 /// Nothing here checks that a name refers to something that exists, and
 /// nothing builds a graph. A value in this file means "the document fitted the
@@ -12,8 +12,8 @@ import 'package:source_span/source_span.dart';
 ///
 /// **This is the only list of them.** §8 refuses an unknown task key, and the
 /// obvious way to implement that refusal — a second set of names in the
-/// validator — is the defect §1 of `xtask.md` exists to remove, reproduced
-/// inside the tool written to remove it. Anything that needs to know what a
+/// validator — is the defect this tool exists to remove, reproduced inside
+/// the tool written to remove it. Anything that needs to know what a
 /// task key is reads this.
 const taskKeys = <String>{
   'desc',

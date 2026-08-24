@@ -4,7 +4,7 @@ import 'package:yaml/yaml.dart';
 import 'errors.dart';
 import 'model.dart';
 
-/// Reads `xtask.yaml` into the types of [XtaskFile] — §4 of `xtask.md`.
+/// Reads `xtask.yaml` into the types of [XtaskFile].
 ///
 /// Refuses anything that does not fit those types, at the line that did not
 /// fit. It does **not** check that a name refers to something real, does not

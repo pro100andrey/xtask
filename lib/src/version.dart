@@ -1,4 +1,4 @@
-/// This package's version, for `--version` — §7 of `xtask.md`.
+/// This package's version, for `--version`.
 library;
 
 /// The version, spelled the same as `pubspec.yaml` spells it.

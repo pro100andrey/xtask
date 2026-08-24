@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-/// Finding the program a task's `run:` names — §5.4 of `xtask.md`.
+/// Finding the program a task's `run:` names.
 ///
 /// This is the one place in the engine that knows starting a program means
 /// different things on three platforms. §5.2 says there is no shell in the

@@ -1,4 +1,4 @@
-/// Running the bodies a plan resolved to — §5.2 of `xtask.md`.
+/// Running the bodies a plan resolved to.
 library;
 
 import 'dart:convert';

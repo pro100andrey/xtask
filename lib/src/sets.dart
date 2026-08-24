@@ -6,7 +6,7 @@ import 'package:path/path.dart' as p;
 import 'errors.dart';
 import 'model.dart';
 
-/// Turning a named set into the strings a task is given — §4.2 of `xtask.md`.
+/// Turning a named set into the strings a task is given.
 ///
 /// Sets exist so a task can iterate without a loop and pass file arguments
 /// without `$(shell find …)`. That is only worth anything if the expansion is
@@ -142,8 +142,9 @@ final class SetExpander {
   /// at all.
   ///
   /// **`package:glob` reads `**/` as one directory or more.** So
-  /// `packages/**/*.lake` — the pattern §12 of `xtask.md` actually contains —
-  /// finds `packages/a/b.lake` and silently does not find `packages/b.lake`.
+  /// `packages/**/*.lake` — a pattern of exactly the shape a monorepo writes
+  /// — finds `packages/a/b.lake` and silently does not find
+  /// `packages/b.lake`.
   /// Bash's `globstar`, git's ignore rules and every glob a person has met
   /// elsewhere read it as none or more, so the file would mean one thing to
   /// its author and another to this engine. The consequence is the one this

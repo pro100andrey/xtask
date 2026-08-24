@@ -1,4 +1,4 @@
-/// Making a run readable on the host it runs on — §7.1 of `xtask.md`.
+/// Making a run readable on the host it runs on.
 library;
 
 /// How a host wants a section of output marked.

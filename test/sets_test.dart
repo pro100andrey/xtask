@@ -215,7 +215,7 @@ void main() {
     // A deliberate departure from `package:glob`, which reads `**/` as one
     // directory or more. Every glob a person has met elsewhere — bash's
     // globstar, git's ignore rules, minimatch — reads it as none or more, and
-    // the pattern in §12 of xtask.md is written expecting that. The failure
+    // a monorepo's own pattern is written expecting that. The failure
     // being avoided is not an error: it is a gate that examined fewer files
     // than it was written to examine and went green regardless.
     test('the depth-zero case, which the library alone would miss', () {
