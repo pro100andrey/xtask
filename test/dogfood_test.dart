@@ -11,6 +11,7 @@ import 'package:xtask/src/primitives.dart';
 import 'package:xtask/src/schema.dart';
 import 'package:xtask/src/sets.dart';
 import 'package:xtask/src/validate.dart';
+import 'package:xtask/src/version.dart';
 import 'package:yaml/yaml.dart';
 
 /// This repository's own `xtask.yaml`, checked by this repository's own suite.
@@ -116,6 +117,29 @@ void main() {
       expect(
         text,
         contains(r'# yaml-language-server: $schema=./xtask.schema.json'),
+      );
+    });
+  });
+
+  group('the version in code is the version in the manifest', () {
+    // The number has to be in `pubspec.yaml` because pub needs it there, and
+    // in code because a compiled entry point has no manifest beside it to
+    // read. §1 is about drift, not about a fact being named twice — so this is
+    // the thing that makes the second mention safe, and it is the whole reason
+    // no generator was written for one line.
+    test('and neither has moved without the other', () {
+      final manifest = File(p.join(root, 'pubspec.yaml')).readAsStringSync();
+      final declared = RegExp(
+        r'^version:\s*(\S+)\s*$',
+        multiLine: true,
+      ).firstMatch(manifest);
+      expect(declared, isNotNull, reason: 'pubspec.yaml has no `version:`');
+      expect(
+        packageVersion,
+        declared!.group(1),
+        reason:
+            'lib/src/version.dart and pubspec.yaml disagree. Change '
+            '`packageVersion` to match the manifest',
       );
     });
   });

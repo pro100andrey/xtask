@@ -7,6 +7,7 @@ import 'package:xtask/src/context.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/resolve.dart';
 import 'package:xtask/src/schema.dart';
+import 'package:xtask/src/version.dart';
 
 /// One process the CLI asked for.
 final class Started {
@@ -148,6 +149,11 @@ void main() {
       test('a bare `--` is simply no arguments', () {
         expect((parseArguments(['test', '--']) as RunTask).arguments, isEmpty);
       });
+    });
+
+    test('--version is a mode, and takes nothing else', () {
+      expect(parseArguments(['--version']), isA<ShowVersion>());
+      expect(parseArguments(['--version', 'a']), isA<ShowUsage>());
     });
 
     test('--emit-schema is a mode, and takes nothing else', () {
@@ -593,6 +599,23 @@ tasks:
         writeFile('version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n');
         await run(['--dry-run', 'a', '--', '-n', 'two words']);
         expect(printed(), contains("run  /bin/dart test -n 'two words'"));
+      });
+    });
+
+    group('--version', () {
+      // No `writeFile`: the first thing a bug report needs is no use if it
+      // only works in a directory that already works.
+      test('answers with no file at all', () async {
+        expect(await run(['--version']), ExitCode.success);
+        expect(out, ['xtask $packageVersion']);
+        expect(err, isEmpty);
+      });
+
+      test('and names the tool, not just a number', () async {
+        // `0.1.0` on its own says nothing in a bug report pasted out of a
+        // terminal that also ran three other commands.
+        await run(['--version']);
+        expect(out.single, startsWith('xtask '));
       });
     });
 

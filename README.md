@@ -96,6 +96,7 @@ xtask --gates <name>        that gate set's task names, one per line
 xtask --validate            parse and check the file; run nothing
 xtask --dry-run <task>      print the resolved plan; run nothing
 xtask --emit-schema         print the JSON Schema for this file format
+xtask --version             print which engine this is
 ```
 
 `xtask` above is shorthand for `dart run :xtask`. The file is looked for from
