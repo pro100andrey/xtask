@@ -1,14 +1,14 @@
 /// Printing what a run would do, without doing it — `--dry-run` of §7.
 library;
 
+import 'bodies.dart';
 import 'context.dart';
 import 'errors.dart';
+import 'executables.dart';
 import 'exit_codes.dart';
 import 'graph.dart';
 import 'model.dart';
 import 'report.dart';
-import 'resolution.dart';
-import 'resolve.dart';
 
 /// Prints [plan] and everything in it, and runs nothing.
 ///

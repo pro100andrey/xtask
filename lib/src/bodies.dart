@@ -19,9 +19,9 @@ import 'package:path/path.dart' as p;
 
 import 'context.dart';
 import 'errors.dart';
+import 'executables.dart';
 import 'exit_codes.dart';
 import 'model.dart';
-import 'resolve.dart';
 import 'sets.dart';
 
 /// A body with everything about it decided — §7's *resolved* plan.

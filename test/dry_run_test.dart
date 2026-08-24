@@ -4,11 +4,11 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/dry_run.dart';
+import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/primitives.dart';
-import 'package:xtask/src/resolve.dart';
 
 void main() {
   late Directory root;
