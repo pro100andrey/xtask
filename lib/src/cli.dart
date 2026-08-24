@@ -667,11 +667,7 @@ void _refuseArgumentsWithNowhereToGo(
 /// about. Whether a gate that DOES exist is orphaned is `--validate`'s
 /// question (§8), not this one's.
 String _gate(XtaskFile file, String gate) {
-  final known = {
-    for (final task in file.tasks.values) ...task.gate,
-    for (final task in file.tasks.values)
-      if (task.collects != null) task.collects!,
-  };
+  final known = gateSets(file);
   if (known.contains(gate)) {
     return gate;
   }

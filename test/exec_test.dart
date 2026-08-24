@@ -543,14 +543,23 @@ void main() {
         'reads exactly like one that passed', () async {
       starter = FakeStarter({'dart': 1});
       await runFile(three, 'all', keepGoing: true);
-      expect(logged.join('\n'), contains('skipped  lint (needs fmt)'));
-      expect(logged.join('\n'), contains('skipped  unit (needs fmt)'));
+      expect(
+        logged.join('\n'),
+        contains('skipped  lint — needs `fmt`, which did not pass'),
+      );
+      expect(
+        logged.join('\n'),
+        contains('skipped  unit — needs `fmt`, which did not pass'),
+      );
     });
 
     test('skipping carries through a task that was itself skipped', () async {
       starter = FakeStarter({'dart': 1});
       await runFile(three, 'all', keepGoing: true);
-      expect(logged.join('\n'), contains('skipped  all (needs lint)'));
+      expect(
+        logged.join('\n'),
+        contains('skipped  all — needs `lint`, which did not pass'),
+      );
     });
 
     test('the summary lists what failed and what did not run', () async {
@@ -558,7 +567,10 @@ void main() {
       await runFile(three, 'all', keepGoing: true);
       expect(logged, contains('failed   lint (exit 1)'));
       expect(logged, contains('failed   unit (exit 1)'));
-      expect(logged, contains('skipped  all (needs lint)'));
+      expect(
+        logged,
+        contains('skipped  all — needs `lint`, which did not pass'),
+      );
     });
 
     test('and it is the last thing printed, after the timing', () async {
@@ -570,6 +582,27 @@ void main() {
         lessThan(logged.indexWhere((l) => l.startsWith('failed'))),
       );
     });
+
+    test(
+      'a lone skip IS reported — nothing else ever mentions it',
+      () async {
+        // A failure prints itself where it happens; a skip does not. Counting
+        // the two together suppressed the only line that would have said a
+        // task did not run, in a run that then answered 0.
+        starter = FakeStarter({'dart': 1});
+        await runFile(
+          'version: 1\ntasks:\n'
+              '  fmt: {desc: a, run: [dart]}\n'
+              '  lint: {desc: b, needs: [fmt], run: [ruff]}\n',
+          'lint',
+          keepGoing: true,
+        );
+        expect(
+          logged.join('\n'),
+          contains('skipped  lint — needs `fmt`, which did not pass'),
+        );
+      },
+    );
 
     test(
       'a single failure gets no summary, which would summarise nothing',
@@ -615,7 +648,10 @@ void main() {
       );
       expect(code, ExitCode.taskFailed);
       expect(starter.started.map((s) => p.basename(s.executable)), ['publish']);
-      expect(logged.join('\n'), contains('skipped  announce'));
+      expect(
+        logged.join('\n'),
+        contains('skipped  announce — follows `publish`, which did not pass'),
+      );
     });
 
     test('and a continuation that fails on its own is still 4', () async {
@@ -806,7 +842,41 @@ void main() {
       starter.holds['pytest']!.complete();
       expect(await running, ExitCode.taskFailed);
       expect(starter.started, hasLength(2));
-      expect(logged.join('\n'), contains('skipped  types'));
+      expect(
+        logged.join('\n'),
+        contains('skipped  types — the run stopped at an earlier failure'),
+      );
+    });
+
+    test('a plan that is not in order is named, not spun on', () async {
+      // Unreachable through `planRun`, which emits every requirement before
+      // the task that needs it — so the plan is built by hand. The guard is
+      // against a hang, and a hang is the one failure with nothing to read
+      // afterwards.
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  early: {desc: a, needs: [late], run: [dart]}\n'
+        '  late: {desc: b, run: [dart]}\n',
+      );
+      final code = await Executor(
+        file: file,
+        root: root.path,
+        resolver: resolverFor(),
+        starter: starter,
+        log: logged.add,
+        now: ticking(const Duration(milliseconds: 100)),
+        concurrency: 2,
+      ).run(Plan([PlanStep(file.tasks['early']!)]));
+
+      expect(code, ExitCode.success, reason: 'nothing failed; nothing ran');
+      expect(starter.started, isEmpty);
+      expect(
+        logged.join('\n'),
+        contains(
+          'skipped  early — nothing that would let it start ever '
+          'finished',
+        ),
+      );
     });
 
     test('and a dry run is never parallel, whatever it is handed', () async {
@@ -986,13 +1056,48 @@ void main() {
     });
 
     test('what the verb answers is what the task answers', () async {
+      // The title always said this; the assertion used to say the opposite,
+      // and the opposite is what shipped. A verb is the project's own Dart
+      // written against §5.3 — R1 already trusts it with the logic, and
+      // trusting the number it returns is the same trust. Flattening it threw
+      // away what the built-in `remove` deliberately says: `invalidFile` for a
+      // path outside the repository is "the FILE is wrong", and arrives as
+      // "a task ran and failed" only if somebody discards it.
       final code = await runFile(
         'version: 1\ntasks:\n  a: {desc: x, do: nope}\n',
         'a',
-        verbs: {'nope': (_) async => 3},
+        verbs: {'nope': (_) async => ExitCode.missingTool},
       );
-      expect(code, ExitCode.taskFailed);
+      expect(code, ExitCode.missingTool);
     });
+
+    test('and a built-in primitive is a verb like any other', () async {
+      // `remove` answers `invalidFile` for a path outside the repository (§6),
+      // and that answer used to reach the process as 1 while the message on
+      // the same run said 2.
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: nope}\n',
+        'a',
+        verbs: {'nope': (_) async => ExitCode.invalidFile},
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(logged.join('\n'), contains('failed with exit code 2'));
+    });
+
+    test(
+      'while an external program answers with data, not a verdict',
+      () async {
+        // A program has never heard of §5.3: its 2 means whatever its author
+        // meant. The number goes in the message and the run answers 1.
+        starter = FakeStarter({'flake8': ExitCode.invalidFile});
+        final code = await runFile(
+          'version: 1\ntasks:\n  a: {desc: x, run: [flake8]}\n',
+          'a',
+        );
+        expect(code, ExitCode.taskFailed);
+        expect(logged.join('\n'), contains('failed with exit code 2'));
+      },
+    );
 
     test('an unregistered verb is a file defect, not a task failure', () async {
       // The engine ships no project verbs (§9), so naming one it does not have

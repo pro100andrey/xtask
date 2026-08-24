@@ -2,6 +2,7 @@
 library;
 
 import 'errors.dart';
+import 'gates.dart';
 import 'graph.dart';
 import 'model.dart';
 import 'sets.dart';
@@ -143,10 +144,7 @@ void _checkGraph(XtaskFile file, List<XtaskFormatException> problems) {
 
 /// An orphan gate: a task that believes it is checked and is not (§8).
 void _checkGates(XtaskFile file, List<XtaskFormatException> problems) {
-  final collected = {
-    for (final task in file.tasks.values)
-      if (task.collects != null) task.collects!,
-  };
+  final collected = collectedGates(file);
 
   for (final task in file.tasks.values) {
     for (final gate in task.gate) {

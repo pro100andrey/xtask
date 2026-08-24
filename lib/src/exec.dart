@@ -29,6 +29,69 @@ final class RunFailure implements Exception {
   String toString() => message;
 }
 
+/// Why a task in the plan did not run.
+///
+/// **A value, not a string.** These four reasons used to be written into one
+/// map as free text and printed through one template — `skipped $name (needs
+/// $blocker)` — which is a true sentence for the first of them and a false one
+/// for the rest. A task stopped because something *else* failed does not need
+/// anything, and what came out was `skipped third (needs a failure
+/// elsewhere)`. A reason that carries its own sentence cannot be put into the
+/// wrong one.
+sealed class Skipped {
+  const Skipped();
+
+  /// What the summary says after the task's name.
+  String get sentence;
+}
+
+/// Something it needs failed, or was itself skipped.
+final class NeedsStopped extends Skipped {
+  const NeedsStopped(this.name);
+
+  final String name;
+
+  @override
+  String get sentence => 'needs `$name`, which did not pass';
+}
+
+/// It is the continuation of a task that did not succeed.
+///
+/// Separate from [NeedsStopped] because `then:` is not `needs:`: a publish that
+/// failed is not something the announcement *required*, it is something the
+/// announcement was to follow, and saying the first would misdescribe the file.
+final class FollowsStopped extends Skipped {
+  const FollowsStopped(this.name);
+
+  final String name;
+
+  @override
+  String get sentence => 'follows `$name`, which did not pass';
+}
+
+/// Something else failed and this run is not keeping going.
+final class RunStopped extends Skipped {
+  const RunStopped();
+
+  @override
+  String get sentence => 'the run stopped at an earlier failure';
+}
+
+/// Nothing that could have started it ever finished.
+///
+/// **A guard against a plan that is not in order, not a case that happens.**
+/// `planRun` emits every requirement before the task that needs it, so by the
+/// time the walk reaches a step its needs have all been taken off the queue —
+/// this cannot fire. It exists because the alternative to noticing is
+/// spinning: a walk with nothing running and nothing startable would loop
+/// forever, and a hang is the one failure with nothing to read afterwards.
+final class NeverStartable extends Skipped {
+  const NeverStartable();
+
+  @override
+  String get sentence => 'nothing that would let it start ever finished';
+}
+
 /// A body with everything about it decided — §7's *resolved* plan.
 ///
 /// **What `--dry-run` prints and what a run performs, worked out once.**
@@ -238,7 +301,7 @@ final class Executor {
   Future<int> run(Plan plan) async {
     final took = <String, Duration>{};
     final failed = <String, int>{};
-    final skipped = <String, String>{};
+    final skipped = <String, Skipped>{};
 
     final began = now();
     final code = await _walk(plan, took, failed, skipped);
@@ -255,7 +318,7 @@ final class Executor {
     Plan plan,
     Map<String, Duration> took,
     Map<String, int> failed,
-    Map<String, String> skipped,
+    Map<String, Skipped> skipped,
   ) async {
     if (concurrency > 1 && dryRun == null) {
       return _walkTogether(plan, took, failed, skipped);
@@ -333,7 +396,7 @@ final class Executor {
     Plan plan,
     Map<String, Duration> took,
     Map<String, int> failed,
-    Map<String, String> skipped,
+    Map<String, Skipped> skipped,
   ) async {
     final waiting = [...plan.steps];
     final running = <String, Future<void>>{};
@@ -358,7 +421,7 @@ final class Executor {
         if (answer != null && !keepGoing) {
           // Something has failed and this run is not keeping going: what has
           // not started must not start. What IS running is left alone.
-          skipped[step.task.name] = 'a failure elsewhere';
+          skipped[step.task.name] = const RunStopped();
           waiting.removeAt(at--);
           began = true;
           continue;
@@ -387,7 +450,7 @@ final class Executor {
         // on something that will never finish. `_blockedBy` names it on the
         // next turn of the loop, so this cannot spin.
         for (final step in waiting) {
-          skipped[step.task.name] = 'something it needs never ran';
+          skipped[step.task.name] = const NeverStartable();
         }
         waiting.clear();
         break;
@@ -435,31 +498,35 @@ final class Executor {
   /// would bury the cause in its own noise. Checking the DIRECT `needs:` is
   /// enough because the plan is already in order — anything further back
   /// stopped whatever is between them first.
-  String? _blockedBy(PlanStep step, Set<String> stopped) {
+  Skipped? _blockedBy(PlanStep step, Set<String> stopped) {
     for (final need in step.task.needs) {
       if (stopped.contains(need)) {
-        return need;
+        return NeedsStopped(need);
       }
     }
     final origin = step.continuationOf;
     // A publish that failed must not be announced anyway.
-    return origin != null && stopped.contains(origin) ? origin : null;
+    return origin != null && stopped.contains(origin)
+        ? FollowsStopped(origin)
+        : null;
   }
 
   /// Everything that failed and everything that therefore did not run.
   ///
-  /// Printed only when there is more than one thing to say. One failure has
-  /// already been reported where it happened, and repeating it under a heading
-  /// is a summary that summarises nothing.
-  void _reportStopped(Map<String, int> failed, Map<String, String> skipped) {
-    if (failed.length + skipped.length < 2) {
+  /// **A skip is always reported; a lone failure is not.** They are not the
+  /// same case, and counting them together got it wrong: a failure has already
+  /// printed itself where it happened, so a heading over one of them
+  /// summarises nothing — but a skipped task prints nothing of its own, and
+  /// this is the only place it is ever mentioned. Suppressing it left a run
+  /// that answered 0 having silently not done something, which is the failure
+  /// this tool is about.
+  void _reportStopped(Map<String, int> failed, Map<String, Skipped> skipped) {
+    if (skipped.isEmpty && failed.length < 2) {
       return;
     }
     log('');
     failed.forEach((name, code) => log('failed   $name (exit $code)'));
-    skipped.forEach(
-      (name, blocker) => log('skipped  $name (needs $blocker)'),
-    );
+    skipped.forEach((name, why) => log('skipped  $name — ${why.sentence}'));
   }
 
   /// What each task took, after the last one, outside every section.
@@ -602,8 +669,21 @@ final class Executor {
                 'and was killed'
           : 'failed with exit code $code';
 
+      // **A verb's code is a decision; a process's code is data.** They were
+      // the same line and should not have been. A verb is the project's own
+      // Dart, written against §5.3 — `remove` answering 2 for a path outside
+      // the repository is saying "the FILE is wrong", and flattening that to 1
+      // sends whoever reads the exit code looking for a task that ran and
+      // failed. An external program has never heard of §5.3: its 2 means
+      // whatever its author meant, so the number belongs in the message and
+      // the run answers 1.
+      //
+      // Before this, both were true at once — the message said "exit code 2"
+      // and the process answered 1, in the same run, out loud.
+      final answers = resolved is ResolvedVerb ? code : ExitCode.taskFailed;
+
       throw RunFailure(
-        ExitCode.taskFailed,
+        answers,
         [
           // The member is named, because §5.2 says a failure under `each:`
           // stops at that member — and "the tests failed" over six packages is

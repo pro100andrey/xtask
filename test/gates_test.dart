@@ -236,4 +236,48 @@ tasks:
       expect(markers.error('boom').single, contains('boom'));
     });
   });
+
+  group('two questions about a gate set, and gates.dart owns both', () {
+    // They were three inline expressions across cli.dart, ci.dart and
+    // validate.dart. Existing and being runnable are different questions —
+    // §8 judges an orphan, `--gates` only reads the data — so the answer is
+    // two named functions, not one.
+    const orphaned = '''
+version: 1
+tasks:
+  analyze: {desc: a, gate: [check, ci-analyze], run: [dart]}
+  check: {desc: b, collects: check}
+  nobody: {desc: c, collects: never-declared}
+''';
+
+    test('a gate set exists as soon as a task says it is in one', () {
+      expect(gateSets(parseXtaskFile(orphaned)), {
+        'check',
+        'ci-analyze',
+        'never-declared',
+      });
+    });
+
+    test('and being COLLECTED is the narrower question', () {
+      expect(collectedGates(parseXtaskFile(orphaned)), {
+        'check',
+        'never-declared',
+      });
+    });
+
+    test('the wider set contains the narrower one', () {
+      // A composite may collect a gate nobody is in — `never-declared` here —
+      // so collection is a way of existing, not a subset of membership.
+      final file = parseXtaskFile(orphaned);
+      expect(gateSets(file), containsAll(collectedGates(file)));
+    });
+
+    test('a file with no gates at all has neither', () {
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n',
+      );
+      expect(gateSets(file), isEmpty);
+      expect(collectedGates(file), isEmpty);
+    });
+  });
 }

@@ -686,7 +686,10 @@ tasks:
           expect(starter.started, hasLength(2));
           expect(printed(), contains('failed   lint (exit 1)'));
           expect(printed(), contains('failed   unit (exit 1)'));
-          expect(printed(), contains('skipped  check (needs lint)'));
+          expect(
+            printed(),
+            contains('skipped  check — needs `lint`, which did not pass'),
+          );
         },
       );
 

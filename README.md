@@ -269,6 +269,12 @@ honestly claim to be about all of them; the summary is where the others are.
 broken" are repaired by different people, and one code sends both to the same
 one.
 
+A **verb**'s exit code is what the run answers with — it is your Dart, written
+against this table, and the built-in `remove` answers `2` for a path outside the
+repository because that means *the file is wrong*. A program started by `run:`
+has never heard of this table, so its code goes in the message and the run
+answers `1`.
+
 `4` exists because a publish followed by a verification has **three** endings,
 not two: nothing was published, everything passed, or the upload happened and
 the check after it is red. Collapsing the third into `1` tells a pipeline the
