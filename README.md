@@ -186,7 +186,7 @@ xtask <task> --parallel      run independent tasks at once — which costs
                              seeing their output as it arrives
 xtask --list                 every task, with its description
 xtask --list --gate <name>   only the tasks in that gate set
-xtask --gate-members <name>  that gate set's task names, one per line
+xtask --gate-members <name>  the tasks in that gate set, one per line
 xtask --why <task>           what puts that task in a plan, and by which
                              `needs:` or `then:`
 xtask --validate             parse and check the file; run nothing

@@ -278,6 +278,29 @@ void main() {
     });
   });
 
+  group('and nothing it marks as shell is unbalanced', () {
+    // The command listing was fenced as ```shell and contained one apostrophe,
+    // in "that gate set's task names". A shell highlighter reads that as the
+    // start of a string and colours everything after it to the end of the
+    // block — so the whole table rendered as one quoted run on pub.dev, while
+    // the markdown itself was perfectly well formed. The fence says `text`
+    // now, because a usage listing is not shell.
+    test('so a stray quote cannot colour a whole block', () {
+      final readme = File(p.join(root, 'README.md')).readAsStringSync();
+      for (final block in _fencedBlocks(readme, 'shell')) {
+        for (final quote in ["'", '"']) {
+          expect(
+            quote.allMatches(block).length.isEven,
+            isTrue,
+            reason:
+                'an odd number of $quote in a shell block, which a highlighter '
+                'reads as a string that never closes:\n$block',
+          );
+        }
+      }
+    });
+  });
+
   group('the version in code is the version in the manifest', () {
     // The number has to be in `pubspec.yaml` because pub needs it there, and
     // in code because a compiled entry point has no manifest beside it to
