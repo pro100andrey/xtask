@@ -67,16 +67,27 @@ void main() {
       expect(tasksInGate(file, 'check'), isNotEmpty);
     });
 
-    test('and running it reaches every task in the file', () {
+    test('and running it reaches every task but the ones typed by hand', () {
       // The local half of §7.1's residual — a task no gate ever reaches is
-      // invisible, and it looks exactly like a task that is checked. With one
-      // gate and one job the property is exact here, so it is asserted rather
-      // than deferred to `--emit-ci`.
+      // invisible, and it looks exactly like a task that is checked.
+      //
+      // Not every task is a check, though, and `aot` is the proof: it
+      // compiles a binary for one machine, so a gate that ran it would be
+      // spending CI's time on something CI cannot use. What §7.1 asks is that
+      // the exception be DECLARED rather than discovered.
+      //
+      // So this is equality, not containment. A task added to the file and
+      // forgotten fails here, and so does a name left behind after the task
+      // it excused is gone. It is not a second copy of the gate: the gate's
+      // members are exactly what is not written on this line.
+      const typedByHand = {'aot'};
       final reached = planRun(withCollectedGates(file), 'check').names.toSet();
       expect(
         file.tasks.keys.toSet().difference(reached),
-        isEmpty,
-        reason: 'these tasks are in the file and nothing runs them',
+        typedByHand,
+        reason:
+            'a task nothing runs is either missing a `gate:` or belongs in '
+            '`typedByHand` above',
       );
     });
   });

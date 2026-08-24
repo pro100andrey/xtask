@@ -107,6 +107,16 @@ xtask --version             print which engine this is
 the current directory **upwards**, so the command works from a subdirectory and
 every path inside the file stays relative to the repository root.
 
+That shorthand pays the JIT's start-up — around half a second, every
+invocation. It is nothing against a gate that spends seconds inside a test
+runner, and it is the entire cost of `--gates`, `--why` or `--dry-run`, which
+is where a shell loop or a file being written notices it. `dart compile exe
+bin/xtask.dart` removes it. The binary still reads `xtask.yaml` at run time, so
+tasks, gates and sets keep changing without recompiling; verbs are Dart, so a
+binary holds the ones it was built with and wants rebuilding after one changes.
+This repository keeps its own invocation as the `aot` task rather than a second
+copy in this file — `xtask --dry-run aot` prints it.
+
 Everything after `--` reaches the body of the **named** task, after its `args:`
 and its expanded `argv-from`, and nothing else in the plan sees it — so
 `xtask test -- -n "one test"` narrows the tests without also handing `-n` to

@@ -46,6 +46,26 @@ tasks:
     desc: everything that must pass before work is called done
     collects: check
 
+  # A person's convenience, and the one task in this file no gate reaches.
+  #
+  # Not in `check`, because compiling costs two seconds and produces something
+  # only one machine can run: the binary is platform-specific, so CI cannot use
+  # the one you built and gains nothing by building its own. It is written here
+  # rather than left in somebody's shell history for the reason §1 gives — a
+  # command a person types is still a command that drifts.
+  #
+  # It freezes the CODE, not the data. `xtask.yaml` is read at run time, so
+  # tasks, gates and `each:` change without recompiling; verbs are Dart (§9),
+  # so after editing one, run this again.
+  #
+  # The output goes where `.gitignore` already reaches. Ten milliseconds
+  # against `dart run`'s five hundred buys nothing on `check` — that gate
+  # spends seconds inside `dart test` — and buys the whole of the cheap modes:
+  # --gates, --dry-run, --why, --validate, --emit-schema.
+  aot:
+    desc: compile this repository's own entry point to a native binary
+    run: [dart, compile, exe, bin/xtask.dart, -o, .dart_tool/xtask]
+
 # There is no `install` task running `dart pub get`, deliberately. §7.1 draws
 # the line at what must EXIST before xtask runs, and that side belongs to the
 # CI file; `dart run` resolves the package on its own, so a task doing it would
