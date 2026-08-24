@@ -103,6 +103,30 @@ List<String> summary(Map<String, int> failed, Map<String, Skipped> skipped) {
   ];
 }
 
+/// What a parallel run is about to do, before it goes quiet.
+///
+/// **This exists because `--parallel` breaks the promise §5.2 makes.** A
+/// sequential run narrates itself: the section opens, the body streams, and a
+/// person watching knows both what is happening and that something is. A
+/// parallel run collects each task's output and prints it whole when that task
+/// ends, so the first thing a long one does is nothing at all — for as long as
+/// the slowest member takes.
+///
+/// One line, no spinner and no carriage returns: this is read as often from a
+/// CI log as from a terminal, and a log is a file. What it has to answer is
+/// "is it stuck", and the answer is the count, the width, and the reason the
+/// silence is expected.
+List<String> starting(int tasks, int concurrency) {
+  final noun = tasks == 1 ? 'task' : 'tasks';
+  // Built here rather than inside the list: two string parts side by side in
+  // a list literal read as a missing comma, and the lint that says so is
+  // right about every other case.
+  final line =
+      'running $tasks $noun, up to $concurrency at once — '
+      "each task's output arrives when that task ends";
+  return [line, ''];
+}
+
 /// What each task took, and what the run took.
 ///
 /// Printed after the last task and outside every section, which is the whole

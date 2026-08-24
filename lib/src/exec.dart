@@ -94,6 +94,12 @@ final class Executor {
     final failed = <String, int>{};
     final skipped = <String, Skipped>{};
 
+    // Before the walk, so it is the first thing on the stream rather than the
+    // first thing after a wait it was meant to explain.
+    if (concurrency > 1) {
+      starting(plan.steps.length, concurrency).forEach(log);
+    }
+
     final began = now();
     final code = await _walk(plan, took, failed, skipped);
     timing(
@@ -423,13 +429,27 @@ final class SystemProcessStarter implements ProcessStarter {
     Duration? timeout,
     void Function(String line)? output,
   }) async {
-    // **Flushed before the child starts, not for tidiness.** Dart's `stdout`
-    // is asynchronous when it is a pipe, which is what it is on CI — and the
-    // child writes to the same descriptor directly. Without this the
-    // `::group::` line for a task can arrive after the output it is supposed
-    // to be folding, which turns §7.1's readable failure into a jumble
-    // exactly where nobody can reproduce it.
-    await stdout.flush();
+    // One question, asked once: it decides the flush above and the mode below,
+    // and two spellings of it are two things that can disagree.
+    final inherits = output == null;
+
+    // **Flushed before the child starts, and only when the child inherits.**
+    // Dart's `stdout` is asynchronous when it is a pipe, which is what it is
+    // on CI, and an inheriting child writes to that same descriptor directly:
+    // without this the `::group::` line for a task can arrive after the output
+    // it is supposed to be folding, which turns §7.1's readable failure into a
+    // jumble exactly where nobody can reproduce it.
+    //
+    // A piped child never touches this process's stdout, so there is nothing
+    // to order against — and flushing anyway is not merely wasted. `flush()`
+    // marks the sink bound for as long as it is in flight, so a task ending
+    // and writing its buffered block while another task is starting throws
+    // `Bad state: StreamSink is bound to a stream` and takes the run with it.
+    // Concurrency is the only way to have both at once, and concurrency is
+    // exactly when nobody inherits.
+    if (inherits) {
+      await stdout.flush();
+    }
 
     Future<void>? collecting;
     final process = await Process.start(
@@ -451,9 +471,7 @@ final class SystemProcessStarter implements ProcessStarter {
       // cannot have that — two children writing to one terminal produce a
       // transcript belonging to neither — so it pipes instead, and pays for it
       // by not seeing anything until the task ends.
-      mode: output == null
-          ? ProcessStartMode.inheritStdio
-          : ProcessStartMode.normal,
+      mode: inherits ? ProcessStartMode.inheritStdio : ProcessStartMode.normal,
     );
 
     if (output != null) {

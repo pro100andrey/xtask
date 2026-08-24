@@ -771,9 +771,18 @@ void main() {
       final running = runFile(three, 'all', concurrency: 2);
       await pumpEventQueue();
       expect(
-        logged,
+        // The announcement and its blank line are what a parallel run says
+        // BEFORE it goes quiet, and dropping them here is the point: what is
+        // asserted is that no TASK has said anything, and a header written
+        // before the first one started is not a task saying anything.
+        logged.skip(2),
         isEmpty,
         reason: 'two tasks are in flight and neither has finished',
+      );
+      expect(
+        logged.first,
+        contains('up to 2 at once'),
+        reason: 'and the silence it is about was announced first',
       );
       starter.holds['ruff']!.complete();
       starter.holds['pytest']!.complete();
