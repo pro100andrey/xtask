@@ -4,6 +4,14 @@ description: >-
   is either an external process (argv, never a shell) or a verb the project
   implements in Dart.
 version: 0.1.0
+repository: https://github.com/pro100andrey/xtask
+issue_tracker: https://github.com/pro100andrey/xtask/issues
+
+topics:
+  - task-runner
+  - automation
+  - ci
+  - build
 
 environment:
   # The floor is the toolchain's, not the code's. This package uses sealed
