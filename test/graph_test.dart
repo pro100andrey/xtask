@@ -226,4 +226,87 @@ void main() {
       );
     });
   });
+
+  group('the routes `--why` reads off the graph', () {
+    const chain = '''
+version: 1
+tasks:
+  install: {desc: a, run: [dart]}
+  build: {desc: b, needs: [install], run: [dart]}
+  publish: {desc: c, needs: [build], then: [announce], run: [dart]}
+  announce: {desc: d, run: [dart]}
+  stray: {desc: e, run: [dart]}
+''';
+
+    test('an entry point is a task nothing else names', () {
+      // `announce` is named by a `then:`, so it is not one — being reachable
+      // is what stops a task being where a run starts.
+      expect(entryPoints(parseXtaskFile(chain)), ['publish', 'stray']);
+    });
+
+    test('a route is spelled edge by edge, in the run order', () {
+      final route = routeTo(
+        parseXtaskFile(chain),
+        from: 'publish',
+        to: 'install',
+      );
+      expect(route!.map((e) => '$e'), [
+        'publish needs build',
+        'build needs install',
+      ]);
+    });
+
+    test('and it says which KIND of edge, which is the answer', () {
+      // "It runs before this" and "it runs after this" are opposite answers
+      // to why a task is in a plan.
+      final route = routeTo(
+        parseXtaskFile(chain),
+        from: 'publish',
+        to: 'announce',
+      );
+      expect(route!.single.kind, 'then');
+    });
+
+    test('a task is reached from itself by an empty route', () {
+      expect(
+        routeTo(parseXtaskFile(chain), from: 'publish', to: 'publish'),
+        isEmpty,
+      );
+    });
+
+    test('and nothing at all when there is no route', () {
+      expect(
+        routeTo(parseXtaskFile(chain), from: 'stray', to: 'install'),
+        isNull,
+      );
+    });
+
+    test('a ring does not hang it, whatever `--validate` will say', () {
+      final file = parseXtaskFile('''
+version: 1
+tasks:
+  a: {desc: x, needs: [b], run: [d]}
+  b: {desc: y, needs: [a], run: [d]}
+  c: {desc: z, run: [d]}
+''');
+      expect(routeTo(file, from: 'a', to: 'c'), isNull);
+    });
+
+    test('declaration order decides, because the planner walks it', () {
+      // Two routes reach `target`; the answer must describe the run rather
+      // than an equally true alternative it does not take.
+      final file = parseXtaskFile('''
+version: 1
+tasks:
+  target: {desc: x, run: [d]}
+  first: {desc: y, needs: [target], run: [d]}
+  second: {desc: z, needs: [target], run: [d]}
+  top: {desc: w, needs: [first, second], run: [d]}
+''');
+      expect(
+        routeTo(file, from: 'top', to: 'target')!.first.to,
+        'first',
+      );
+    });
+  });
 }

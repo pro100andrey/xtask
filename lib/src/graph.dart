@@ -49,6 +49,84 @@ final class Plan {
   List<String> get names => [for (final step in steps) step.task.name];
 }
 
+/// One edge of the graph, as `--why` prints it.
+final class PlanEdge {
+  const PlanEdge(this.from, this.kind, this.to);
+
+  final String from;
+
+  /// `needs` or `then` — and they are not interchangeable. "It runs before
+  /// this" and "it runs after this" are opposite answers to "why is it here",
+  /// and printing one for the other would be a lie with a plausible shape.
+  final String kind;
+
+  final String to;
+
+  @override
+  String toString() => '$from $kind $to';
+}
+
+/// The tasks nothing else names — the ones somebody types.
+///
+/// Ask it of a file whose `collects:` has already been rewritten, or every
+/// member of a gate looks like an entry point: it is the composite naming them
+/// that makes them not one.
+List<String> entryPoints(XtaskFile file) {
+  final named = <String>{};
+  for (final task in file.tasks.values) {
+    named
+      ..addAll(task.needs)
+      ..addAll(task.then);
+  }
+  return [
+    for (final name in file.tasks.keys)
+      if (!named.contains(name)) name,
+  ];
+}
+
+/// One route from [from] to [to] through `needs:` and `then:`, or null.
+///
+/// **The route the planner would take, not the shortest.** Where several
+/// reach the same task, declaration order decides — which is the order
+/// `planRun` walks, so the answer to "why is this here" describes the run
+/// rather than an equally true alternative the run does not take.
+///
+/// An empty list means [from] and [to] are the same task: it is reached by
+/// being asked for.
+List<PlanEdge>? routeTo(
+  XtaskFile file, {
+  required String from,
+  required String to,
+}) {
+  final seen = <String>{};
+
+  List<PlanEdge>? walk(String at) {
+    if (at == to) {
+      return const [];
+    }
+    // A cycle is `--validate`'s to report; here it must only not hang.
+    if (!seen.add(at)) {
+      return null;
+    }
+    final task = file.tasks[at];
+    if (task == null) {
+      return null;
+    }
+    for (final (kind, next) in [
+      for (final need in task.needs) ('needs', need),
+      for (final next in task.then) ('then', next),
+    ]) {
+      final rest = walk(next);
+      if (rest != null) {
+        return [PlanEdge(at, kind, next), ...rest];
+      }
+    }
+    return null;
+  }
+
+  return walk(from);
+}
+
 /// The order [taskName] resolves to in [file].
 ///
 /// Order is: every `needs` in declared order, depth-first; then the task

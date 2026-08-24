@@ -94,6 +94,7 @@ xtask <task> --keep-going   report every failure, not just the first
 xtask --list                every task, with its description
 xtask --list --gate <name>  only the tasks in that gate set
 xtask --gates <name>        that gate set's task names, one per line
+xtask --why <task>          what puts that task in a plan
 xtask --validate            parse and check the file; run nothing
 xtask --dry-run <task>      print the resolved plan; run nothing
 xtask --emit-schema         print the JSON Schema for this file format
@@ -179,6 +180,18 @@ web-e2e:
 
 which turns "a browser test failed somewhere inside" into "task `web-e2e`
 requires `CHROMEDRIVER`, which is not set".
+
+`--why` answers the other direction — not "what does this run" but "why does
+this run at all". It names each entry point that reaches the task and spells
+the route edge by edge, saying which kind each edge is, because "it runs before
+this" and "it runs after this" are opposite answers:
+
+```
+$ dart run :xtask --why install
+check
+  check needs lint
+  lint needs install
+```
 
 `--keep-going` is for the local loop. A gate that stops at the first failure
 makes you fix, rerun, fix, rerun — the same argument `--validate` is built on,
