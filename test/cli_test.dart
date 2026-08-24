@@ -6,6 +6,7 @@ import 'package:xtask/src/cli.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/resolve.dart';
+import 'package:xtask/src/schema.dart';
 
 /// One process the CLI asked for.
 final class Started {
@@ -99,6 +100,11 @@ void main() {
       expect((parseArguments(['--gates']) as ShowUsage).problem, isNotNull);
       expect((parseArguments(['--dry-run']) as ShowUsage).problem, isNotNull);
       expect((parseArguments(['--gate']) as ShowUsage).problem, isNotNull);
+    });
+
+    test('--emit-schema is a mode, and takes nothing else', () {
+      expect(parseArguments(['--emit-schema']), isA<EmitSchema>());
+      expect(parseArguments(['--emit-schema', 'a']), isA<ShowUsage>());
     });
 
     test('a mode that takes no name and is given one', () {
@@ -495,6 +501,25 @@ tasks:
       });
     });
 
+    group('--emit-schema', () {
+      // No `writeFile` in either of these, deliberately.
+      test(
+        'answers with no file at all, which is how a repository gets one',
+        () async {
+          expect(await run(['--emit-schema']), ExitCode.success);
+          expect(err, isEmpty);
+          expect(printed(), startsWith('{'));
+        },
+      );
+
+      test('and what it prints is the schema, whole and once', () async {
+        // Including the trailing newline the redirect writes: a file that
+        // ends without one, or with two, is a diff every editor argues with.
+        await run(['--emit-schema']);
+        expect('${printed()}\n', xtaskJsonSchema());
+      });
+    });
+
     group('--dry-run', () {
       test('prints the plan and starts nothing', () async {
         writeFile('''
@@ -539,13 +564,7 @@ tasks:
         // Two lists of the flags — the parser's and this text — is exactly
         // the drift §1 is about, and they sit ten lines apart.
         await run(['--help']);
-        for (final mode in [
-          '--list',
-          '--gate',
-          '--gates',
-          '--validate',
-          '--dry-run',
-        ]) {
+        for (final mode in {...modes, '--gate'}) {
           expect(printed(), contains(mode), reason: '$mode is missing');
         }
       });

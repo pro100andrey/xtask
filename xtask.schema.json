@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "xtask.yaml",
+  "description": "A task runner whose tasks are data. This schema describes the SHAPE of the file. Whether it is coherent — no cycle, no name pointing at nothing, no set matching nothing — is what `xtask --validate` answers, and it is not answerable here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Required. The only version this engine reads; an unknown one is refused rather than read as best it can."
+    },
+    "sets": {
+      "type": "object",
+      "description": "Named lists and globs, referenced by a task's `each:` or `argv-from:`. A set that expands to nothing is an error: a task given no files checked nothing.",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "The members, written out."
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "include"
+            ],
+            "properties": {
+              "include": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "description": "Patterns, relative to the repository root. `**/` means one or more directories."
+              },
+              "exclude": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Patterns removed from what `include:` matched."
+              }
+            },
+            "description": "Globs, expanded by the engine rather than by a shell, in a deterministic order."
+          }
+        ]
+      }
+    },
+    "tasks": {
+      "type": "object",
+      "description": "The graph. Declaration order is meaningful: a `collects:` composite runs its gate members in the order they appear here.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "desc"
+        ],
+        "not": {
+          "required": [
+            "run",
+            "do"
+          ],
+          "$comment": "a task has one body or none, never two"
+        },
+        "properties": {
+          "desc": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Required, one line, and what `--list` prints — so that a task cannot be added without saying what it is for."
+          },
+          "run": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "An external program as argv: the program, then its arguments, each its own entry. Never a command line — nothing splits a string here, and no shell sees it."
+          },
+          "do": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A verb: `remove`, or one this project registered in its own `bin/xtask.dart`. The engine ships no project verbs."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Extra arguments appended to the body."
+          },
+          "argv-from": {
+            "type": "string",
+            "description": "A set whose members are appended as arguments, already expanded."
+          },
+          "each": {
+            "type": "string",
+            "description": "A set whose members the body runs once per, sequentially. A failure stops at that member, and the member is named."
+          },
+          "in": {
+            "type": "string",
+            "description": "Where the body runs, relative to the repository root — or the literal `$each`, which stands for the current member of `each:`."
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment for this task only. A key rather than syntax, because `FOO=bar cmd` is shell on POSIX and something else on Windows."
+          },
+          "env-required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Variables that must already be set. Checked before the body runs; the engine installs nothing, it only says which one is missing."
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Direct requirements, run before this task. Each runs once per invocation however many tasks need it."
+          },
+          "then": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Continuations, run after this task's body rather than before it. A body that succeeded and a continuation that failed is its own outcome, with its own exit code."
+          },
+          "gate": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The gate sets this task belongs to. A gate set is named after who runs it: one person's command, or one CI job's."
+          },
+          "collects": {
+            "type": "string",
+            "description": "Names a gate set this task is the composite of — it needs every task in that set. Spelled nothing like `gate:` on purpose: the two mean opposite things."
+          }
+        }
+      }
+    }
+  }
+}
