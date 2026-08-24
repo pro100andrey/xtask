@@ -148,6 +148,37 @@ void main() {
     });
   });
 
+  group('the README quotes the command rather than describing it', () {
+    // §1, in the repository that exists for §1. `usage` in `cli.dart` and the
+    // block under "## The command" are the same list, and when this test was
+    // written they had already drifted three ways: `--parallel` had lost the
+    // cost it names, `--why` half of its answer, and `--validate` and
+    // `--check-ci` had swapped places. Each half read plausibly on its own,
+    // which is what makes this drift survive a review.
+    //
+    // `modes` is public so the help cannot forget a flag the parser accepts;
+    // this is the other half of the same promise, for the copy that is not in
+    // the program.
+    test("and it is the parser's own text, line for line", () {
+      final readme = File(p.join(root, 'README.md')).readAsStringSync();
+      // Two spaces come off, and exactly two: the lines are indented where
+      // they are printed under a `usage:` header, and the README's fence
+      // supplies that header instead. Trimming further would stop comparing
+      // the alignment the block is written for.
+      final printed = [
+        for (final line in usage.skip(1).takeWhile((line) => line.isNotEmpty))
+          line.replaceFirst(RegExp('^  '), ''),
+      ];
+      expect(
+        _fencedBlockAfter(readme, '## The command'),
+        printed,
+        reason:
+            'README.md and `usage` in cli.dart have drifted. The README quotes '
+            'the parser — copy the block printed by `xtask` with no arguments.',
+      );
+    });
+  });
+
   group('the version in code is the version in the manifest', () {
     // The number has to be in `pubspec.yaml` because pub needs it there, and
     // in code because a compiled entry point has no manifest beside it to
@@ -203,4 +234,19 @@ void main() {
       expect(report.unrun, isEmpty);
     });
   });
+}
+
+/// The lines of the first fenced block after [heading] in [markdown].
+List<String> _fencedBlockAfter(String markdown, String heading) {
+  final lines = markdown.split('\n');
+  final at = lines.indexOf(heading);
+  expect(at, isNonNegative, reason: 'README.md has no `$heading` section');
+  final opened = lines.indexOf('```', at) + 1;
+  final closed = lines.indexOf('```', opened);
+  expect(
+    closed,
+    isNonNegative,
+    reason: 'the block under `$heading` is unclosed',
+  );
+  return lines.sublist(opened, closed);
 }
