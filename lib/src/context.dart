@@ -29,7 +29,7 @@ final class VerbContext {
   final List<String> args;
 
   /// The environment the body would see: this machine's, with the task's own
-  /// `env:` applied over it.
+  /// `env:` applied over it — and winning where both name the same variable.
   ///
   /// **Not the task's `env:` on its own**, which is what the name suggests and
   /// what this doc comment said until somebody read it beside the code. A verb
