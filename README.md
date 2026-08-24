@@ -13,7 +13,7 @@ and a third copy usually lives in a contributing guide — and the copies drift
 the first time somebody is in a hurry. Here CI stops naming commands at all: a
 job runs one task, and what that task is made of lives in one file.
 
-```
+```shell
 dart run :xtask check
 ```
 
@@ -87,7 +87,7 @@ repository's business. Its only built-in is `remove`.
 
 ## The command
 
-```
+```shell
 xtask <task>                run a task and everything it needs
 xtask <task> -- <args>      and pass those arguments to its body
 xtask <task> --keep-going   report every failure, not just the first
@@ -128,7 +128,7 @@ swallowing them.
 `--dry-run` shows what will actually happen, not what is written — sets
 expanded, `$each` substituted, and the executable resolved on this machine:
 
-```
+```shell
 $ dart run :xtask --dry-run check
 plan: format, analyze, test, check
 format
@@ -172,7 +172,7 @@ prints what each task took at the end — after the last section, because a line
 inside a fold is invisible in exactly the state somebody is in when they want a
 number:
 
-```
+```shell
 format    0.4s
 analyze   2.3s
 test     11.7s
@@ -212,7 +212,7 @@ this run at all". It names each entry point that reaches the task and spells
 the route edge by edge, saying which kind each edge is, because "it runs before
 this" and "it runs after this" are opposite answers:
 
-```
+```shell
 $ dart run :xtask --why install
 check
   check needs lint
@@ -224,7 +224,7 @@ makes you fix, rerun, fix, rerun — the same argument `--validate` is built on,
 which is why it collects every problem rather than throwing at the first. With
 the flag, independent tasks still run and the run ends with a summary:
 
-```
+```shell
 failed   lint (exit 1)
 failed   unit (exit 1)
 skipped  check (needs lint)
@@ -248,7 +248,7 @@ task ends. You get the answer sooner and you watch it happen less.
 
 The summary then says both numbers, because they answer different questions:
 
-```
+```shell
 lint    1.0s
 unit    1.0s
 types   1.0s
@@ -261,7 +261,7 @@ stops what has not started; it does not reach into what is running, because
 killing a task would leave whatever it was half-way through in whatever state
 that half is. Whichever way it ran, the summary then names what did not run:
 
-```
+```shell
 failed   format (exit 1)
 skipped  analyze — the run stopped at an earlier failure
 skipped  check — needs `format`, which did not pass
@@ -348,7 +348,7 @@ nothing, and a gate that examined nothing is worse than no gate.
 your repository and point at it with a relative path, so a fresh clone needs
 neither the network nor a per-person editor setting:
 
-```
+```shell
 dart run :xtask --emit-schema > xtask.schema.json
 ```
 
