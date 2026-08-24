@@ -9,6 +9,8 @@ import 'errors.dart';
 import 'exit_codes.dart';
 import 'graph.dart';
 import 'model.dart';
+import 'report.dart';
+import 'report.dart' as report;
 import 'reporting.dart';
 import 'resolution.dart';
 
@@ -95,10 +97,12 @@ final class Executor {
 
     final began = now();
     final code = await _walk(plan, took, failed, skipped);
-    _reportTiming(took, now().difference(began));
+    report
+        .timing(took, now().difference(began), concurrent: concurrency > 1)
+        .forEach(log);
     // Last, because it is the part somebody has to act on and the terminal
     // scrolls. The timing above is background; this is the work.
-    _reportStopped(failed, skipped);
+    report.stopped(failed, skipped).forEach(log);
     return code;
   }
 
@@ -268,77 +272,6 @@ final class Executor {
         : null;
   }
 
-  /// Everything that failed and everything that therefore did not run.
-  ///
-  /// **A skip is always reported; a lone failure is not.** They are not the
-  /// same case, and counting them together got it wrong: a failure has already
-  /// printed itself where it happened, so a heading over one of them
-  /// summarises nothing — but a skipped task prints nothing of its own, and
-  /// this is the only place it is ever mentioned. Suppressing it left a run
-  /// that answered 0 having silently not done something, which is the failure
-  /// this tool is about.
-  void _reportStopped(Map<String, int> failed, Map<String, Skipped> skipped) {
-    if (skipped.isEmpty && failed.length < 2) {
-      return;
-    }
-    log('');
-    failed.forEach((name, code) => log('failed   $name (exit $code)'));
-    skipped.forEach((name, why) => log('skipped  $name — ${why.sentence}'));
-  }
-
-  /// What each task took, after the last one, outside every section.
-  ///
-  /// **Outside, and that is the whole design of it.** §7.1 has a CI job run
-  /// one invocation, so the job's own duration is the duration of everything —
-  /// and "which task took four minutes" has no answer anywhere. The obvious
-  /// place to print it, beside the task, is the wrong one: a line inside a
-  /// `::group::` is folded away with it, and the moment somebody wants a
-  /// duration is exactly the moment they have not expanded anything.
-  void _reportTiming(Map<String, Duration> took, Duration wall) {
-    if (took.isEmpty) {
-      return;
-    }
-    const total = 'total';
-    // A total under one number is that number written twice, so a single task
-    // gets none — and then the column must not be widened for a word that is
-    // not going to be printed.
-    final sums = took.length > 1;
-    final width = took.keys.fold(
-      sums ? total.length : 0,
-      (w, n) => n.length > w ? n.length : w,
-    );
-    final numbers = [
-      ...took.values.map(_asTime),
-      if (sums) _asTime(took.values.reduce((a, b) => a + b)),
-    ];
-    final column = numbers.fold(0, (w, n) => n.length > w ? n.length : w);
-
-    log('');
-    var index = 0;
-    took.forEach((name, _) {
-      log('${name.padRight(width)}  ${numbers[index++].padLeft(column)}');
-    });
-    if (!sums) {
-      return;
-    }
-    // **Two numbers, and only where they differ.** Sequentially the sum of the
-    // tasks IS how long the run took. Run together they are different
-    // questions — how much work there was, and how long you waited — and
-    // printing only the first would report three minutes for a run that took
-    // one.
-    final spent = '${total.padRight(width)}  ${numbers.last.padLeft(column)}';
-    log(concurrency > 1 ? '$spent spent, ${_asTime(wall)} taken' : spent);
-  }
-
-  /// A duration a person reads, not one a machine parses.
-  static String _asTime(Duration took) {
-    if (took.inMinutes < 1) {
-      return '${(took.inMilliseconds / 1000).toStringAsFixed(1)}s';
-    }
-    final seconds = (took.inSeconds % 60).toString().padLeft(2, '0');
-    return '${took.inMinutes}m ${seconds}s';
-  }
-
   Future<void> _runTask(Task task, [void Function(String line)? sink]) async {
     // **A section per task, opened before anything that can fail inside it.**
     // §7.1 rests on this: a CI job is one invocation, and what keeps that no
@@ -422,7 +355,7 @@ final class Executor {
           // directory, "how do I run this myself" means expanding the fold and
           // hunting upwards for it. Rendered by `describe`, so what a failure
           // reports and what `--dry-run` promised cannot disagree.
-          ...describe(resolved).skip(1),
+          ...describe(resolved, header: false),
         ].join('\n'),
       );
     }

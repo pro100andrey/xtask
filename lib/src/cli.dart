@@ -16,6 +16,7 @@ import 'graph.dart';
 import 'model.dart';
 import 'parse.dart';
 import 'primitives.dart';
+import 'report.dart' as report;
 import 'reporting.dart';
 import 'resolution.dart';
 import 'resolve.dart';
@@ -508,87 +509,47 @@ Future<int> runCli(
         throw StateError('answered above');
 
       case Validate():
-        final report = validateFile(
+        final problems = validateFile(
           collected,
           knownVerbs: known.keys.toSet(),
           sets: SetExpander(root: root),
         );
-        if (!report.ok) {
-          err('$report');
+        if (!problems.ok) {
+          err('$problems');
           return ExitCode.invalidFile;
         }
-        // Not silent. Silence is what a gate that did not run also prints, and
-        // naming the file proves it read the one somebody meant.
-        out(
-          '$path: ${_count(file.tasks.length, 'task')}, '
-          '${_count(file.sets.length, 'set')}, nothing wrong',
-        );
+        out(report.read(path, file.tasks.length, file.sets.length));
         return ExitCode.success;
 
       case CheckCi():
-        final report = checkCi(file, root: root);
-        for (final invocation in report.invocations) {
-          out(
-            '${invocation.step.workflow}: job `${invocation.step.job}` runs '
-            'the gate set `${invocation.gate}`',
-          );
-        }
-        if (!report.ok) {
-          report.problems.forEach(err);
+        final found = checkCi(file, root: root);
+        report.workflow(found).forEach(out);
+        if (!found.ok) {
+          found.problems.forEach(err);
           return ExitCode.invalidFile;
-        }
-        if (report.unrun.isNotEmpty) {
-          // Reported and not judged: a gate set is named after who runs it,
-          // and §7.1 says that is the jobs plus the people. Nothing in the
-          // file tells those apart, and a key that claimed to would be a
-          // second place saying what the workflow already says.
-          out('');
-          out(
-            'no job runs: ${report.unrun.map((g) => '`$g`').join(', ')} — '
-            'right if somebody runs them by hand, wrong if a job was '
-            'forgotten, and xtask cannot tell those apart',
-          );
         }
         return ExitCode.success;
 
       case ListTasks(:final gate):
-        final tasks = gate == null
-            ? file.tasks.values.toList()
-            : tasksInGate(file, _gate(file, gate));
-        final width = tasks.fold(
-          0,
-          (w, t) => t.name.length > w ? t.name.length : w,
-        );
-        for (final task in tasks) {
-          out('${task.name.padRight(width)}  ${task.desc}');
-        }
+        report
+            .listing(
+              gate == null
+                  ? file.tasks.values
+                  : tasksInGate(file, _gate(file, gate)),
+            )
+            .forEach(out);
         return ExitCode.success;
 
       case WhyTask(:final task):
         if (!collected.tasks.containsKey(task)) {
           throw XtaskFormatException('there is no task called `$task`');
         }
-        var reached = false;
-        for (final entry in entryPoints(collected)) {
-          final route = routeTo(collected, from: entry, to: task);
-          if (route == null) {
-            continue;
-          }
-          reached = true;
-          out(entry);
-          if (route.isEmpty) {
-            out('  nothing else names it: `$task` is where a run starts');
-          }
-          for (final edge in route) {
-            out('  $edge');
-          }
-        }
-        if (!reached) {
-          // Not an error. It is the answer, and it is the one worth having:
-          // a task no entry point reaches is a task nothing runs, which looks
-          // from the outside exactly like a task that is checked.
-          out('nothing reaches `$task` — no run includes it');
-        }
+        report
+            .why(task, {
+              for (final entry in entryPoints(collected))
+                entry: ?routeTo(collected, from: entry, to: task),
+            })
+            .forEach(out);
         return ExitCode.success;
 
       case GateMembers(:final gate):
@@ -680,5 +641,3 @@ String _gate(XtaskFile file, String gate) {
               '${(known.toList()..sort()).map((g) => '`$g`').join(', ')}'}',
   );
 }
-
-String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';

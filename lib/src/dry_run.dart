@@ -6,6 +6,7 @@ import 'errors.dart';
 import 'exit_codes.dart';
 import 'graph.dart';
 import 'model.dart';
+import 'report.dart';
 import 'resolution.dart';
 import 'resolve.dart';
 
