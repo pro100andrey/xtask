@@ -8,9 +8,9 @@ graph, runs each task once, in declared order, **without a shell**.
 That is the whole of it, and the repository does not have to be a Dart one:
 the engine starts programs, so `[pytest, -q]` is as ordinary a task as
 `[dart, test]`. Later you may want to pin the engine's version in a
-`pubspec.yaml` instead of installing it, or to write a task in Dart rather
-than name a program — [The shape](#the-shape) is those two steps, and neither
-is needed to start.
+`pubspec.yaml` instead of installing it, or to write a task in Dart rather than
+name a program — [Using it from Dart](#using-it-from-dart) is those two steps,
+and neither is needed to start.
 
 The point is not convenience. It is that a repository stops keeping the same
 list twice. A `Makefile` names the commands, the CI workflow names them again,
@@ -18,21 +18,10 @@ and a third copy usually lives in a contributing guide — and the copies drift
 the first time somebody is in a hurry. Here CI stops naming commands at all: a
 job runs one task, and what that task is made of lives in one file.
 
-```shell
-xtask check
-```
+## Start here
 
-That is what a person types before calling work done, and it is also the whole
-of the CI job — the same command, because there is only one list and it is not
-in either of them.
-
-## The shape
-
-### One file, and a command
-
-Install the engine once, write the file, run it. Your repository needs no
-`pubspec.yaml` and no Dart in it at all — only the Dart SDK on the machine
-doing the installing:
+Install the engine once. Your repository needs no `pubspec.yaml` and no Dart in
+it at all — only the Dart SDK on the machine doing the installing:
 
 ```shell
 dart install 'xtask@{git: {url: https://github.com/pro100andrey/xtask}}'
@@ -41,7 +30,7 @@ dart install 'xtask@{git: {url: https://github.com/pro100andrey/xtask}}'
 Once it is on pub.dev that becomes `dart install xtask`. Either way what lands
 on the PATH is a command called `xtask`.
 
-The file is `xtask.yaml` at the repository root, and this is a whole one:
+Then write `xtask.yaml` at the repository root. This is a whole one:
 
 ```yaml
 version: 1
@@ -62,8 +51,30 @@ tasks:
     collects: check
 ```
 
-`xtask check` runs both, in the order they are written. `xtask --list` prints
-them with their descriptions.
+And run it:
+
+```shell
+xtask check
+```
+
+That runs both, in the order they are written, and it is what a person types
+before calling work done — and also the whole of the CI job, the same command,
+because there is only one list and it is not in either of them. `xtask --list`
+prints the tasks with their descriptions.
+
+Two keys in that file are doing the work, and they point in opposite
+directions. `gate: [check]` is written on a check and means *I am a member of
+the group called `check`*. `collects: check` is written on the task you type
+and means *I run that whole group*, in the order the file writes it. A task
+named `check` collecting a gate named `check` is the ordinary case and not a
+cycle — [Gate sets](#gate-sets-and-what-they-are-for) says why, and why the
+whole tool exists for those two keys.
+
+## Using it from Dart
+
+Two steps, and a Dart repository is the only kind that can take them. Neither
+is needed to start, and a repository that never takes either is using the tool
+exactly as intended.
 
 ### Depending on it instead
 
