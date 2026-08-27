@@ -1511,6 +1511,32 @@ void main() {
     });
   });
 
+  group('a fanned-out task says how much work there was', () {
+    test('beside how long it took, which is the number `-j` is for', () async {
+      // One row said how long you waited; over forty packages at four at a
+      // time, how much work there WAS is the other half, and without it a run
+      // that halved its wall clock looked like one that had less to do.
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+      );
+      expect(logged.join('\n'), contains('over 3 members'));
+    });
+
+    test('and a task with one body says nothing of the kind', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [ruff]}\n',
+        'a',
+      );
+      expect(logged.join('\n'), isNot(contains('members')));
+    });
+  });
+
   group('a one-step plan keeps its live output', () {
     test('because there is no second task to interleave with', () async {
       // Buffering the task as well as its members took §5.2's live output and

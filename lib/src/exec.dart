@@ -77,6 +77,16 @@ final class Executor {
   /// The named mutexes this run's tasks share.
   final _exclusive = _Exclusive();
 
+  /// How much work each task's members added up to, where there was more than
+  /// one of them.
+  ///
+  /// **The number `-j` is for.** A task's own row is how long you waited; over
+  /// forty packages at four at a time, how much work there WAS is the other
+  /// number, and it was nowhere. A field rather than a parameter because it is
+  /// state of this run, like the mutexes above, and threading it through four
+  /// levels to reach the one place that fills it in would say otherwise.
+  final _work = <String, ({Duration spent, int members})>{};
+
   /// How many tasks may be in flight at once. 1 is §5.2's run.
   ///
   /// **This is the one place a documented promise is deliberately broken, and
@@ -139,7 +149,12 @@ final class Executor {
       skipped,
       concurrent: concurrent,
     );
-    timing(took, now().difference(began), concurrent: concurrent).forEach(log);
+    timing(
+      took,
+      now().difference(began),
+      _work,
+      concurrent: concurrent,
+    ).forEach(log);
     // Last, because it is the part somebody has to act on and the terminal
     // scrolls. The timing above is background; this is the work.
     summary(failed, skipped).forEach(log);
@@ -499,6 +514,10 @@ final class Executor {
       }
       final lines = together ? <String>[] : null;
       attempted++;
+      // Read only where it is used. `now()` is injected so a summary can be
+      // asserted, and a fake clock that advances on every read makes an
+      // unused one a number somewhere else.
+      final began = bodies.length > 1 ? now() : null;
       try {
         if (await _runBody(bodies[at], lines == null ? sink : lines.add)) {
           // **Stopped, so stop.** Returning normally left the loop with no
@@ -529,6 +548,13 @@ final class Executor {
         }
       } finally {
         slots.give();
+        if (began != null) {
+          final so = _work[task.name];
+          _work[task.name] = (
+            spent: (so?.spent ?? Duration.zero) + now().difference(began),
+            members: (so?.members ?? 0) + 1,
+          );
+        }
         lines?.forEach(sink ?? log);
       }
     }
@@ -1008,7 +1034,11 @@ final class SystemProcessStarter implements ProcessStarter {
     // flag from inside the losing callback let a task that genuinely ran past
     // its `timeout:` be relabelled a stop, if the run happened to give up
     // during the grace period — and a relabelled stop is not reported at all.
-    final ending = process.exitCode.then<int?>((code) => code);
+    int? alreadyFinished;
+    final ending = process.exitCode.then<int?>((code) {
+      alreadyFinished = code;
+      return code;
+    });
     final outcome = await Future.any([
       if (timeout == null)
         ending.then((code) => (code: code, stopped: false))
@@ -1021,6 +1051,14 @@ final class SystemProcessStarter implements ProcessStarter {
     if (outcome.code != null) {
       await collecting;
       return outcome.code!;
+    }
+    // **A process that has already finished was not stopped.** The two futures
+    // can complete in the same turn, and `Future.any` picking the other one
+    // threw away a real exit code and called a dead process killed.
+    final finishedAnyway = alreadyFinished;
+    if (finishedAnyway != null) {
+      await collecting;
+      return finishedAnyway;
     }
     final stoppedEarly = outcome.stopped;
 

@@ -28,6 +28,7 @@ void main() {
           'build': const Duration(seconds: 2),
         },
         const Duration(seconds: 3),
+        const {},
         concurrent: false,
       );
       expect(lines, ['', 'install  1.0s', 'build    2.0s', 'total    3.0s']);
@@ -40,6 +41,7 @@ void main() {
           'bbbbbbbb': const Duration(minutes: 2),
         },
         const Duration(minutes: 2, seconds: 1),
+        const {},
         concurrent: false,
       );
       expect(lines[1], 'a           1.0s');
@@ -50,6 +52,7 @@ void main() {
       final lines = timing(
         {'a': const Duration(seconds: 1)},
         const Duration(seconds: 1),
+        const {},
         concurrent: false,
       );
       expect(lines, ['', 'a  1.0s']);
@@ -61,13 +64,17 @@ void main() {
       final lines = timing(
         {'a': const Duration(seconds: 1), 'b': const Duration(seconds: 2)},
         const Duration(seconds: 2),
+        const {},
         concurrent: true,
       );
       expect(lines.last, 'total  3.0s spent, 2.0s taken');
     });
 
     test('nothing ran, nothing to say', () {
-      expect(timing(const {}, Duration.zero, concurrent: false), isEmpty);
+      expect(
+        timing(const {}, Duration.zero, const {}, concurrent: false),
+        isEmpty,
+      );
     });
   });
 
@@ -281,6 +288,30 @@ tasks:
         parsed('version: 1\ntasks:\n  a: {desc: x, run: [d]}\n'),
       );
       expect(lines, ['a  x']);
+    });
+  });
+
+  group('what a fanned-out task added up to', () {
+    test('is said beside how long it took', () {
+      final lines = timing(
+        {'a': const Duration(seconds: 3)},
+        const Duration(seconds: 3),
+        const {'a': (spent: Duration(seconds: 9), members: 4)},
+        concurrent: true,
+      );
+      expect(lines[1], contains('9.0s over 4 members'));
+    });
+
+    test('and one member says nothing — it is the row already', () {
+      // A task whose first member failed without `--keep-going` has exactly
+      // one attempted, and `over 1 members` is not a sentence.
+      final lines = timing(
+        {'a': const Duration(seconds: 1)},
+        const Duration(seconds: 1),
+        const {'a': (spent: Duration(seconds: 1), members: 1)},
+        concurrent: false,
+      );
+      expect(lines, ['', 'a  1.0s']);
     });
   });
 

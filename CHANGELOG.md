@@ -51,6 +51,41 @@ targeted somewhere else from a subdirectory.
 **Breaking:** `VerbContext` takes a required `start`. Projects do not construct
 one; the engine does.
 
+### A closed pipe is an ordinary end, not a stack trace
+
+`xtask --list | head -2` is an ordinary thing to type. `head` closes the pipe
+as soon as it has what it wants, and the next write raised
+`FileSystemException: Broken pipe` that nothing caught — so the run ended on a
+stack trace and exit 255, a number the table does not have, for output that
+arrived exactly as asked. Twenty-two runs in forty, before; none in forty,
+after.
+
+An `IOSink` is asynchronous, so the failure does not arrive at the `writeln`
+that caused it and a `try` around one catches nothing. Claiming `done` is what
+makes it ours to ignore — and only a closed pipe is claimed. Marking every sink
+error handled would have swallowed the ones that matter: `xtask check >
+report.txt` on a full disk writing a truncated report and answering 0, with
+nothing on stderr, is the green result nobody checked that this is all against.
+
+### The flags a run may carry are named once
+
+The command line decides what it accepts and `--check-ci` decides what a
+workflow step may carry, and they had a copy each: adding a flag to one meant
+`--check-ci` calling a working workflow a step that does something other than
+run a gate. That is the duplicate-list defect this tool exists to remove, grown
+inside it.
+
+### A fanned-out task says how much work there was, beside how long it took
+
+```
+test  1m 12s  4m 51s over 40 members
+```
+
+One row said how long you waited. Over forty packages at four at a time, how
+much work there WAS is the other half — the number `-j` is for — and it was
+nowhere, so a run that halved its wall clock looked exactly like one that had
+less to do.
+
 ### A killed process is not waited out through a grandchild
 
 Collecting a piped child's output ends when its stdout and stderr close, and a

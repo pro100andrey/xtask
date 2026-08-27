@@ -19,6 +19,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import 'errors.dart';
+import 'flags.dart';
 import 'gates.dart';
 import 'model.dart';
 
@@ -189,13 +190,13 @@ String? _gateOf(String command) {
     final flag = word.startsWith('--')
         ? (word.contains('=') ? word.substring(0, word.indexOf('=')) : word)
         : (word.length >= 2 ? word.substring(0, 2) : word);
-    if (!_runModifiers.contains(flag)) {
+    if (!runModifiers.contains(flag)) {
       // A mode rather than a modifier — `--dry-run check` names a gate set
       // and does not run it, which is not what a job is being vouched for.
       return null;
     }
     final attached = word.length > flag.length;
-    if (_takesAValue.contains(flag)) {
+    if (takesAValue.contains(flag)) {
       // **The value is checked, not skipped.** `check -j abc` and a trailing
       // `check -j` were vouched for here and refused by the command line, so
       // `--check-ci` reported a green job for a step that cannot run.
@@ -207,8 +208,7 @@ String? _gateOf(String command) {
                 ? word.substring(flag.length + 1)
                 : word.substring(flag.length))
           : (i + 1 < after.length ? after[++i] : null);
-      if (value == null ||
-          (value != 'auto' && (int.tryParse(value) ?? 0) < 1)) {
+      if (value == null || !isAJobCount(value)) {
         return null;
       }
     } else if (attached) {
@@ -218,13 +218,6 @@ String? _gateOf(String command) {
   }
   return operands.length == 1 ? operands.single : null;
 }
-
-/// The flags that modify a run rather than replacing it. Anything else after
-/// the name means the step is doing something other than running a gate set.
-const _runModifiers = {'-j', '--jobs', '--keep-going'};
-
-/// Of those, the ones whose value may be a separate word.
-const _takesAValue = {'-j', '--jobs'};
 
 Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
   final YamlNode document;

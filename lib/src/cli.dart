@@ -13,6 +13,7 @@ import 'errors.dart';
 import 'exec.dart';
 import 'executables.dart';
 import 'exit_codes.dart';
+import 'flags.dart';
 import 'gates.dart';
 import 'graph.dart';
 import 'markers.dart';
@@ -237,6 +238,12 @@ Request parseArguments(List<String> args) {
         );
       }
       jobsWritten = true;
+      if (!isAJobCount(asked)) {
+        return ShowUsage(
+          '`-j $asked` is not a number of jobs. Write `-j <n>` with n at '
+          'least 1, or `-j auto`',
+        );
+      }
       if (asked == 'auto') {
         // **Capped, because a job here is a whole toolchain.** One unit is a
         // `dart test` or a `dart analyze`, each already multi-threaded and
@@ -247,14 +254,7 @@ Request parseArguments(List<String> args) {
             : 8;
         continue;
       }
-      final count = int.tryParse(asked);
-      if (count == null || count < 1) {
-        return ShowUsage(
-          '`-j $asked` is not a number of jobs. Write `-j <n>` with n at '
-          'least 1, or `-j auto`',
-        );
-      }
-      concurrency = count;
+      concurrency = int.parse(asked);
       continue;
     }
 

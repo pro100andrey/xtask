@@ -228,6 +228,20 @@ void main() {
   });
 
   group('a route is looked for down every edge, not only the first', () {
+    test('a dangling name does not read as a ring on a second branch', () {
+      // Left on the path, the second branch reaching it saw the path guard
+      // fire and switched off the memo for the rest of the question.
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  target: {desc: t, run: [d]}\n'
+        '  ghost: {desc: g, needs: [nowhere], run: [d]}\n'
+        '  top: {desc: c, needs: [ghost, target], run: [d]}\n'
+        '  other: {desc: o, needs: [ghost, target], run: [d]}\n',
+      );
+      expect(routeTo(file, from: 'top', to: 'target'), isNotNull);
+      expect(routeTo(file, from: 'other', to: 'target'), isNotNull);
+    });
+
     test('and a ring does not make a later branch answer wrongly', () {
       // What cannot reach the target is remembered, which is what keeps the
       // search from re-walking every shared subtree once per path. A branch

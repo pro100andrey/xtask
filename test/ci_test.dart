@@ -136,6 +136,7 @@ jobs:
         // `-j=4` is neither spelling: `--jobs=4` carries its value after an
         // `=`, `-j4` carries it joined, and the command line refuses this.
         'dart run :xtask ci-analyze -j=4',
+        'dart run :xtask ci-analyze --jobs=nonsense',
       ]) {
         workflow('ci.yml', '''
 jobs:

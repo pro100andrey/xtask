@@ -6,6 +6,7 @@
 /// changing anything here.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'src/cli.dart';
@@ -62,9 +63,65 @@ Future<int> runXtask(
   // than beside it: §7.1's grouping markers only fold what is on the same
   // stream, and on GitHub an `::error::` written to stderr is not an
   // annotation, it is a line of red text.
-  out: stdout.writeln,
-  err: stderr.writeln,
+  out: _writing(stdout),
+  err: _writing(stderr),
   resolver: ExecutableResolver.forHost(),
   starter: const SystemProcessStarter(),
   verbs: verbs,
 );
+
+/// Writing a line to [sink], and stopping quietly when nobody is reading.
+///
+/// **`xtask --list | head -2` is an ordinary thing to type.** `head` closes the
+/// pipe as soon as it has what it wants, and the next write raises
+/// `FileSystemException: Broken pipe` — which nothing caught, so the run ended
+/// on a stack trace and exit 255, a number §5.3 does not have, for output that
+/// arrived exactly as asked. Every well-behaved command answers a closed pipe
+/// by stopping, and this is how it stops: the remaining lines go nowhere,
+/// because there is nowhere for them to go.
+void Function(String line) _writing(IOSink sink) {
+  var closed = false;
+
+  // **Claimed up front, because the write is not where it surfaces.** An
+  // `IOSink` is asynchronous: `writeln` returns before the bytes reach the
+  // pipe, so a `try` around it catches nothing and the failure arrives later
+  // as an unhandled error that ends the process at 255. Claiming `done` is
+  // what makes a closed pipe ours to ignore.
+  //
+  // **And only a closed pipe.** Marking every sink error handled would swallow
+  // the ones that matter: `xtask check > report.txt` on a full disk would
+  // write a truncated report and answer 0, with nothing on stderr — a green
+  // result nobody checked, which is the failure this whole tool is against.
+  // Anything else is left unhandled, exactly as loud as it was.
+  unawaited(
+    sink.done.catchError(
+      (Object error) => closed = true,
+      // Only a closed pipe is claimed; everything else stays unhandled and as
+      // loud as it was.
+      test: _isAClosedPipe,
+    ),
+  );
+
+  return (line) {
+    if (closed) {
+      return;
+    }
+    try {
+      sink.writeln(line);
+    } on FileSystemException catch (error) {
+      if (!_isAClosedPipe(error)) {
+        rethrow;
+      }
+      closed = true;
+    }
+  };
+}
+
+/// Whether [error] is the reader having gone away.
+///
+/// `EPIPE` on POSIX; `ERROR_BROKEN_PIPE` and `ERROR_NO_DATA` are what Windows
+/// reports for the same event, and a pipe closed on either is an ordinary end
+/// rather than a fault.
+bool _isAClosedPipe(Object error) =>
+    error is FileSystemException &&
+    const {32, 109, 232}.contains(error.osError?.errorCode);

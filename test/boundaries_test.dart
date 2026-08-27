@@ -57,7 +57,12 @@ void main() {
     const allowed = {'lib/xtask.dart', 'lib/src/exec.dart'};
     final writers = {
       for (final MapEntry(key: file, value: source) in sources.entries)
-        if (RegExp(r'\b(stdout|stderr)\.|(?<![.\w])print\(').hasMatch(source))
+        // Handed over as well as called on: `_writing(stdout)` reaches for
+        // the terminal exactly as much as `stdout.writeln` does, and the rule
+        // stopped seeing the entry point the day it started wrapping it.
+        if (RegExp(
+          r'\b(stdout|stderr)[.,)]|(?<![.\w])print\(',
+        ).hasMatch(source))
           file,
     };
     expect(

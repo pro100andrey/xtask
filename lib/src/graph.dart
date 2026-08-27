@@ -141,6 +141,10 @@ List<PlanEdge>? routeTo(
 
     final task = file.tasks[at];
     if (task == null) {
+      // Taken off the path on the way out, like every other return. Left on
+      // it, a second branch reaching the same dangling name read it as a ring
+      // and switched the memo off for the rest of the question.
+      seen.remove(at);
       return null;
     }
     for (final (kind, next) in [

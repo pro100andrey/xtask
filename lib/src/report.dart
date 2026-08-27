@@ -143,7 +143,8 @@ List<String> starting(int tasks, int concurrency) {
 /// expanded nothing.
 List<String> timing(
   Map<String, Duration> took,
-  Duration wall, {
+  Duration wall,
+  Map<String, ({Duration spent, int members})> work, {
   required bool concurrent,
 }) {
   if (took.isEmpty) {
@@ -163,10 +164,27 @@ List<String> timing(
   final spent = '${total.padRight(width)}  ${numbers.last.padLeft(column)}';
   final sum = concurrent ? '$spent spent, ${asTime(wall)} taken' : spent;
 
+  /// What a fanned-out task's members added up to, beside how long it took.
+  ///
+  /// **The number `-j` is for, and it was nowhere.** One row said how long you
+  /// waited; over forty packages at four at a time, how much work there WAS is
+  /// the other half, and without it a run that halved its wall clock looked
+  /// exactly like one that had less to do.
+  String over(String name) {
+    final done = work[name];
+    if (done == null || done.members < 2) {
+      // One member is the row already, said twice — and `over 1 members` is
+      // not a sentence. A task whose first member failed without
+      // `--keep-going` has exactly one attempted, which is how this got out.
+      return '';
+    }
+    return '  ${asTime(done.spent)} over ${done.members} members';
+  }
+
   return [
     '',
     for (final (index, name) in took.keys.indexed)
-      '${name.padRight(width)}  ${numbers[index].padLeft(column)}',
+      '${name.padRight(width)}  ${numbers[index].padLeft(column)}${over(name)}',
     // **Two numbers, and only where they differ.** Sequentially the sum of the
     // tasks IS how long the run took. Run together they are different
     // questions — how much work there was, and how long you waited — and
