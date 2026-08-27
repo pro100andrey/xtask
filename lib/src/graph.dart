@@ -194,6 +194,90 @@ Plan planGate(XtaskFile file, String gate) {
   return Plan(List.unmodifiable(planner.steps));
 }
 
+/// The plan for [name], whether it is a gate set or a task.
+///
+/// **One name space, asked in one place.** §7 says a person types what they
+/// want to happen, and a gate set is as much that as a task is — `xtask check`
+/// used to work only because a composite task happened to carry the same name.
+/// A gate set is now what its declaration says it is, so this is where the two
+/// meet, and `_checkNoNameCollision` in the validator is what keeps the
+/// question answerable.
+///
+/// **Here rather than at the command line, because it is a question about the
+/// graph.** It lived in `cli.dart`, which meant this file offered [planRun] and
+/// [planGate] while every caller wanted neither on its own: a reader asking how
+/// a typed name becomes a plan read this file and did not find the function
+/// that actually runs.
+Plan planFor(XtaskFile file, String name) {
+  if (!file.gates.containsKey(name)) {
+    return planRun(file, name);
+  }
+  if (file.tasks.containsKey(name)) {
+    // §8 reports this too, but a run must not quietly pick one of them: the
+    // composite this replaced could not be ambiguous, and silently preferring
+    // the gate set would run a plan the reader did not ask for.
+    throw XtaskFormatException(
+      '`$name` is both a gate set and a task, so there is no telling which '
+      'one this asks for. Rename one of them',
+      file.gates[name],
+    );
+  }
+  final plan = planGate(file, name);
+  if (plan.steps.isEmpty) {
+    // **Silence would be a green gate that ran nothing.** An empty plan
+    // printed nothing and answered 0, so a CI job whose only step is `xtask
+    // check` passed in complete silence when every member's `gate:` was
+    // misspelled — the exact failure this tool is against, reached by the one
+    // path that does not validate first.
+    throw XtaskFormatException(
+      'gate set `$name` has no tasks in it, so running it would check '
+      'nothing and answer 0. Put a task in it, or stop declaring it',
+      file.gates[name],
+    );
+  }
+  return plan;
+}
+
+/// Every way a run reaches [task]: the gate sets that run it, and the tasks
+/// somebody types that lead to it — the whole of what `--why` prints.
+///
+/// **The gate sets are the half that used to be free.** A composite was a
+/// task, so [entryPoints] found it and the route ran through its `needs:`. A
+/// declared gate set has no such edge, and without this `--why format` would
+/// answer "nothing reaches it" about a task that every `check` runs — the one
+/// answer §8 says this question exists to prevent.
+///
+/// **Composed here rather than at the command line.** [routeTo] and
+/// [entryPoints] are the pieces; this is the question, and it is a question
+/// about the graph whichever mode happens to ask it.
+Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
+  final routes = <String, List<PlanEdge>>{};
+  for (final gate in file.gates.keys) {
+    for (final member in tasksInGate(file, gate)) {
+      final route = routeTo(file, from: member.name, to: task);
+      if (route == null) {
+        continue;
+      }
+      // The first member that reaches it, which is the one the run reaches it
+      // through: members are planned in declared order.
+      // The edge is written even when the member IS the task, because an
+      // empty route means "you typed it" — true of a task, and never of a
+      // gate set, which reaches it by running it.
+      routes.putIfAbsent(
+        'gate $gate',
+        () => [PlanEdge('gate $gate', 'runs', member.name), ...route],
+      );
+    }
+  }
+  for (final entry in entryPoints(file)) {
+    final route = routeTo(file, from: entry, to: task);
+    if (route != null) {
+      routes[entry] = route;
+    }
+  }
+  return routes;
+}
+
 final class _Planner {
   _Planner(this.file);
 

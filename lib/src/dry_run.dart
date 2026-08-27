@@ -2,12 +2,9 @@
 library;
 
 import 'bodies.dart';
-import 'context.dart';
 import 'errors.dart';
-import 'executables.dart';
 import 'exit_codes.dart';
 import 'graph.dart';
-import 'model.dart';
 import 'report.dart';
 
 /// Prints [plan] and everything in it, and runs nothing.
@@ -24,29 +21,22 @@ import 'report.dart';
 /// 2, a missing `env-required` still 1. A resolution failure inside a `then:`
 /// still reports as a continuation failure, because that is the code the run
 /// would reach it with.
+/// **[bodies] is handed in, not built.** This used to construct its own from
+/// the file, the root, the resolver, the verbs, the environment and what
+/// followed `--` — the same six values the run's own arm passed to the same
+/// constructor, written out twice in two modules. Two constructions of the
+/// answer to "what will happen" is the second answer this module exists to
+/// prevent; a parameter added to one of them would have made a dry run promise
+/// what the run did not do.
 Future<int> dryRun({
-  required XtaskFile file,
-  required String root,
   required Plan plan,
-  required ExecutableResolver resolver,
+  required BodyResolver bodies,
   required void Function(String line) log,
-  Map<String, Verb> verbs = const {},
-  Map<String, String> environment = const {},
-  ({String task, List<String> arguments})? passedThrough,
 }) async {
   // The order, before anything that can fail to resolve. A plan whose second
   // task names a program this machine has not got is exactly when somebody
   // wants to see the order, and printing it afterwards would print nothing.
   log('plan: ${plan.names.join(', ')}');
-
-  final bodies = BodyResolver(
-    root: root,
-    resolver: resolver,
-    sets: file.sets,
-    verbs: verbs,
-    environment: environment,
-    passedThrough: passedThrough,
-  );
 
   for (final step in plan.steps) {
     final List<Resolved> resolved;

@@ -143,6 +143,26 @@ Future<int> runCli(
 
   final known = {...builtInVerbs(root: root), ...verbs};
 
+  /// What a task comes to on this machine, for the one task the command line
+  /// named.
+  ///
+  /// **Built here and nowhere else, which is the whole reason the module
+  /// exists.** The set expanded, the member `$each` stands for, the directory,
+  /// the environment, the program §5.4 finds — that is one answer, and
+  /// `--dry-run` is supposed to print the very answer a run performs. It was
+  /// constructed twice from the same six values, once in this arm and once
+  /// inside `dryRun`, so a seventh would have reached one of them and the dry
+  /// run would have promised something the run did not do — silently, and in
+  /// the one place whose job is to be checkable against what somebody meant.
+  BodyResolver bodiesFor(String task, List<String> arguments) => BodyResolver(
+    root: root,
+    resolver: resolver,
+    sets: file.sets,
+    verbs: known,
+    environment: environment,
+    passedThrough: (task: task, arguments: arguments),
+  );
+
   try {
     switch (request) {
       case ShowUsage() || EmitSchema() || ShowVersion():
@@ -199,7 +219,7 @@ Future<int> runCli(
         if (!file.tasks.containsKey(task)) {
           throw XtaskFormatException('there is no task called `$task`');
         }
-        report.why(task, _routesTo(file, task)).forEach(out);
+        report.why(task, routesTo(file, task)).forEach(out);
         return ExitCode.success;
 
       case GateMembers(:final gate):
@@ -211,14 +231,9 @@ Future<int> runCli(
       case DryRunTask(:final task, :final arguments):
         _refuseArgumentsWithNowhereToGo(file, task, arguments);
         return await dryRun(
-          file: file,
-          root: root,
-          plan: _planFor(file, task),
-          resolver: resolver,
+          plan: planFor(file, task),
+          bodies: bodiesFor(task, arguments),
           log: out,
-          verbs: known,
-          environment: environment,
-          passedThrough: (task: task, arguments: arguments),
         );
 
       case RunTask(
@@ -229,20 +244,13 @@ Future<int> runCli(
       ):
         _refuseArgumentsWithNowhereToGo(file, task, arguments);
         return await Executor(
-          bodies: BodyResolver(
-            root: root,
-            resolver: resolver,
-            sets: file.sets,
-            verbs: known,
-            environment: environment,
-            passedThrough: (task: task, arguments: arguments),
-          ),
+          bodies: bodiesFor(task, arguments),
           starter: starter,
           log: out,
           markers: LogMarkers.forHost(environment),
           keepGoing: keepGoing,
           concurrency: concurrency,
-        ).run(_planFor(file, task));
+        ).run(planFor(file, task));
     }
   } on XtaskFormatException catch (problem) {
     err('$problem');
@@ -282,80 +290,6 @@ void _refuseArgumentsWithNowhereToGo(
     'for $quoted to be an argument to. Name the task that takes them',
     task.span,
   );
-}
-
-/// Every way a run reaches [task]: the gate sets that run it, and the tasks
-/// somebody types that lead to it.
-///
-/// **The gate sets are the half that used to be free.** A composite was a
-/// task, so `entryPoints` found it and the route ran through its `needs:`. A
-/// declared gate set has no such edge, and without this `--why format` would
-/// answer "nothing reaches it" about a task that every `check` runs — the one
-/// answer §8 says this question exists to prevent.
-Map<String, List<PlanEdge>> _routesTo(XtaskFile file, String task) {
-  final routes = <String, List<PlanEdge>>{};
-  for (final gate in file.gates.keys) {
-    for (final member in tasksInGate(file, gate)) {
-      final route = routeTo(file, from: member.name, to: task);
-      if (route == null) {
-        continue;
-      }
-      // The first member that reaches it, which is the one the run reaches it
-      // through: members are planned in declared order.
-      // The edge is written even when the member IS the task, because an
-      // empty route means "you typed it" — true of a task, and never of a
-      // gate set, which reaches it by running it.
-      routes.putIfAbsent(
-        'gate $gate',
-        () => [PlanEdge('gate $gate', 'runs', member.name), ...route],
-      );
-    }
-  }
-  for (final entry in entryPoints(file)) {
-    final route = routeTo(file, from: entry, to: task);
-    if (route != null) {
-      routes[entry] = route;
-    }
-  }
-  return routes;
-}
-
-/// The plan for [name], whether it is a gate set or a task.
-///
-/// **One name space, asked in one place.** §7 says a person types what they
-/// want to happen, and a gate set is as much that as a task is — `xtask check`
-/// used to work only because a composite task happened to carry the same name.
-/// A gate set is now what its declaration says it is, so this is where the two
-/// meet, and `_checkNoNameCollision` in the validator is what keeps the
-/// question answerable.
-Plan _planFor(XtaskFile file, String name) {
-  if (!file.gates.containsKey(name)) {
-    return planRun(file, name);
-  }
-  if (file.tasks.containsKey(name)) {
-    // §8 reports this too, but a run must not quietly pick one of them: the
-    // composite this replaced could not be ambiguous, and silently preferring
-    // the gate set would run a plan the reader did not ask for.
-    throw XtaskFormatException(
-      '`$name` is both a gate set and a task, so there is no telling which '
-      'one this asks for. Rename one of them',
-      file.gates[name],
-    );
-  }
-  final plan = planGate(file, name);
-  if (plan.steps.isEmpty) {
-    // **Silence would be a green gate that ran nothing.** An empty plan
-    // printed nothing and answered 0, so a CI job whose only step is `xtask
-    // check` passed in complete silence when every member's `gate:` was
-    // misspelled — the exact failure this tool is against, reached by the one
-    // path that does not validate first.
-    throw XtaskFormatException(
-      'gate set `$name` has no tasks in it, so running it would check '
-      'nothing and answer 0. Put a task in it, or stop declaring it',
-      file.gates[name],
-    );
-  }
-  return plan;
 }
 
 /// [gate], if the file knows the name.

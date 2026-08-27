@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:xtask/src/bodies.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/dry_run.dart';
 import 'package:xtask/src/executables.dart';
@@ -52,14 +53,19 @@ void main() {
     ExecutableResolver? resolver,
   }) {
     final file = parseXtaskFile(yaml);
+    // The same value a run is given, built the same way — which is the point
+    // of the module: `--dry-run` prints what a run performs because it is
+    // handed the thing that works it out, rather than making its own.
     return dryRun(
-      file: file,
-      root: root.path,
       plan: planRun(file, task),
-      resolver: resolver ?? resolverFor(),
+      bodies: BodyResolver(
+        root: root.path,
+        resolver: resolver ?? resolverFor(),
+        sets: file.sets,
+        verbs: verbs,
+        environment: environment,
+      ),
       log: logged.add,
-      verbs: verbs,
-      environment: environment,
     );
   }
 
