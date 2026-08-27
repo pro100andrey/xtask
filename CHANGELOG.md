@@ -28,6 +28,22 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### The walk is pruned on the include patterns, not only on the exclusions
+
+Include patterns were used to match and never to prune, so
+`include: ['src/**/*.ts']` walked all of `node_modules` and all of `.git` — once
+per set, per task, per run — to find nothing there by construction.
+
+A directory is entered only when one of the include patterns could still match
+something inside it, decided from the pattern's own shape at the depth reached
+so far. Three shapes say keep going, so the walk is never narrower than the
+patterns are: a segment CONTAINING `**` at or before that depth — `package:glob`
+lets it cross `/` wherever it appears, and `lib/**.dart` is the shape this
+repository's own example ships — a brace, which does not split reliably by path
+segment, and a prefix that will not compile on its own, which tells us nothing.
+Only the descent is pruned: a directory can be a member itself, which is how
+`packages/*/coverage` reaches one to delete.
+
 ### A set is read when its task is about to run, and at no other time
 
 A file whose `build/*.txt` is produced by an earlier task ran green while

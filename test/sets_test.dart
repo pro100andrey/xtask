@@ -355,6 +355,38 @@ void main() {
       expect(expandGlob(['data/a,**/b']), ['data/a,deep/b']);
     });
 
+    test('`**` inside a segment still reaches what it matches', () {
+      // `package:glob` lets `**` cross `/` wherever it appears, and
+      // `lib/**.dart` is the shape this repository's own example ships.
+      // Reading it as a whole segment pruned `lib/src` out of the walk and
+      // lost every nested match — silently, since the set stays non-empty and
+      // the gate just checks fewer files.
+      given(['lib/a.dart', 'lib/src/b.dart']);
+      expect(expandGlob(['lib/**.dart']), ['lib/a.dart', 'lib/src/b.dart']);
+    });
+
+    test('a prefix that will not compile is read as `keep going`', () {
+      // Valid as a whole, split across an escape. Unreadable here, so it must
+      // not be read as "no" — the alternative is a scanner exception out of
+      // `expand`, past the exit codes.
+      given(['a/b/c.dart']);
+      expect(() => expandGlob([r'a\/b/*.dart']), returnsNormally);
+    });
+
+    test('a directory no include pattern could reach is not entered', () {
+      // Observable rather than asserted about: a directory the walk cannot
+      // read at all. Entering it throws; pruning it does not. Include
+      // patterns were used to match and never to prune, so a set over `src`
+      // walked all of `node_modules` and all of `.git` to find nothing there
+      // by construction.
+      given(['src/a.dart', 'node_modules/deep/b.dart']);
+      final shut = Directory(p.join(root.path, 'node_modules'));
+      Process.runSync('chmod', ['000', shut.path]);
+      addTearDown(() => Process.runSync('chmod', ['755', shut.path]));
+
+      expect(expandGlob(['src/**/*.dart']), ['src/a.dart']);
+    });
+
     test('an excluded directory is not descended into either', () {
       given(['x/test_data/deep/deeper/a.lake']);
       expect(
