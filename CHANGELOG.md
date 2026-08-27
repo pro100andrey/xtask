@@ -28,6 +28,24 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### A member that looks like an option is refused
+
+A repository may hold a file called `-n.dart`, and a glob will find it. Handed
+over bare it is not a path to the program — it is `-n`, and almost every
+program reads it that way. The engine knows every member and every position,
+so it can see this and say so; the fix is the one every command line already
+has:
+
+```yaml
+format:
+  all: sources
+  run: [dart, format, --, $all]
+```
+
+Refused rather than inserted for you: adding `--` would change the argv a task
+wrote, which is the one thing `run:` promises it does not do, and there are
+programs for which `--` means something else.
+
 ### `interruptible:` gives back what parallelism costs
 
 A run does not reach into what is already running, because a build killed

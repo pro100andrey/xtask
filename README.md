@@ -551,6 +551,12 @@ looking like a Windows drive. It is also what lets a set hold the bare name a
 path cannot be derived from, with `in: packages/$each` composing the path
 around it.
 
+A member that begins with `-` is refused where it would reach a program's
+arguments: a file called `-n.dart` is a path to you and an option to almost
+everything else. Write `--` before the marker, where a command line says its
+operands begin — the engine will not add it for you, because that would change
+the argv the task wrote.
+
 A set that expands to nothing is an **error**: a task given no files checked
 nothing, and a gate that examined nothing is worse than no gate.
 

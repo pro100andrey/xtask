@@ -411,6 +411,130 @@ void main() {
     });
   });
 
+  group('a member the program would read as an option', () {
+    Matcher refused(int code, Object message) => throwsA(
+      isA<RunFailure>()
+          .having((f) => f.code, 'code', code)
+          .having((f) => f.message, 'message', message),
+    );
+
+    test('is refused, and told where the operands begin', () {
+      // A repository may hold a file called `-n.dart` and a glob will find
+      // it. Handed over bare it is not a path to the program, it is `-n`.
+      for (final name in ['-n.dart', 'ok.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  src:\n    include: ["*.dart"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [fmt, $all]}'
+              '\n',
+          'a',
+        ),
+        refused(ExitCode.invalidFile, contains('says its operands begin')),
+      );
+    });
+
+    test('and a literal `--` before the marker is the answer', () {
+      for (final name in ['-n.dart', 'ok.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      final body = resolve(
+        'version: 1\n'
+            'sets:\n  src:\n    include: ["*.dart"]\n'
+            'tasks:\n'
+            r'  a: {desc: x, all: src, run: [fmt, --, $all]}'
+            '\n',
+        'a',
+      ).single;
+      expect(
+        (body as ResolvedProcess).arguments,
+        ['--', '-n.dart', 'ok.dart'],
+      );
+    });
+
+    test('a set the author WROTE is not second-guessed', () {
+      // `--enable-asserts` in a `values:` set is there because somebody typed
+      // it; refusing that refuses the use the key exists for.
+      expect(
+        () => resolve(
+          'version: 1\n'
+              "sets:\n  flags:\n    values: ['--enable-asserts']\n"
+              'tasks:\n'
+              r'  a: {desc: x, all: flags, run: [fmt, $all]}'
+              '\n',
+          'a',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('nor is a member composed into a word the author wrote', () {
+      // `--flavor=-dev` is one token and safe; the advised `--` would break
+      // it.
+      expect(
+        () => resolve(
+          'version: 1\n'
+              "sets:\n  f:\n    values: ['-dev']\n"
+              'tasks:\n'
+              r'  a: {desc: x, each: f, run: [b, --flavor=$each]}'
+              '\n',
+          'a',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('nor a member that only ever reaches `in:`', () {
+      // It is the working directory, never an argument — so the message would
+      // be false and the advice impossible to follow.
+      Directory(p.join(root.path, '-foo')).createSync();
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  dirs:\n    include: ["*"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, each: dirs, in: $each, run: [pwd]}'
+              '\n',
+          'a',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('and an ordinary member says nothing', () {
+      File(p.join(root.path, 'ok.dart')).writeAsStringSync('');
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  src:\n    include: ["*.dart"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [fmt, $all]}'
+              '\n',
+          'a',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('the same for `each:`, one member at a time', () {
+      File(p.join(root.path, '-n.dart')).writeAsStringSync('');
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  src:\n    include: ["*.dart"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, each: src, run: [fmt, $each]}'
+              '\n',
+          'a',
+        ),
+        refused(ExitCode.invalidFile, contains('`-n.dart`')),
+      );
+    });
+  });
+
   group('`each:` puts its member where the marker stands', () {
     test('as a whole argument — the case that did not exist before', () {
       // Until now a member could be a working directory and nothing else, so

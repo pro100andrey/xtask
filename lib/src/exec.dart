@@ -302,18 +302,21 @@ final class Executor {
     // how much WORK there was — double-counted idling. So the clock starts
     // when there is capacity to start.
     //
-    // Taken and given straight back rather than carried into the body: a task
-    // holding a slot for its whole life while its own later members queue for
-    // one is a deadlock, and two two-member tasks at `-j 2` found it.
+    // Taken and HANDED ON: the first member runs on this slot and gives it
+    // back when it ends. Giving it back here instead left the body to queue
+    // again behind whoever was already waiting, so the wait this was meant to
+    // stop billing was billed anyway — a one-second task reported four. And
+    // holding it for the task's whole life, rather than for its first member,
+    // is a deadlock two two-member tasks at `-j 2` duly found.
     await slots.take();
-    slots.give();
+    final inherited = _Inherited();
 
     // The tokens are already held: the walk took them before admitting this,
     // so waiting for somebody else's browser happens in the queue rather than
     // here, where it would occupy a place and be billed as this task's work.
     final started = now();
     try {
-      await _runTask(step.task, slots, lines?.add);
+      await _runTask(step.task, slots, inherited, lines?.add);
       return null;
     } on Object catch (thrown, stack) {
       // **One clause, because there is one ending.** `on RunFailure` alone
@@ -370,6 +373,12 @@ final class Executor {
       // summary is where the others are.
       return failure.code;
     } finally {
+      if (inherited.held) {
+        // Nothing reached a member — a body that could not resolve, or a task
+        // with none.
+        inherited.held = false;
+        slots.give();
+      }
       _exclusive.release(step.task.exclusive);
       // In a `finally`, so the task that FAILED is timed too. Where the run
       // spent itself before it broke is most of what somebody wants from a red
@@ -404,7 +413,8 @@ final class Executor {
 
   Future<void> _runTask(
     Task task,
-    _Slots slots, [
+    _Slots slots,
+    _Inherited inherited, [
     void Function(String line)? sink,
   ]) async {
     // **A section per task, opened before anything that can fail inside it.**
@@ -416,13 +426,14 @@ final class Executor {
     //
     final say = sink ?? log;
     markers.open(task.name).forEach(say);
-    await _runTaskBody(task, slots, sink);
+    await _runTaskBody(task, slots, inherited, sink);
     markers.close().forEach(say);
   }
 
   Future<void> _runTaskBody(
     Task task,
     _Slots slots,
+    _Inherited inherited,
     void Function(String line)? sink,
   ) async {
     // Every way this task could turn out to be unrunnable is answered by one
@@ -455,6 +466,7 @@ final class Executor {
     final failures = <int, RunFailure>{};
     var attempted = 0;
     var stop = false;
+    XtaskFormatException? malformed;
 
     // Buffering is the price of two things writing at once, and it is paid
     // only then: one member in flight keeps §5.2's live output exactly.
@@ -464,7 +476,15 @@ final class Executor {
       if (stop) {
         return;
       }
-      await slots.take();
+      // The slot `_runOne` took for the clock goes to whichever member starts
+      // first, and comes back when that member ends — so the task never holds
+      // one for longer than a member takes, which is what made two two-member
+      // tasks at `-j 2` deadlock when it held one for its whole life.
+      final ownsInherited = inherited.held;
+      inherited.held = false;
+      if (!ownsInherited) {
+        await slots.take();
+      }
       if (stop) {
         slots.give();
         return;
@@ -472,14 +492,23 @@ final class Executor {
       final lines = together ? <String>[] : null;
       attempted++;
       try {
-        await _runBody(bodies[at], lines == null ? sink : lines.add);
+        if (await _runBody(bodies[at], lines == null ? sink : lines.add)) {
+          // **Stopped, so stop.** Returning normally left the loop with no
+          // failure to act on, so every remaining member was started and
+          // immediately killed — the opposite of what `interruptible:` is for,
+          // which is the first answer at the first answer's price.
+          stop = true;
+        }
       } on Object catch (thrown) {
         if (thrown is XtaskFormatException) {
-          // Stopped as well as raised: `Future.wait` propagates only after
-          // every other member has finished, so without this the siblings of
-          // a member that raised ran on to the end.
+          // **Kept, not raised from inside the wait.** `Future.wait`
+          // propagates the moment one member throws, so raising here abandoned
+          // the tally its siblings had already filled in — the "N of M failed"
+          // line `--keep-going` exists to produce. Stopped as well, since the
+          // file being wrong is not a thing more members can fix.
           stop = true;
-          rethrow;
+          malformed ??= thrown;
+          return;
         }
         // **Anything, not only a `RunFailure`.** A verb is arbitrary project
         // Dart and can throw whatever it likes; catching one type meant a
@@ -504,6 +533,14 @@ final class Executor {
       for (var at = 0; at < bodies.length; at++) {
         await member(at);
       }
+    }
+
+    // Raised after the others have reported: §8's code 2 is the file being
+    // wrong, which outranks a task that failed, and `cli.dart` is where that
+    // sentence is written.
+    final wrong = malformed;
+    if (wrong != null) {
+      throw wrong;
     }
 
     if (failures.isNotEmpty) {
@@ -549,7 +586,8 @@ final class Executor {
     ].join('\n');
   }
 
-  Future<void> _runBody(
+  /// Runs [resolved], and answers whether it was stopped rather than finished.
+  Future<bool> _runBody(
     Resolved resolved,
     void Function(String line)? sink,
   ) async {
@@ -621,7 +659,7 @@ final class Executor {
           'task `${task.name}`$at was stopped: an earlier failure had already '
           'answered the run',
         );
-        return;
+        return true;
       }
 
       final killed =
@@ -666,6 +704,7 @@ final class Executor {
         ].join('\n'),
       );
     }
+    return false;
   }
 
   /// Does what [body] resolved to, and answers with its exit code.
@@ -741,6 +780,16 @@ final class _Exclusive {
 
   /// Lets go of everything [tryHold] took.
   void release(List<String> tokens) => _held.removeAll(tokens);
+}
+
+/// One slot, and whether it is still held.
+///
+/// **Ownership written down rather than assumed.** `_runOne` takes a slot to
+/// start the clock and hands it to the first member; a body that fails to
+/// resolve never reaches a member, and the slot leaked — a few of those and
+/// the run stops for want of a budget nobody is spending.
+final class _Inherited {
+  var held = true;
 }
 
 /// The concurrency budget, held by whatever is actually running.

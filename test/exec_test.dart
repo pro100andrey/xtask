@@ -1594,6 +1594,33 @@ void main() {
       expect(logged.join('\n'), isNot(contains('was stopped')));
     });
 
+    test('and stopping one member stops the ones behind it', () async {
+      // Returning normally left the loop with no failure to act on, so every
+      // remaining member was started and immediately killed — the opposite of
+      // the first answer at the first answer's price.
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            '  fmt: {desc: a, run: [ruff]}\n'
+            r'  slow: {desc: b, each: pkgs, in: $each, interruptible: true,'
+            ' run: [pytest]}'
+            '\n'
+            '  all: {desc: c, needs: [fmt, slow]}\n',
+        'all',
+        concurrency: 2,
+      );
+      expect(
+        starter.started.where((s) => p.basename(s.executable) == 'pytest'),
+        hasLength(lessThan(3)),
+        reason:
+            'the members behind the stopped one never started — what was '
+            'already running is left alone, as it is for tasks',
+      );
+    });
+
     test('a task that does not say so is left alone', () async {
       starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
       final running = runFile(

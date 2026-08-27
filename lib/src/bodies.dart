@@ -285,6 +285,7 @@ final class BodyResolver {
             'task `${task.name}`: ${resolver.missingToolMessage(argv.first)}',
           );
         }
+        _refuseFoundMemberReadAsOption(task, argv, [...members, ?member]);
         final arguments = List<String>.unmodifiable([
           ...substituted(argv.skip(1)),
           ...args,
@@ -307,6 +308,61 @@ final class BodyResolver {
               : Duration(seconds: task.timeout!),
         );
     }
+  }
+
+  /// Refuses a member the engine FOUND that the program would read as an
+  /// option.
+  ///
+  /// **Found, not written, and that is the whole distinction.** A repository
+  /// may hold a file called `-n.dart`; a glob will find it, and handed over
+  /// bare it is not a path to the program, it is `-n`. The author never typed
+  /// that name and cannot be expected to have thought about it.
+  ///
+  /// A `values:` or list set is the opposite case: `--enable-asserts` is there
+  /// because somebody wrote it, and refusing it would refuse the use `values:`
+  /// exists for. So this asks where the member came from, not what it looks
+  /// like.
+  ///
+  /// And it asks about the ARGUMENT, not the member: `--flavor=$each` is one
+  /// word the author composed, and what a `-` inside it means is their
+  /// business. Only a marker standing alone becomes a word this engine chose.
+  ///
+  /// Refused rather than fixed. Inserting `--` would change the argv a task
+  /// wrote, which is the one thing `run:` promises it does not do, and there
+  /// are programs for which `--` means something else.
+  void _refuseFoundMemberReadAsOption(
+    Task task,
+    List<String> argv,
+    List<String> members,
+  ) {
+    final from = sets[task.all ?? task.each];
+    if (from is! GlobSet) {
+      return;
+    }
+    final bare = argv.indexWhere(
+      (word) => word == allMarker || word == eachMarker,
+    );
+    if (bare == -1) {
+      // The member reaches `in:` or `env:` and never argv. Saying it would be
+      // read as an option would be false, and the advice — a `--` before a
+      // marker that is not there — impossible to follow.
+      return;
+    }
+    if (argv.take(bare).contains('--')) {
+      return;
+    }
+    final found = members.where((member) => member.startsWith('-'));
+    if (found.isEmpty) {
+      return;
+    }
+    throw RunFailure(
+      ExitCode.invalidFile,
+      'task `${task.name}` would hand `${found.first}` to `${argv.first}` as '
+      'an argument, and a word beginning with `-` is an option to almost every '
+      'program. This one was matched by a glob rather than written, so write '
+      '`--` before the marker, which is where a command line says its operands '
+      'begin',
+    );
   }
 
   /// Characters `cmd.exe` acts on rather than passes along.
