@@ -517,8 +517,8 @@ version: 1
 The schema knows the **shape** of the file: it completes a task's keys, and
 underlines `dsec:` or a `gate:` written as a string, while you type. Everything
 that needs the graph or the filesystem — a cycle, a `needs:` pointing at
-nothing, an orphan gate, a glob matching nothing, an unregistered verb — is what
-`--validate` answers. A schema catches a mistyped **key**; `--validate` catches
+nothing, an orphan gate, a glob matching nothing, an unregistered verb, an `in:`
+that reaches outside the repository — is what `--validate` answers. A schema catches a mistyped **key**; `--validate` catches
 a mistyped **name**.
 
 The schema describes one version of the engine, which is why it is generated

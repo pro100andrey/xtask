@@ -113,6 +113,23 @@ void main() {
       expect(exists('vscode/keep.js'), isTrue);
     });
 
+    test('`**/` reads as none-or-more here too, not one-or-more', () async {
+      // The divergence this closes: `sets:` corrected `package:glob`'s
+      // reading of `**/` and this verb did not, so the same pattern in the
+      // same file matched a different set of paths depending on which key it
+      // was written under. `packages/coverage` is the case that tells them
+      // apart — one-or-more never reaches it.
+      given([
+        'packages/coverage/f',
+        'packages/one/coverage/f',
+        'packages/one/lib/keep.dart',
+      ]);
+      await remove(['packages/**/coverage']);
+      expect(exists('packages/coverage'), isFalse);
+      expect(exists('packages/one/coverage'), isFalse);
+      expect(exists('packages/one/lib/keep.dart'), isTrue);
+    });
+
     test('a star in the middle matches directories', () async {
       // §12's `packages/*/coverage`, which is the reason this has to reach
       // directories and not only files.

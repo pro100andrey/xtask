@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'boundary.dart';
 import 'context.dart';
 import 'exit_codes.dart';
+import 'globs.dart';
 
 /// Every verb the engine ships.
 ///
@@ -86,14 +87,21 @@ List<String> _paths(String argument, String root) {
     return [argument];
   }
 
-  final glob = Glob(argument, context: p.posix);
+  // **Read the same way `sets:` reads it.** This compiled the argument raw,
+  // so `**/` meant "one directory or more" here and "none or more" over
+  // there — two dialects in one file, and `clean` is written with exactly the
+  // shape that tells them apart. A pattern has to mean one thing.
+  final globs = [
+    for (final variant in zeroOrMoreDirectories(argument))
+      Glob(variant, context: p.posix),
+  ];
   final found = <String>[];
   void walk(Directory directory) {
     for (final entry in directory.listSync(followLinks: false)) {
       final relative = p.posix.joinAll(
         p.split(p.relative(entry.path, from: root)),
       );
-      if (glob.matches(relative)) {
+      if (globs.any((glob) => glob.matches(relative))) {
         found.add(relative);
         // Not descended into: it is about to be deleted whole, and listing
         // what is inside it only to delete the parent is work for nothing.

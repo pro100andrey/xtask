@@ -314,6 +314,24 @@ void main() {
       expect(members, containsAll(['keep.lake', 'packages/a.lake']));
     });
 
+    test('a globstar starting a brace alternative reads as none-or-more', () {
+      // `{templates,packages}/**/*.lake` is the shape the README writes, and
+      // it was fine — the globstar there follows a `/`. This is the other
+      // shape, where each alternative is its own pattern and the globstar
+      // begins one: nothing preceded it with a slash, so the correction
+      // skipped it and the set matched every nested file and no root one.
+      given(['top.lake', 'deep/nested.lake', 'top.yaml', 'deep/nested.yaml']);
+      expect(
+        expandGlob(['{**/*.lake,**/*.yaml}']),
+        containsAll([
+          'top.lake',
+          'deep/nested.lake',
+          'top.yaml',
+          'deep/nested.yaml',
+        ]),
+      );
+    });
+
     test('an excluded directory is not descended into either', () {
       given(['x/test_data/deep/deeper/a.lake']);
       expect(

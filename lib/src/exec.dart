@@ -219,7 +219,6 @@ final class Executor {
     return answer ?? ExitCode.success;
   }
 
-  /// One task, timed, and reported where the mode says to report it.
   /// What an exception that is not a [RunFailure] comes to.
   ///
   /// Named rather than swallowed: the type and the message are the whole of
@@ -233,6 +232,7 @@ final class Executor {
     'fault in this engine; either way it is this task that stopped',
   );
 
+  /// One task, timed, and reported where the mode says to report it.
   Future<int?> _runOne(
     PlanStep step,
     Map<String, Duration> took,
@@ -245,7 +245,7 @@ final class Executor {
     try {
       await _runTask(step.task, lines?.add);
       return null;
-    } on Object catch (thrown) {
+    } on Object catch (thrown, stack) {
       // **One clause, because there is one ending.** `on RunFailure` alone
       // left every other exception to leave the process at 255 — a number
       // §5.3 does not have — with the section still open, because only the
@@ -259,6 +259,16 @@ final class Executor {
         rethrow;
       }
       final failure = thrown is RunFailure ? thrown : _threw(step.task, thrown);
+      if (thrown is! RunFailure) {
+        // **Into the section, not into the annotation.** A trace is the only
+        // thing that locates a fault in this engine, and dropping it left the
+        // report the line above claims to be giving with nothing to act on.
+        // It does not belong in the `::error::` though: GitHub reads a
+        // workflow command to the end of its line, so twenty frames become one
+        // escaped line nobody can read. Said first, so it lands inside the
+        // fold that `markers.error` is about to close.
+        say('$stack');
+      }
 
       // Closes the open section and annotates, in that order and for that
       // reason: an `::error::` inside a group is folded away with it, so the

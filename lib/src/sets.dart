@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import 'boundary.dart';
 import 'errors.dart';
+import 'globs.dart';
 import 'model.dart';
 
 /// Turning a named set into the strings a task is given.
@@ -113,7 +114,7 @@ final class SetExpander {
   /// Every reading of every pattern, as globs, refusing what cannot be one.
   List<Glob> _globs(String name, NamedSet set, List<String> patterns) => [
     for (final pattern in patterns)
-      for (final variant in _zeroOrMoreDirectories(
+      for (final variant in zeroOrMoreDirectories(
         _refuseUnrooted(
           name,
           set,
@@ -147,44 +148,6 @@ final class SetExpander {
       'to name',
       set.span,
     );
-  }
-
-  /// [pattern], and the same pattern with each `**/` standing for no directory
-  /// at all.
-  ///
-  /// **`package:glob` reads `**/` as one directory or more.** So
-  /// `packages/**/*.lake` — a pattern of exactly the shape a monorepo writes
-  /// — finds `packages/a/b.lake` and silently does not find
-  /// `packages/b.lake`.
-  /// Bash's `globstar`, git's ignore rules and every glob a person has met
-  /// elsewhere read it as none or more, so the file would mean one thing to
-  /// its author and another to this engine. The consequence is the one this
-  /// whole tool is against: not an error, but a gate that examined fewer files
-  /// than it was written to examine and went green anyway.
-  Set<String> _zeroOrMoreDirectories(String pattern) {
-    // Find the first `**` that stands as a WHOLE segment, skipping past any
-    // that do not. Stopping at the first occurrence and giving up if it was
-    // part of a larger token — as this did — abandons the zero-directory
-    // reading of every later, legitimate one: `a**/b/**/c` was left untouched
-    // entirely, and `{**/a,b}` never expanded because a brace preceded it.
-    var index = pattern.indexOf('**/');
-    while (index > 0 && pattern[index - 1] != '/') {
-      index = pattern.indexOf('**/', index + 1);
-    }
-    if (index == -1) {
-      return {pattern};
-    }
-
-    final withStar = pattern.substring(0, index + 3);
-    final withoutStar = pattern.substring(0, index);
-    final tails = _zeroOrMoreDirectories(pattern.substring(index + 3));
-    return {
-      for (final tail in tails) withStar + tail,
-      for (final tail in tails) withoutStar + tail,
-      // `**/` on its own yields the empty pattern, which `Glob` refuses. It is
-      // the engine's own by-product, so it is dropped here rather than
-      // surfacing as a crash on a pattern the library accepts.
-    }..removeWhere((variant) => variant.isEmpty);
   }
 
   /// A pattern is always read as POSIX, whatever the host is.

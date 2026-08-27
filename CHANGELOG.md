@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Three failures that a committed file could reach with nothing said about it.
+
+- **The repository boundary is one check, and it reads both notations.** A
+  set's written members and a task's `in:` never met it at all, so
+  `sets: {x: ['/etc']}` expanded to real paths and `in: ../..` ran a body two
+  levels above the root. It also asked POSIX only, while every caller joins the
+  answer with the platform's own `p.join`: on Windows `..\..`, `\foo` and
+  `\\server\share` all walked through a gate written to stop them, the last
+  one landing a recursive delete on a file server. `--validate` reports the
+  `in:` case now, since the set half of the same fence was already reachable
+  from there.
+- **A body that cannot start, or that throws, is a task failure.**
+  `Process.start` throws rather than answering when the working directory is
+  not there, and nothing caught it: exit 255, a number the table does not have,
+  with the task's `::group::` left open so the rest of a CI job folded into a
+  task that had already died. Any other escaping exception — a project verb's
+  own, or a fault in the engine — is now named by type with its trace inside
+  the fold.
+- **`**/` means the same thing everywhere.** `sets:` corrected
+  `package:glob`'s reading of it to "none or more directories" and `do: remove`
+  did not, so one pattern matched two different sets of paths depending on
+  which key it was written under. The correction also missed a globstar that
+  began a brace alternative, so `{**/*.dart,**/*.yaml}` silently examined every
+  nested file and no root one.
+
+  **Behaviour change in a verb that deletes:** `remove: ['**/build']` now also
+  removes a root-level `build`, which it previously left alone.
+
 ## 0.1.0
 
 First release. Enough to replace one repository's `make`, and no more.
