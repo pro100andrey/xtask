@@ -12,6 +12,7 @@ import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/markers.dart';
 import 'package:xtask/src/parse.dart';
+import 'package:xtask/src/process.dart';
 
 /// A clock that advances by [step] every time it is read.
 ///

@@ -49,12 +49,14 @@ void main() {
     // `stdout` directly is the day its output stops being observable, and it
     // will look like a one-line convenience when it happens.
     //
-    // `exec.dart` is here for a `stdout.flush()` and nothing else: Dart's
-    // stdout is asynchronous when it is a pipe, so a run that ends without
-    // flushing loses its last lines in CI and not on a terminal. That is a
-    // fact about the process ending, not a second place that decides what to
-    // say.
-    const allowed = {'lib/xtask.dart', 'lib/src/exec.dart'};
+    // `process.dart` is here for a `stdout.flush()` and nothing else: Dart's
+    // stdout is asynchronous when it is a pipe, so an inheriting child can
+    // write before the `::group::` line that is supposed to be folding it.
+    // That is a fact about handing the descriptor to somebody else, not a
+    // second place that decides what to say — and it is why the flush sits
+    // with the starter that hands it over rather than with the walk that
+    // asked for a process.
+    const allowed = {'lib/xtask.dart', 'lib/src/process.dart'};
     final writers = {
       for (final MapEntry(key: file, value: source) in sources.entries)
         // Handed over as well as called on: `_writing(stdout)` reaches for

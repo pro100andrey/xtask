@@ -11,8 +11,8 @@ import 'dart:io';
 
 import 'src/cli.dart';
 import 'src/context.dart';
-import 'src/exec.dart';
 import 'src/executables.dart';
+import 'src/process.dart';
 
 // Re-exported rather than restated. A second declaration of `Verb` or of what
 // a verb is handed would be two lists of the same thing, which is the defect
