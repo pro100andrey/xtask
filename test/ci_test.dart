@@ -91,6 +91,61 @@ jobs:
       expect(report.problems.single, contains('&&'));
     });
 
+    test('flags after the name are allowed; a second operand is not', () {
+      // `xtask check -j 4` was refused, so §7.1 sent all parallelism to CI
+      // and then forbade the one construct that provides it.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze -j 4
+  b:
+    steps:
+      - run: dart run :xtask ci-web --keep-going
+''');
+      final report = check();
+      expect(report.problems, isEmpty, reason: report.problems.join('\n'));
+      expect(report.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+    });
+
+    test('an attached value does not swallow the gate set after it', () {
+      // `-j4` has no `=`, so a rule that skipped the next word whenever a
+      // flag lacked one ate the gate — on the very spelling this change
+      // advertises — and called a valid workflow a step doing something else.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask -j4 ci-analyze
+  b:
+    steps:
+      - run: dart run :xtask --jobs=2 ci-web
+''');
+      final report = check();
+      expect(report.problems, isEmpty, reason: report.problems.join('\n'));
+      expect(report.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+    });
+
+    test('a mode is not a modifier — naming a gate is not running it', () {
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask --dry-run ci-analyze
+''');
+      expect(check().problems, isNotEmpty);
+    });
+
+    test('but a step doing two things is still refused', () {
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze ci-web
+''');
+      expect(check().problems, isNotEmpty);
+    });
+
     test('a gate set the file does not declare is a typo, named as one', () {
       workflow('ci.yml', '''
 jobs:

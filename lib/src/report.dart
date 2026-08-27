@@ -105,7 +105,7 @@ List<String> summary(Map<String, int> failed, Map<String, Skipped> skipped) {
 
 /// What a parallel run is about to do, before it goes quiet.
 ///
-/// **This exists because `--parallel` breaks the promise §5.2 makes.** A
+/// **This exists because `-j` above 1 breaks the promise §5.2 makes.** A
 /// sequential run narrates itself: the section opens, the body streams, and a
 /// person watching knows both what is happening and that something is. A
 /// parallel run collects each task's output and prints it whole when that task

@@ -250,19 +250,6 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
 /// `\$all` as a word of its own, rather than the start of a longer name.
 final _bareMarker = RegExp(r'\$all(?![A-Za-z0-9_])');
 
-/// `all:` and its marker have to agree, and the marker has to be a whole
-/// argument.
-///
-/// **Refused here rather than left to make a strange run.** A set named and
-/// never used is a task that quietly does not check what its author thought;
-/// a marker with no set is a program handed the literal text `$all`. Neither
-/// fails — both succeed at the wrong thing, which is what §1 is about.
-///
-/// A marker inside a larger string is refused too, and that is the line R1
-/// draws: `$all` stands for N arguments, and there is nothing for N arguments
-/// to mean inside one. Splitting a string is a shell's job and this has no
-/// shell.
-
 /// `$each` as a word of its own, rather than the start of a longer name.
 final _bareEach = RegExp(r'\$each(?![A-Za-z0-9_])');
 
@@ -348,6 +335,18 @@ void _checkEachMarker(String name, Task task, SourceSpan keySpan) {
   }
 }
 
+/// `all:` and its marker have to agree, and the marker has to be a whole
+/// argument.
+///
+/// **Refused here rather than left to make a strange run.** A set named and
+/// never used is a task that quietly does not check what its author thought;
+/// a marker with no set is a program handed the literal text `$all`. Neither
+/// fails — both succeed at the wrong thing, which is what §1 is about.
+///
+/// A marker inside a larger string is refused too, and that is the line R1
+/// draws: `$all` stands for N arguments, and there is nothing for N arguments
+/// to mean inside one. Splitting a string is a shell's job and this has no
+/// shell.
 void _checkAllMarker(String name, Task task, SourceSpan keySpan) {
   final argv = switch (task.body) {
     RunBody(:final argv) => argv,

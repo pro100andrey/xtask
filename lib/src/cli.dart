@@ -55,7 +55,7 @@ final class RunTask extends Request {
   /// `--keep-going`: report every failure rather than the first.
   final bool keepGoing;
 
-  /// `--parallel`: how many tasks may be in flight. 1 is §5.2's run.
+  /// `-j`: how many tasks may be in flight. 1 is §5.2's run.
   final int concurrency;
 }
 
@@ -170,6 +170,7 @@ Request parseArguments(List<String> args) {
   var narrowed = false;
   var keepGoing = false;
   var concurrency = 1;
+  var jobsWritten = false;
 
   final passed = <String>[];
   var separated = false;
@@ -211,19 +212,49 @@ Request parseArguments(List<String> args) {
       continue;
     }
 
-    if (argument == '--parallel' || argument.startsWith('--parallel=')) {
-      if (argument == '--parallel') {
-        concurrency = Platform.numberOfProcessors;
-        continue;
-      }
-      final written = argument.substring('--parallel='.length);
-      final asked = int.tryParse(written);
-      if (asked == null || asked < 1) {
-        return ShowUsage(
-          '`--parallel=$written` is not a number of tasks to run at once',
+    // **`-j N`, in every spelling make and cargo and xargs already taught.**
+    // `--parallel` read as a boolean and behaved as a number: bare, it meant
+    // "as many as this machine has processors", so `--parallel 2` was a task
+    // called `2` and needed a refusal of its own to explain its own syntax. A
+    // flag that has to do that has the wrong syntax.
+    if (argument == '-j' ||
+        argument == '--jobs' ||
+        argument.startsWith('-j') ||
+        argument.startsWith('--jobs=')) {
+      // Named `asked` rather than `written`: the enclosing `written` is the
+      // list of modes, and shadowing it here made it unreachable by its own
+      // name inside this block.
+      final asked = switch (argument) {
+        '-j' || '--jobs' => rest.isNotEmpty ? rest.removeAt(0) : null,
+        final a when a.startsWith('--jobs=') => a.substring('--jobs='.length),
+        final a => a.substring(2),
+      };
+      if (asked == null || asked.isEmpty) {
+        return const ShowUsage(
+          '`-j` needs a number of jobs, or `auto`. Bare, it would have to mean '
+          'something, and every number a machine could pick is wrong on some '
+          'other machine',
         );
       }
-      concurrency = asked;
+      jobsWritten = true;
+      if (asked == 'auto') {
+        // **Capped, because a job here is a whole toolchain.** One unit is a
+        // `dart test` or a `dart analyze`, each already multi-threaded and
+        // each holding an analysis server. On a 32-core workstation, one per
+        // core is 32 of them.
+        concurrency = Platform.numberOfProcessors < 8
+            ? Platform.numberOfProcessors
+            : 8;
+        continue;
+      }
+      final count = int.tryParse(asked);
+      if (count == null || count < 1) {
+        return ShowUsage(
+          '`-j $asked` is not a number of jobs. Write `-j <n>` with n at '
+          'least 1, or `-j auto`',
+        );
+      }
+      concurrency = count;
       continue;
     }
 
@@ -255,21 +286,6 @@ Request parseArguments(List<String> args) {
     operands.add(argument);
   }
 
-  if (concurrency > 1 && operands.length > 1) {
-    final tail = operands.last;
-    if (int.tryParse(tail) != null) {
-      // `--parallel 2` reads as a task called `2`, and the refusal that came
-      // out named two tasks the person never asked for. `--parallel` takes no
-      // separate word, because a bare `--parallel` is already a complete
-      // answer — as many at once as this machine has processors — and there is
-      // nothing to tell that apart from a task whose name is a number.
-      return ShowUsage(
-        '`--parallel` is written `--parallel=$tail`, joined. On its own it '
-        'means as many at once as this machine has processors',
-      );
-    }
-  }
-
   if (written.length > 1) {
     return ShowUsage(
       '`${written[0]}` and `${written[1]}` ask for different things; '
@@ -291,9 +307,13 @@ Request parseArguments(List<String> args) {
     );
   }
 
-  if (concurrency > 1 && mode != null) {
+  if (jobsWritten && mode != null) {
+    // **Whether it was WRITTEN, not what it came to.** Testing the number let
+    // `--list -j 1` through in silence, and made `--list -j auto` a refusal on
+    // an eight-core machine and an acceptance on a one-core runner — the same
+    // command line answering differently depending on the host.
     return ShowUsage(
-      '`--parallel` is about a run, and `$mode` does not run anything',
+      '`-j` is about a run, and `$mode` does not run anything',
     );
   }
 
@@ -405,8 +425,8 @@ const usage = [
   '  xtask <task> -- <args>       and pass those arguments to its body',
   '  xtask <task> --keep-going    report every failure, not just the first —',
   '                               across tasks and across an `each:`',
-  '  xtask <task> --parallel      run independent tasks at once — which costs',
-  '                               seeing their output as it arrives',
+  '  xtask <task> -j <n>          run n at once — which costs seeing their',
+  '                               output as it arrives. `-j auto` picks one',
   '  xtask --list                 every task, grouped under its gate set,',
   '                               in the order `gates:` declares',
   '  xtask --list --gate <name>   only the tasks in that gate set',

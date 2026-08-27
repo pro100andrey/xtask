@@ -96,7 +96,7 @@ final class Executor {
 
     // **Asked once, here, and handed down.** Two tasks writing to one terminal
     // is what buffering is for, and a plan of one task cannot have two: asking
-    // for `--parallel` on a single task would otherwise cost §5.2's live
+    // for `-j` above 1 on a single task would otherwise cost §5.2's live
     // output and buy nothing at all. It is also what the announcement is
     // about, so computing it twice would be two answers to one question.
     final concurrent = concurrency > 1 && plan.steps.length > 1;

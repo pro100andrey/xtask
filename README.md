@@ -180,8 +180,8 @@ xtask <task>                 run a task and everything it needs
 xtask <task> -- <args>       and pass those arguments to its body
 xtask <task> --keep-going    report every failure, not just the first —
                              across tasks and across an `each:`
-xtask <task> --parallel      run independent tasks at once — which costs
-                             seeing their output as it arrives
+xtask <task> -j <n>          run n at once — which costs seeing their
+                             output as it arrives. `-j auto` picks one
 xtask --list                 every task, grouped under its gate set,
                              in the order `gates:` declares
 xtask --list --gate <name>   only the tasks in that gate set
@@ -354,8 +354,8 @@ because a task that silently did not happen reads exactly like one that passed.
 It is off by default, because a pipeline wants the earliest possible red
 rather than a broken run read to the end.
 
-`--parallel` runs tasks that do not depend on each other at once, up to the
-number of processors or `--parallel=N`. It is **not** the default, and the
+`-j <n>` runs tasks that do not depend on each other at once, up to the
+number of processors, `-j auto` or `-j N`. It is **not** the default, and the
 reason is a real cost rather than caution: normally a task's output passes
 through as it arrives and each task is a section that folds, and two tasks
 writing to one terminal at once break both — the transcript belongs to neither.
@@ -581,7 +581,7 @@ them existing only because `package.json` scripts are shell.
 - **Not a package manager and not a monorepo tool.** `melos` runs shell across
   packages; `xtask` runs a graph without one. They do not overlap.
 - **Not parallel by default.** Tasks run in order, one at a time, and
-  parallelism belongs to the CI system, which already has it. `--parallel` is
+  parallelism belongs to the CI system, which already has it. `-j` is
   there for the local loop and costs watching the output arrive.
 - **No plugins, no dynamic loading, no expression language.** Verbs are code the
   project links; everything else is data.

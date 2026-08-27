@@ -28,6 +28,23 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### `--parallel` becomes `-j <n>`, and CI can finally write it
+
+`--parallel` read as a boolean and behaved as a number: bare it meant "as
+many as this machine has processors", so `--parallel 2` was a task called `2`
+and needed a refusal explaining its own syntax. A flag that has to do that has
+the wrong syntax. `-j 4`, `-j4`, `--jobs 4`, `--jobs=4` all work, as they do
+in make, cargo and xargs; bare `-j` is refused, and `-j auto` picks a number
+capped at 8 — a job here is a `dart test` or a `dart analyze`, each already
+multi-threaded, so one per core on a 32-core machine is 32 analysis servers.
+
+`--check-ci` accepts flags after the gate set's name. It required exactly one
+word and refused anything starting with `-`, which made `xtask check -j 4`
+impossible to write in a workflow — while §7.1 sends all parallelism to CI. A
+step doing two *things* is still refused, which is what that rule was for.
+
+**Breaking:** `--parallel` and `--parallel=N` are gone; write `-j N`.
+
 ### `--keep-going` reaches the members of an `each:`
 
 The first bad member abandoned the rest, with or without the flag, and the

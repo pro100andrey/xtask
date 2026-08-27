@@ -101,16 +101,6 @@ void main() {
       );
     });
 
-    test('and `--parallel` says which form it wants, not what it counted', () {
-      // `--parallel 2` reads as a second task called `2`, and the refusal used
-      // to report that: "xtask runs one task at a time, and it was given
-      // `build` and `2`" — true, useless, and about something the person did
-      // not write. It cannot take a separate word: a bare `--parallel` is
-      // already an answer, and nothing tells that apart from a task named `2`.
-      final usage = parseArguments(['build', '--parallel', '2']) as ShowUsage;
-      expect(usage.problem, contains('--parallel=2'));
-    });
-
     test('and on its own it is refused, pointing at the other name', () {
       // `--gate` narrows `--list`; it is not a mode of its own. They used to
       // be `--gate` and `--gates`, one letter apart and meaning opposite
@@ -219,33 +209,65 @@ void main() {
       });
     });
 
-    group('--parallel', () {
-      test('it is a modifier on a run, with a number or without', () {
+    group('-j', () {
+      test('every spelling make and cargo already taught', () {
         expect((parseArguments(['check']) as RunTask).concurrency, 1);
-        expect(
-          (parseArguments(['check', '--parallel=3']) as RunTask).concurrency,
-          3,
-        );
-        expect(
-          (parseArguments(['check', '--parallel']) as RunTask).concurrency,
-          greaterThan(1),
-          reason: 'a bare --parallel means as many as this machine has',
-        );
-      });
-
-      test('a number that is not one is refused', () {
-        for (final written in ['0', '-2', 'many', '']) {
+        for (final written in [
+          ['-j', '3'],
+          ['-j3'],
+          ['--jobs', '3'],
+          ['--jobs=3'],
+        ]) {
           expect(
-            parseArguments(['check', '--parallel=$written']),
-            isA<ShowUsage>(),
-            reason: '`--parallel=$written` was accepted',
+            (parseArguments(['check', ...written]) as RunTask).concurrency,
+            3,
+            reason: written.join(' '),
           );
         }
       });
 
+      test('`auto` is capped, because a job here is a whole toolchain', () {
+        final asked =
+            (parseArguments(['check', '-j', 'auto']) as RunTask).concurrency;
+        expect(asked, greaterThan(0));
+        expect(asked, lessThanOrEqualTo(8));
+      });
+
+      test('bare, it is refused rather than given a number of its own', () {
+        // `--parallel` read as a boolean and behaved as a number, which is
+        // why it needed a refusal explaining its own syntax.
+        expect(parseArguments(['check', '-j']), isA<ShowUsage>());
+      });
+
+      test('a number that is not one is refused', () {
+        for (final written in ['0', '-2', 'many']) {
+          expect(
+            parseArguments(['check', '-j', written]),
+            isA<ShowUsage>(),
+            reason: '`-j $written` was accepted',
+          );
+        }
+      });
+
+      test(
+        'and a mode is refused for the flag being written, not its value',
+        () {
+          // Testing the resulting number let `--list -j 1` through in silence,
+          // and made `--list -j auto` a refusal on an eight-core machine and an
+          // acceptance on a one-core runner.
+          for (final written in ['1', '2', 'auto']) {
+            expect(
+              parseArguments(['--list', '-j', written]),
+              isA<ShowUsage>(),
+              reason: '-j $written',
+            );
+          }
+        },
+      );
+
       test('and a mode that runs nothing has nothing to parallelise', () {
         expect(
-          parseArguments(['--dry-run', 'x', '--parallel=2']),
+          parseArguments(['--dry-run', 'x', '-j', '2']),
           isA<ShowUsage>(),
         );
       });
@@ -945,7 +967,7 @@ tasks:
       });
     });
 
-    group('running with --parallel', () {
+    group('running with `-j`', () {
       test('the whole gate still runs, and still passes', () async {
         writeFile('''
 version: 1
@@ -954,7 +976,7 @@ tasks:
   lint: {desc: a, gate: [check], run: [ruff]}
   unit: {desc: b, gate: [check], run: [pytest]}
 ''');
-        expect(await run(['check', '--parallel=2']), ExitCode.success);
+        expect(await run(['check', '-j', '2']), ExitCode.success);
         expect(starter.started, hasLength(2));
       });
 

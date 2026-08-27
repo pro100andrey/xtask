@@ -132,7 +132,8 @@ void main() {
           'run',
           p.join(Directory.current.path, 'bin', 'xtask.dart'),
           'both',
-          '--parallel',
+          '-j',
+          'auto',
         ],
         workingDirectory: root.path,
         // **Named, not inherited.** Which markers a run prints is read off the

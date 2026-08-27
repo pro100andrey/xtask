@@ -783,7 +783,7 @@ void main() {
     test('but a plan of one task is not made to wait for itself', () async {
       // Buffering exists because two tasks writing to one terminal produce a
       // transcript belonging to neither. One task cannot do that, so asking
-      // for `--parallel` on a single task used to cost §5.2's live output and
+      // for `-j` above 1 on a single task used to cost §5.2's live output and
       // buy nothing — and announce a width it had no use for.
       starter = FakeStarter()..holds['ruff'] = Completer<void>();
       final running = runFile(three, 'boom', concurrency: 2);
@@ -845,7 +845,7 @@ void main() {
     });
   });
 
-  group('--parallel runs what does not depend on anything else', () {
+  group('`-j` runs what does not depend on anything else', () {
     // The one place a documented promise is deliberately broken, and only when
     // asked: §5.2 wants a task's output as it arrives, and two tasks arriving
     // at once make a transcript belonging to neither.

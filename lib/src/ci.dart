@@ -160,14 +160,51 @@ String? _gateOf(String command) {
         word.endsWith('xtask.dart') ||
         word.endsWith('/xtask'),
   );
-  if (at == -1 || at + 1 != words.length - 1) {
-    // The name has to be there, and exactly one thing after it: a step doing
-    // two things is a step this cannot vouch for.
+  if (at == -1) {
     return null;
   }
-  final gate = words.last;
-  return gate.startsWith('-') ? null : gate;
+
+  // **Flags are allowed after the name; a second operand is not.** This asked
+  // for exactly one word after the token and refused anything starting with
+  // `-`, which made `xtask check -j 4` — and `--keep-going`, and every other
+  // modifier — impossible to write in a workflow. §7.1 sends all parallelism
+  // to CI and this forbade the one construct that provides it. What must
+  // stay refused is a step doing two THINGS, which is a second operand.
+  final after = words.skip(at + 1).toList();
+  final operands = <String>[];
+  for (var i = 0; i < after.length; i++) {
+    final word = after[i];
+    if (!word.startsWith('-')) {
+      operands.add(word);
+      continue;
+    }
+
+    // **Named, not guessed.** Skipping a following word whenever a flag had
+    // no `=` swallowed the gate set after `-j4` — the attached spelling this
+    // very change advertises — and reported a valid workflow as a step doing
+    // something other than running a gate.
+    final flag = word.startsWith('--')
+        ? (word.contains('=') ? word.substring(0, word.indexOf('=')) : word)
+        : word.substring(0, 2);
+    if (!_runModifiers.contains(flag)) {
+      // A mode rather than a modifier — `--dry-run check` names a gate set
+      // and does not run it, which is not what a job is being vouched for.
+      return null;
+    }
+    final attached = word.length > flag.length;
+    if (!attached && _takesAValue.contains(flag) && i + 1 < after.length) {
+      i++;
+    }
+  }
+  return operands.length == 1 ? operands.single : null;
 }
+
+/// The flags that modify a run rather than replacing it. Anything else after
+/// the name means the step is doing something other than running a gate set.
+const _runModifiers = {'-j', '--jobs', '--keep-going'};
+
+/// Of those, the ones whose value may be a separate word.
+const _takesAValue = {'-j', '--jobs'};
 
 Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
   final YamlNode document;

@@ -16,5 +16,5 @@ xtask --dry-run check # what would run, resolved on this machine
 xtask check           # run it
 ```
 
-The rest — the keys, the exit codes, what `--parallel` costs — is in the
+The rest — the keys, the exit codes, what `-j` costs — is in the
 [package README](https://pub.dev/packages/xtask).
