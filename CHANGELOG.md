@@ -28,6 +28,23 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### A set can say it does not hold paths
+
+```yaml
+sets:
+  flavours:
+    values: [dev, staging, prod]
+```
+
+Every other kind of set holds paths and is treated as one: refused if it
+reaches outside the repository, reported if a glob matched nothing. Neither
+question means anything about `dev` or `stable`, and asking the first refused
+`a:b` for looking like a Windows drive. A set that says what it holds is asked
+the right questions — and it is what lets a set hold the bare name a path
+cannot be derived from, with `in: packages/$each` composing the path around it.
+
+Empty is still an error, for the reason it always was.
+
 ### `$each` reaches the arguments, so per-file work can be written at all
 
 The member of an `each:` set used to be reachable only through `in:`, so a

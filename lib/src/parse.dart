@@ -152,6 +152,13 @@ NamedSet _namedSet(YamlNode node, String name, SourceSpan keySpan) {
     return ListSet(_stringList(node, 'set `$name`'), span: keySpan);
   }
   if (node is YamlMap) {
+    if (node.nodes.containsKey('values')) {
+      _refuseUnknownKeys(node, valueSetKeys, 'key in value set `$name`');
+      return ValueSet(
+        _stringList(node.nodes['values']!, '`values:` of set `$name`'),
+        span: keySpan,
+      );
+    }
     _refuseUnknownKeys(node, globSetKeys, 'key in glob set `$name`');
     final include = node.nodes['include'];
     if (include == null) {
@@ -170,8 +177,9 @@ NamedSet _namedSet(YamlNode node, String name, SourceSpan keySpan) {
     );
   }
   throw XtaskFormatException(
-    'set `$name` must be a list of members, or a mapping with `include:` and '
-    'optionally `exclude:`',
+    'set `$name` must be a list of paths, a mapping with `include:` and '
+    'optionally `exclude:`, or a mapping with `values:` for members that are '
+    'not paths at all',
     keySpan,
   );
 }
@@ -239,6 +247,9 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
   return task;
 }
 
+/// `\$all` as a word of its own, rather than the start of a longer name.
+final _bareMarker = RegExp(r'\$all(?![A-Za-z0-9_])');
+
 /// `all:` and its marker have to agree, and the marker has to be a whole
 /// argument.
 ///
@@ -251,8 +262,6 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
 /// draws: `$all` stands for N arguments, and there is nothing for N arguments
 /// to mean inside one. Splitting a string is a shell's job and this has no
 /// shell.
-/// `\$all` as a word of its own, rather than the start of a longer name.
-final _bareMarker = RegExp(r'\$all(?![A-Za-z0-9_])');
 
 /// `$each` as a word of its own, rather than the start of a longer name.
 final _bareEach = RegExp(r'\$each(?![A-Za-z0-9_])');
@@ -281,7 +290,12 @@ void _checkEachMarker(String name, Task task, SourceSpan keySpan) {
     );
   }
 
-  final written = [...argv.skip(1), ...task.args, ?task.workingDirectory];
+  final written = [
+    ...argv.skip(1),
+    ...task.args,
+    ...task.env.values,
+    ?task.workingDirectory,
+  ];
   // **Every occurrence but a trailing one.** `endsWith` alone looked only at
   // the last, so `$each/$each` passed and the resolver — which substitutes the
   // trailing one — left the other in the argument as literal text.
@@ -356,14 +370,17 @@ void _checkAllMarker(String name, Task task, SourceSpan keySpan) {
     );
   }
 
-  final where = task.workingDirectory;
-  if (where != null && _bareMarker.hasMatch(where)) {
+  final oneThing = [?task.workingDirectory, ...task.env.values].where(
+    _bareMarker.hasMatch,
+  );
+  if (oneThing.isNotEmpty) {
+    final where = oneThing.first;
     // Neither refused nor substituted before, so the body ran in a directory
     // literally called `$all` and failed much later as "could not be started".
     throw XtaskFormatException(
-      'task `$name` says `in: $where`. `\$all` stands for every member of a '
-      'set, and `in:` is one directory — there is nothing for a list to be '
-      'there',
+      'task `$name` writes `\$all` in `$where`. It stands for every member of '
+      'a set, and a directory and an environment value are each one thing — '
+      'there is nothing for a list to be there',
       keySpan,
     );
   }

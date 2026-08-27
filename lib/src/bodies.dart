@@ -231,7 +231,12 @@ final class BodyResolver {
     ]);
     final env = Map<String, String>.unmodifiable({
       ...environment,
-      ...task.env,
+      // A value goes where a value goes, and an environment value is one.
+      // Left out, `env: {FLAVOR: $each}` reached the child as the literal
+      // text `$each` — accepted by every check and wrong in the one place
+      // nobody looks.
+      for (final entry in task.env.entries)
+        entry.key: _withMember(entry.value, member),
     });
 
     switch (body) {
@@ -359,13 +364,22 @@ final class BodyResolver {
     if (written == null) {
       return root;
     }
-    if (leavesRoot(written)) {
+    // **The written string AND what it becomes.** A value set is deliberately
+    // not asked whether its members leave the repository — they are not paths
+    // — and `in: sub/$each` composes one out of them, after the only gate.
+    // `../../../etc` as a flavour then ran a body in `/etc` and answered 0,
+    // through the shape the README recommends.
+    if (leavesRoot(written) ||
+        (member != null && leavesRoot(_withMember(written, member)))) {
       // The one path in the file that reached the filesystem without ever
       // being asked whether it stayed inside: `in: ../..` ran a body two
       // levels above the root, and answered 0.
       throw RunFailure(
         ExitCode.invalidFile,
-        workingDirectoryLeavesRoot(task: task.name, written: written),
+        workingDirectoryLeavesRoot(
+          task: task.name,
+          written: member == null ? written : _withMember(written, member),
+        ),
       );
     }
     if (written.endsWith(eachMarker)) {

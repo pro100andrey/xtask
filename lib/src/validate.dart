@@ -226,8 +226,8 @@ void _checkDeclaredGates(XtaskFile file, List<XtaskFormatException> problems) {
 /// **Because a person types one name.** A gate set used to BE a task, so
 /// `xtask check` was unambiguous by construction. Now the two are different
 /// kinds of thing reached by one word, and a file where `check` is both leaves
-/// the command line with a question nothing in the file answers. `needs:` is
-/// the same problem from the other side: it is an edge between tasks, and a
+/// the command line with a question nothing in the file answers.
+///
 /// An edge naming a gate set is the same problem from the other side, and the
 /// planner says so where it walks the edges — one sentence, from the place
 /// that has the route.

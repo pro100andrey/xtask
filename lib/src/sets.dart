@@ -50,6 +50,11 @@ final class SetExpander {
       ListSet(:final members) => [
         for (final member in members) _refuseUnrooted(name, set, member),
       ],
+      // **Not asked whether they leave the repository, because they are not
+      // paths.** That question refused `a:b` for looking like a Windows
+      // drive, and it has no meaning at all about `dev` or `stable`. A set
+      // that says what it holds is asked the right questions.
+      ValueSet(:final values) => values,
       GlobSet() => _matches(name, set),
     };
     _refuseEmpty(name, set, members);
@@ -206,6 +211,7 @@ final class SetExpander {
     }
     final detail = switch (set) {
       ListSet() => 'it is written with no members',
+      ValueSet() => 'its `values:` are written with no members',
       // Blames the exclusion only when there was something for it to remove;
       // otherwise it points at a pattern that matched nothing, which is the
       // typo actually worth reporting.

@@ -97,7 +97,8 @@ Map<String, Map<String, Object?>> get _topLevel => {
   },
 };
 
-/// A named set, §4.2: a list of members, or a glob with exclusions.
+/// A named set, §4.2: a list of paths, a glob with exclusions, or values
+/// that are not paths at all.
 const _set = <String, Object?>{
   'oneOf': [
     {
@@ -115,7 +116,26 @@ const _set = <String, Object?>{
           'Globs, expanded by the engine rather than by a shell, in a '
           'deterministic order.',
     },
+    {
+      'type': 'object',
+      'additionalProperties': false,
+      'required': ['values'],
+      'properties': _valueSet,
+      'description':
+          'Members that are not paths — flavours, platforms, SDK versions. '
+          'Not checked against the repository root and never matched on disk.',
+    },
   ],
+};
+
+const _valueSet = <String, Map<String, Object?>>{
+  'values': {
+    'type': 'array',
+    'items': {'type': 'string'},
+    'minItems': 1,
+    'description':
+        'The members, written out. Whatever they name, it is not a path.',
+  },
 };
 
 const _globSet = <String, Map<String, Object?>>{
@@ -124,8 +144,9 @@ const _globSet = <String, Map<String, Object?>>{
     'items': {'type': 'string'},
     'minItems': 1,
     'description':
-        'Patterns, relative to the repository root. `**/` means one or more '
-        'directories.',
+        'Patterns, relative to the repository root. `**/` means NONE or more '
+        'directories, as bash and git read it — so `packages/**/x` finds '
+        '`packages/x` too.',
   },
   'exclude': {
     'type': 'array',

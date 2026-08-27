@@ -1426,6 +1426,26 @@ void main() {
   });
 
   group('a body that raises rather than answering', () {
+    test("closes its section even when the failure is not this one's to "
+        'answer', () async {
+      // `XtaskFormatException` leaves through a rethrow, past the annotation
+      // that emits `::endgroup::` — reintroducing, for one exception type,
+      // the failure this whole block was written to remove.
+      await expectLater(
+        runFile(
+          'version: 1\ntasks:\n  a: {desc: x, do: boom}\n',
+          'a',
+          verbs: {'boom': (_) => throw XtaskFormatException('nope')},
+          markers: const GitHubMarkers(),
+        ),
+        throwsA(isA<XtaskFormatException>()),
+      );
+      expect(
+        logged.where((l) => l == '::endgroup::'),
+        hasLength(1),
+      );
+    });
+
     test('is a task failure, not exit 255', () async {
       final code = await runFile(
         'version: 1\ntasks:\n  a: {desc: x, do: boom}\n',

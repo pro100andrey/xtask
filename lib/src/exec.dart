@@ -256,6 +256,12 @@ final class Executor {
       if (thrown is XtaskFormatException) {
         // Not this method's to answer. §8's code 2 belongs to the file being
         // wrong, and `cli.dart` is where that sentence is written.
+        //
+        // Closed on the way past, though. Only `markers.error` below emits
+        // `::endgroup::`, so leaving through here left the section open —
+        // reintroducing, for one exception type, exactly the failure this
+        // block was written to remove.
+        markers.close().forEach(say);
         rethrow;
       }
       final failure = thrown is RunFailure ? thrown : _threw(step.task, thrown);

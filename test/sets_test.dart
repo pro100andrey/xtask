@@ -517,6 +517,32 @@ void main() {
     });
   });
 
+  group('a value set holds what is not a path', () {
+    test('and is never asked whether it leaves the repository', () {
+      // That question refused `a:b` for looking like a Windows drive, and it
+      // means nothing at all about `dev` or `stable`.
+      expect(
+        expander().expand('flavours', const ValueSet(['dev', 'a:b', '/etc'])),
+        ['dev', 'a:b', '/etc'],
+      );
+    });
+
+    test('and is never matched on disk', () {
+      // No file called `dev` exists here, and the set is still its members.
+      expect(
+        expander().expand('f', const ValueSet(['dev', 'prod'])),
+        ['dev', 'prod'],
+      );
+    });
+
+    test('but empty is still an error, for the reason it always was', () {
+      expect(
+        () => expander().expand('f', const ValueSet([])),
+        throwsA(isA<XtaskFormatException>()),
+      );
+    });
+  });
+
   group('symlinks are listed, never followed', () {
     // §6 says `remove` never follows a symlink, and listing takes the same
     // line — plus a second reason: a link into an ancestor turns the walk into

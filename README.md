@@ -499,8 +499,9 @@ the run — so a missing token is a sentence rather than a broken upload. `do:`
 names a verb the project wrote in Dart and handed to `runXtask`, and
 `all:` hands it the expanded set, wherever `$all` is written.
 
-A set is a list of members or a glob with exclusions, expanded by the engine
-rather than by a shell, in a deterministic order:
+A set is a list of paths, a glob with exclusions, or `values:` for members that
+are not paths at all. The first two are expanded by the engine rather than by a
+shell, in a deterministic order:
 
 ```yaml
 sets:
@@ -509,7 +510,18 @@ sets:
   sources:
     include: ['{templates,packages}/**/*.lake']
     exclude: ['**/test_data/**']
+
+  flavours:
+    values: [dev, staging, prod]
 ```
+
+`values:` is a declaration, not decoration. Every other kind of set holds
+paths, and the engine treats them as paths — it refuses one that reaches
+outside the repository, and it can say a glob matched nothing. Neither
+question means anything about `dev`, and asking the first refused `a:b` for
+looking like a Windows drive. It is also what lets a set hold the bare name a
+path cannot be derived from, with `in: packages/$each` composing the path
+around it.
 
 A set that expands to nothing is an **error**: a task given no files checked
 nothing, and a gate that examined nothing is worse than no gate.

@@ -195,6 +195,25 @@ void main() {
       );
     });
 
+    test('`in:` composed out of a value that leaves the repository', () {
+      // The hole `values:` opened: those members are deliberately NOT asked
+      // whether they stay inside, because they are not paths — and
+      // `in: sub/$each` composes one out of them, after the only gate. A
+      // flavour of `../../../etc` ran a body in `/etc` and answered 0,
+      // through the shape the README recommends.
+      expect(
+        () => resolve(
+          'version: 1\n'
+              "sets:\n  f:\n    values: ['../../../../etc']\n"
+              'tasks:\n'
+              r'  a: {desc: x, each: f, in: sub/$each, run: [pwd]}'
+              '\n',
+          'a',
+        ),
+        refused(ExitCode.invalidFile, contains('reaches outside')),
+      );
+    });
+
     test('`in:` that leaves the repository', () {
       // Nothing checked this until now: `in: ../..` started a body two levels
       // above the root and the run answered 0.
@@ -356,6 +375,39 @@ void main() {
         verbs: {'v': (_) async => 0},
       ).single;
       expect(body.arguments, ['--in', 'a.dart']);
+    });
+  });
+
+  group('a marker in `env:` is a value like any other', () {
+    test(r'$each is substituted there too', () {
+      // Left out, `env: {FLAVOR: $each}` reached the child as the literal
+      // text `$each` — accepted by every check and wrong in the one place
+      // nobody looks.
+      final bodies = resolve(
+        'version: 1\n'
+            'sets:\n  f:\n    values: [dev, prod]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: f, env: {FLAVOR: $each}, run: [b, $each]}'
+            '\n',
+        'a',
+      );
+      expect(
+        bodies.map((b) => b.environment['FLAVOR']),
+        ['dev', 'prod'],
+      );
+    });
+
+    test(r'and $all is refused, because one value is not a list', () {
+      expect(
+        () => parseXtaskFile(
+          'version: 1\n'
+          'sets:\n  s: [a]\n'
+          'tasks:\n'
+          r'  a: {desc: x, all: s, env: {LIST: $all}, run: [b, $all]}'
+          '\n',
+        ),
+        throwsA(isA<XtaskFormatException>()),
+      );
     });
   });
 

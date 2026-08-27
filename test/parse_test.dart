@@ -483,10 +483,10 @@ tasks: {}
       );
     });
 
-    test('a set is a list or a glob, and nothing else', () {
+    test('a set is a list, a glob or values, and nothing else', () {
       expect(
         refusal(() => parseXtaskFile('version: 1\nsets:\n  s: 3\ntasks: {}\n')),
-        contains('must be a list of members, or a mapping'),
+        contains('must be a list of paths, a mapping'),
       );
     });
 
@@ -947,6 +947,33 @@ tasks: {}
       expect(
         refused(withTask(r'each: s, in: $each, run: [dart, $each]')),
         contains('relative to different places'),
+      );
+    });
+  });
+
+  group('`values:` says a set is not paths', () {
+    test('and is read as its members', () {
+      final file = parseXtaskFile(
+        'version: 1\n'
+        'sets:\n  flavours:\n    values: [dev, staging, prod]\n'
+        'tasks:\n'
+        r'  a: {desc: x, each: flavours, run: [b, --flavor=$each]}'
+        '\n',
+      );
+      expect(
+        (file.sets['flavours']! as ValueSet).values,
+        ['dev', 'staging', 'prod'],
+      );
+    });
+
+    test('`values:` beside `include:` is refused', () {
+      expect(
+        () => parseXtaskFile(
+          'version: 1\n'
+          'sets:\n  s:\n    values: [a]\n    include: [b]\n'
+          'tasks:\n  a: {desc: x, run: [d]}\n',
+        ),
+        throwsA(isA<XtaskFormatException>()),
       );
     });
   });

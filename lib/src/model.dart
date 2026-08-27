@@ -67,6 +67,9 @@ const topLevelKeys = <String>{'version', 'gates', 'sets', 'tasks'};
 /// second spelling that an editor would accept and the engine would refuse.
 const globSetKeys = <String>{'include', 'exclude'};
 
+/// Every key a value set may carry (§4.2).
+const valueSetKeys = <String>{'values'};
+
 /// The keys that name a task's body. Exactly one, or none (§4.3).
 const bodyKeys = <String>{'run', 'do'};
 
@@ -147,6 +150,21 @@ final class ListSet extends NamedSet {
   const ListSet(this.members, {super.span});
 
   final List<String> members;
+}
+
+/// Members that are not paths: flavours, platform names, SDK versions.
+///
+/// **Declared, because the engine cannot tell.** Every other kind of set holds
+/// paths, and the engine treats them as paths — it refuses one that leaves the
+/// repository, and it can say a glob matched nothing. Neither question means
+/// anything about `dev` or `stable`, and asking the first of them refused
+/// `a:b` for looking like a Windows drive. A set that says what it holds is
+/// asked the right questions, and `in: packages/$each` composes a path around
+/// a member that was never one.
+final class ValueSet extends NamedSet {
+  const ValueSet(this.values, {super.span});
+
+  final List<String> values;
 }
 
 /// Members found on disk. Expansion — and the rule that an expansion matching
