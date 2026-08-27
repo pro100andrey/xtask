@@ -234,6 +234,16 @@ const _taskKeys = <String, Map<String, Object?>>{
         'Getting it wrong makes a run flaky rather than slow, which is why it '
         'is in the file and the number is not.',
   },
+  'interruptible': {
+    'type': 'boolean',
+    'description':
+        'Whether a failure elsewhere may stop this task where it stands. A '
+        'run does not reach into what is already running, because a build '
+        'killed half-way leaves whatever it was doing in whatever state that '
+        'half is — this is the author saying a read-only check leaves '
+        'nothing. A `do:` cannot carry it: stopping a Dart function from '
+        'outside is not something Dart can do.',
+  },
   'exclusive': {
     ..._strings,
     'description':

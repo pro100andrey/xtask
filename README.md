@@ -319,6 +319,18 @@ web-e2e:
 which turns "a browser test failed somewhere inside" into "task `web-e2e`
 requires `CHROMEDRIVER`, which is not set".
 
+`interruptible: true` is the third of these, and it gives back what `-j`
+otherwise costs. A run does not reach into what is already running, because a
+build killed half-way leaves whatever it was doing in whatever state that half
+is. That is right for a build and wrong for a check: `dart format
+--output=none`, `dart analyze` and `dart test` write nothing a half-run would
+leave behind, and the engine cannot tell the two apart while the person who
+wrote the task can. Sequentially a format failure at 0.4s means the rest never
+run; in parallel they run to the end anyway and the machine spends the whole
+budget to learn what it knew in a tenth of a second. With the key, the fast
+answer arrives at the fast answer's price. `--keep-going` stops nothing at all,
+which is the whole of what that flag says.
+
 `-j` says **how many**; the file says **whether**. `serial: true` is one task
 whose members must not overlap — six packages sharing one `~/.pub-cache`, or
 one git index, where `git add` fails outright rather than waiting.
@@ -454,6 +466,7 @@ registry will not accept that version again.
 | `gate` | the gate sets this task belongs to |
 | `serial` | this task's `each:` members must not overlap, whatever `-j` says |
 | `exclusive` | tokens this task holds alone while it runs |
+| `interruptible` | a failure elsewhere may stop this task where it stands |
 | `timeout` | seconds a `run:` body may take before it is killed — per member under `each:` |
 
 `timeout:` is asked of the process, not waited out by the engine: the body is

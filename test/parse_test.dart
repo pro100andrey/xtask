@@ -978,6 +978,27 @@ tasks: {}
     });
   });
 
+  group('`interruptible:` is refused where it cannot be honoured', () {
+    test(
+      'a verb cannot be stopped from outside, so it may not claim to be',
+      () {
+        expect(
+          () => parseXtaskFile(
+            'version: 1\ntasks:\n'
+            '  a: {desc: x, interruptible: true, do: remove}\n',
+          ),
+          throwsA(
+            isA<XtaskFormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('a promise nothing keeps'),
+            ),
+          ),
+        );
+      },
+    );
+  });
+
   group('a boolean key is a boolean', () {
     test('`serial: yes` is a string in YAML and is refused, not guessed', () {
       expect(

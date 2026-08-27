@@ -242,6 +242,7 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     then: _names(map, 'then', name),
     gate: _names(map, 'gate', name),
     serial: _flag(map, 'serial', name),
+    interruptible: _interruptible(map, name, body),
     exclusive: _names(map, 'exclusive', name),
   );
   _checkAllMarker(name, task, keySpan);
@@ -434,6 +435,24 @@ void _checkAllMarker(String name, Task task, SourceSpan keySpan) {
       keySpan,
     );
   }
+}
+
+/// `interruptible:`, refused where it cannot be honoured.
+///
+/// **A `run:` body only, for `timeout:`'s reason.** Stopping a verb means
+/// stopping a Dart function from outside, which Dart cannot do — the flag
+/// would read as a promise and the verb would carry on writing to the disk.
+bool _interruptible(YamlMap map, String taskName, Body? body) {
+  final asked = _flag(map, 'interruptible', taskName);
+  if (!asked || body is! DoBody) {
+    return asked;
+  }
+  throw XtaskFormatException(
+    'task `$taskName` is `interruptible:` and its body is a verb. Stopping '
+    'one means stopping a Dart function from outside, which cannot be done — '
+    'the flag would be a promise nothing keeps',
+    map.nodes['interruptible']!.span,
+  );
 }
 
 /// A boolean key, refused rather than coerced.

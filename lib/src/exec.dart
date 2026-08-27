@@ -64,6 +64,13 @@ final class Executor {
   /// pipeline wants the earliest possible red.
   final bool keepGoing;
 
+  /// Completed once the run has decided the answer is known.
+  ///
+  /// Only tasks the file called `interruptible:` are given it, and only when
+  /// the run is not keeping going: with `--keep-going` nothing is stopped at
+  /// all, which is the whole of what that flag says.
+  final _givenUp = Completer<void>();
+
   /// The named mutexes this run's tasks share.
   final _exclusive = _Exclusive();
 
@@ -234,6 +241,16 @@ final class Executor {
               finished.add(name);
               if (code != null) {
                 answer ??= code;
+                if (!keepGoing && !_givenUp.isCompleted) {
+                  // **Reaching into what is running, but only where the file
+                  // said it may.** A build killed half-way leaves whatever it
+                  // was doing in whatever state that half is; a read-only
+                  // check leaves nothing. Sequentially a format failure at
+                  // 0.4s meant analyze and test never ran at all; in parallel
+                  // they ran to the end anyway, and the machine spent the
+                  // whole budget to learn what it knew in a tenth of a second.
+                  _givenUp.complete();
+                }
               }
             });
       }
@@ -589,6 +606,19 @@ final class Executor {
       // "it hung". Recognised rather than proved: a program that genuinely
       // exits 124 while carrying a `timeout:` would be described wrongly, and
       // it would still be the right task on the right line.
+      if (code == SystemProcessStarter.interrupted && task.interruptible) {
+        // **Not a failure.** It was not allowed to finish, and calling that a
+        // failure would put a second red thing beside the one that actually
+        // broke — which is the noise `--keep-going` exists to avoid, arriving
+        // by the opposite route.
+        final at = member == null ? '' : ' at `$member`';
+        (sink ?? log)(
+          'task `${task.name}`$at was stopped: an earlier failure had already '
+          'answered the run',
+        );
+        return;
+      }
+
       final killed =
           code == SystemProcessStarter.timedOut &&
           resolved is ResolvedProcess &&
@@ -667,6 +697,7 @@ final class Executor {
           environment: body.environment,
           runInShell: runInShell,
           timeout: timeout,
+          until: body.task.interruptible ? _givenUp.future : null,
           output: sink,
         );
     }
@@ -787,6 +818,7 @@ final class SystemProcessStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    Future<void>? until,
     void Function(String line)? output,
   }) async {
     // One question, asked once: it decides the flush above and the mode below,
@@ -850,7 +882,7 @@ final class SystemProcessStarter implements ProcessStarter {
       ]);
     }
 
-    if (timeout == null) {
+    if (timeout == null && until == null) {
       final code = await process.exitCode;
       await collecting;
       return code;
@@ -867,9 +899,22 @@ final class SystemProcessStarter implements ProcessStarter {
     // has process groups, and neither is what `Process` exposes — so a task
     // that spawns a server and hangs may leave the server behind. Stated
     // rather than quietly hoped away.
-    final finished = await process.exitCode
-        .then<int?>((code) => code)
-        .timeout(timeout, onTimeout: () => null);
+    // Whichever comes first: the process ending, its deadline, or the run
+    // deciding it no longer needs this. The last two end the same way, because
+    // a process being stopped does not care why.
+    var stoppedEarly = false;
+    final ending = process.exitCode.then<int?>((code) => code);
+    final finished = await Future.any([
+      if (timeout == null)
+        ending
+      else
+        ending.timeout(timeout, onTimeout: () => null),
+      if (until != null)
+        until.then<int?>((_) {
+          stoppedEarly = true;
+          return null;
+        }),
+    ]);
     if (finished != null) {
       await collecting;
       return finished;
@@ -884,7 +929,7 @@ final class SystemProcessStarter implements ProcessStarter {
       await process.exitCode;
     }
     await collecting;
-    return timedOut;
+    return stoppedEarly ? interrupted : timedOut;
   }
 
   /// What a killed process answers with.
@@ -895,4 +940,13 @@ final class SystemProcessStarter implements ProcessStarter {
   /// codes are untouched, because the ENGINE still answers 1: a task that hung
   /// is a task that failed, and the same person goes to look.
   static const timedOut = 124;
+
+  /// What a process stopped because the run gave up answers with.
+  ///
+  /// 130 is what a shell reports for SIGINT, and this is the same event by a
+  /// different route: somebody — here, an earlier failure — decided the answer
+  /// was already known. Distinct from [timedOut] so a report can say which
+  /// happened, and never surfaced as a task failure: a task that was stopped
+  /// did not fail, it was not allowed to finish.
+  static const interrupted = 130;
 }

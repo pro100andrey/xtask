@@ -65,6 +65,9 @@ final class FakeStarter implements ProcessStarter {
   /// which "are these two running at once" is a question with an answer.
   final holds = <String, Completer<void>>{};
 
+  /// Which executables were given a reason to stop early, by name.
+  final stoppable = <String, Future<void>>{};
+
   /// Executables that cannot be started at all, by name.
   ///
   /// `Process.start` throws rather than answering when the working directory
@@ -80,9 +83,15 @@ final class FakeStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    Future<void>? until,
     void Function(String line)? output,
   }) async {
     final name = p.basename(executable);
+    if (until != null) {
+      // The real starter kills the process; here it is enough to answer the
+      // way a stopped one does.
+      stoppable[name] = until;
+    }
     if (refuses.contains(name)) {
       throw ProcessException(
         executable,
@@ -104,7 +113,17 @@ final class FakeStarter implements ProcessStarter {
     // Two lines with a pause between them: enough to tell output that was
     // collected and printed whole from output that arrived interleaved.
     (output ?? (_) {})('$name speaking');
-    await holds[name]?.future;
+    if (until != null) {
+      final stopped = await Future.any([
+        holds[name]?.future.then((_) => false) ?? Future.value(false),
+        until.then((_) => true),
+      ]);
+      if (stopped) {
+        return SystemProcessStarter.interrupted;
+      }
+    } else {
+      await holds[name]?.future;
+    }
     (output ?? (_) {})('$name again');
     return codes[name] ?? ExitCode.success;
   }
@@ -1538,6 +1557,66 @@ void main() {
     });
   });
 
+  group('`interruptible:` gives back what parallelism costs', () {
+    test('a task that says so is stopped when the answer is known', () async {
+      // Sequentially, a format failure at 0.4s means the rest never run. In
+      // parallel they run to the end anyway and the machine spends the whole
+      // budget to learn what it knew in a tenth of a second.
+      starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  fmt: {desc: a, run: [ruff]}\n'
+            '  slow: {desc: b, interruptible: true, run: [pytest]}\n'
+            '  all: {desc: c, needs: [fmt, slow]}\n',
+        'all',
+        concurrency: 2,
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(
+        logged.join('\n'),
+        contains('task `slow` was stopped'),
+        reason: 'stopped, and not reported as a second failure',
+      );
+      expect(logged.join('\n'), isNot(contains('failed   slow')));
+    });
+
+    test('a task that does not say so is left alone', () async {
+      starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  fmt: {desc: a, run: [ruff]}\n'
+            '  slow: {desc: b, run: [pytest]}\n'
+            '  all: {desc: c, needs: [fmt, slow]}\n',
+        'all',
+        concurrency: 2,
+      );
+      await pumpEventQueue();
+      expect(logged.join('\n'), isNot(contains('was stopped')));
+      starter.holds['pytest']!.complete();
+      await running;
+    });
+
+    test(
+      'and `--keep-going` stops nothing at all, which is what it says',
+      () async {
+        starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
+        final running = runFile(
+          'version: 1\ntasks:\n'
+              '  fmt: {desc: a, run: [ruff]}\n'
+              '  slow: {desc: b, interruptible: true, run: [pytest]}\n'
+              '  all: {desc: c, needs: [fmt, slow]}\n',
+          'all',
+          concurrency: 2,
+          keepGoing: true,
+        );
+        await pumpEventQueue();
+        expect(logged.join('\n'), isNot(contains('was stopped')));
+        starter.holds['pytest']!.complete();
+        await running;
+      },
+    );
+  });
+
   group('the file says whether, the flag says how many', () {
     test("`serial:` keeps a task's members from overlapping", () async {
       // One shared `pub` cache, one git index: getting this wrong makes a run
@@ -1748,6 +1827,29 @@ void main() {
           runInShell: false,
         ),
         throwsA(isA<ProcessException>()),
+      );
+    });
+
+    test('a process is stopped when the run gives up on it', () async {
+      // The one thing no fake can answer: whether the process actually dies.
+      const starter = SystemProcessStarter();
+      final giveUp = Completer<void>();
+      final began = DateTime.now();
+      final running = starter.start(
+        Platform.resolvedExecutable,
+        ['run', p.join('test', 'fixtures', 'hangs.dart')],
+        workingDirectory: Directory.current.path,
+        environment: Platform.environment,
+        runInShell: false,
+        until: giveUp.future,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      giveUp.complete();
+      expect(await running, SystemProcessStarter.interrupted);
+      expect(
+        DateTime.now().difference(began),
+        lessThan(const Duration(seconds: 20)),
+        reason: 'it was stopped, not waited out',
       );
     });
 

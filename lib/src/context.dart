@@ -81,6 +81,7 @@ abstract interface class ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    Future<void>? until,
     void Function(String line)? output,
   });
 }

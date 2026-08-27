@@ -175,6 +175,10 @@
             "type": "boolean",
             "description": "Whether this task's `each:` members must not overlap. `-j` says how much may happen at once; this says whether these particular members may happen together at all — one shared `pub` cache, one git index. Getting it wrong makes a run flaky rather than slow, which is why it is in the file and the number is not."
           },
+          "interruptible": {
+            "type": "boolean",
+            "description": "Whether a failure elsewhere may stop this task where it stands. A run does not reach into what is already running, because a build killed half-way leaves whatever it was doing in whatever state that half is — this is the author saying a read-only check leaves nothing. A `do:` cannot carry it: stopping a Dart function from outside is not something Dart can do."
+          },
           "exclusive": {
             "type": "array",
             "items": {

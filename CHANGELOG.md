@@ -28,6 +28,24 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### `interruptible:` gives back what parallelism costs
+
+A run does not reach into what is already running, because a build killed
+half-way leaves whatever it was doing in whatever state that half is. Right for
+a build, wrong for a check: `dart format --output=none`, `dart analyze` and
+`dart test` write nothing a half-run would leave behind, and the engine cannot
+tell the two apart while the person who wrote the task can.
+
+Sequentially, a format failure at 0.4s means analyze and test never run at all.
+In parallel they run to the end anyway, and the machine spends the whole budget
+to learn what it knew in a tenth of a second. With `interruptible: true` the
+fast answer arrives at the fast answer's price.
+
+A stopped task is reported as stopped, not as a second failure beside the one
+that actually broke. `--keep-going` stops nothing at all, which is the whole of
+what that flag says. And a `do:` may not carry the key, for `timeout:`'s
+reason: stopping a Dart function from outside is not something Dart can do.
+
 ### The file says whether, the flag says how many
 
 ```yaml

@@ -29,6 +29,7 @@ const taskKeys = <String>{
   'then',
   'gate',
   'serial',
+  'interruptible',
   'exclusive',
   'timeout',
 };
@@ -215,6 +216,7 @@ final class Task with Located {
     this.then = const [],
     this.gate = const [],
     this.serial = false,
+    this.interruptible = false,
     this.exclusive = const [],
     this.timeout,
   });
@@ -275,6 +277,23 @@ final class Task with Located {
   /// different kind of wrong from making it slow, and it is the same on every
   /// machine. So it lives in the file and the number does not.
   final bool serial;
+
+  /// Whether a failure elsewhere may kill this task where it stands.
+  ///
+  /// **The author saying there is no half-written state.** A run refuses to
+  /// reach into what is already running, because killing a build leaves
+  /// whatever it was half-way through in whatever state that half is. That is
+  /// right for a build and wrong for a check: `dart format --output=none`,
+  /// `dart analyze` and `dart test` write nothing a half-run would leave
+  /// behind. The engine cannot tell the two apart; the person who wrote the
+  /// task can.
+  ///
+  /// What it buys is the property `-j` otherwise costs. Sequentially, a format
+  /// failure at 0.4s means analyze and test never run at all; in parallel they
+  /// run to the end anyway and the machine spends fourteen seconds to learn
+  /// something it knew in a tenth of one. Killing them gives back the first
+  /// answer at the first answer's price.
+  final bool interruptible;
 
   /// Tokens this task holds alone for as long as it runs.
   ///
