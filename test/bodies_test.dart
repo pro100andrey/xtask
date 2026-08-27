@@ -437,6 +437,43 @@ void main() {
       );
     });
 
+    test('in `args:` as well, which is argv too', () {
+      // Looking only at `run:` skipped the check for the very shape it was
+      // written for: the schema says `all:` replaces the marker in `run:` OR
+      // `args:`.
+      for (final name in ['-n.dart', 'ok.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  src:\n    include: ["*.dart"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [fmt], args: [$all]}'
+              '\n',
+          'a',
+        ),
+        refused(ExitCode.invalidFile, contains('-n.dart')),
+      );
+    });
+
+    test('and the `--` may be in `args:` too', () {
+      for (final name in ['-n.dart', 'ok.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  src:\n    include: ["*.dart"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [fmt], args: [--, $all]}'
+              '\n',
+          'a',
+        ),
+        returnsNormally,
+      );
+    });
+
     test('and a literal `--` before the marker is the answer', () {
       for (final name in ['-n.dart', 'ok.dart']) {
         File(p.join(root.path, name)).writeAsStringSync('');

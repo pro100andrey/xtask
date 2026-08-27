@@ -51,6 +51,10 @@
                 "minItems": 1,
                 "description": "Patterns, relative to the repository root. `**/` means NONE or more directories, as bash and git read it — so `packages/**/x` finds `packages/x` too."
               },
+              "produced": {
+                "type": "boolean",
+                "description": "Whether this set's members are made by the run itself. A set is read when the task naming it is about to run, so `--validate` and `--dry-run` see a different moment; this says so, and buys exactly one thing — the emptiness of this set is not judged before then. Everything else about it still is, and a run still refuses it empty."
+              },
               "exclude": {
                 "type": "array",
                 "items": {

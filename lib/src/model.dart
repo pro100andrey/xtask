@@ -68,7 +68,7 @@ const topLevelKeys = <String>{'version', 'gates', 'sets', 'tasks'};
 /// Here rather than beside the parser for the reason above: `--emit-schema`
 /// projects it into a JSON Schema, and a second spelling of `include` is a
 /// second spelling that an editor would accept and the engine would refuse.
-const globSetKeys = <String>{'include', 'exclude'};
+const globSetKeys = <String>{'include', 'exclude', 'produced'};
 
 /// Every key a value set may carry (§4.2).
 const valueSetKeys = <String>{'values'};
@@ -173,10 +173,29 @@ final class ValueSet extends NamedSet {
 /// Members found on disk. Expansion — and the rule that an expansion matching
 /// nothing is an error — belongs to the `sets` slice, not here.
 final class GlobSet extends NamedSet {
-  const GlobSet({required this.include, required this.exclude, super.span});
+  const GlobSet({
+    required this.include,
+    required this.exclude,
+    this.produced = false,
+    super.span,
+  });
 
   final List<String> include;
   final List<String> exclude;
+
+  /// Whether this set's members are made by the run itself.
+  ///
+  /// **Said, not guessed.** A set is read when the task that names it is about
+  /// to run, so `--validate` and `--dry-run` see a moment that is not that
+  /// one. Judging emptiness there called a working file broken; guessing from
+  /// `needs:` which sets to pass over exempted `analyze: {needs: [pub-get],
+  /// all: sources}` — the ordinary shape — and let a typo through with it.
+  ///
+  /// The engine cannot know, and the author does. This says so, and it buys
+  /// exactly one thing: the emptiness of THIS set is not judged before its
+  /// task runs. Everything else about it still is, and the run still refuses
+  /// it empty.
+  final bool produced;
 }
 
 /// What a task does. Absent means a pure composite (§4.3).

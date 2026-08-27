@@ -28,6 +28,26 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### A set is read when its task is about to run, and at no other time
+
+A file whose `build/*.txt` is produced by an earlier task ran green while
+`--validate` and `--dry-run` both called it invalid — one question with three
+answers, and the gate the README calls the first one to adopt was the one
+saying a working file is broken.
+
+The moment is now part of the format, and a set that the run produces says so
+with `produced: true`. It buys exactly one thing — the emptiness of that set is
+not judged before its task runs — so `--validate` passes over it and
+`--dry-run` prints `cannot be resolved yet` with the reason under it. Every
+other check still applies to it, and a run still refuses it empty.
+
+Said rather than inferred. Guessing from `needs:` exempted `analyze: {needs:
+[pub-get], all: sources}` — the ordinary shape — and took a typo'd glob with
+it; and skipping the whole expansion took the repository boundary too, so
+`include: ['/etc/host*']` validated clean. `--dry-run` tells "not yet" from
+"wrong" by the type of the refusal rather than by its exit code, having called
+a boundary violation and an unknown verb premature and answered 0 for both.
+
 ### A member that looks like an option is refused
 
 A repository may hold a file called `-n.dart`, and a glob will find it. Handed

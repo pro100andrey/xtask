@@ -330,6 +330,16 @@ void _checkSetsExpand(
   file.sets.forEach((name, set) {
     try {
       sets.expand(name, set);
+    } on EmptySetException catch (problem) {
+      // **Only the emptiness is passed over, and only where the set says it is
+      // produced.** Skipping the whole expansion took the repository boundary
+      // and the pattern syntax with it: `include: ['/etc/host*']` validated
+      // clean, and the fence it dropped is the one whose reason is that a set
+      // is fed to verbs that delete.
+      if (set is GlobSet && set.produced) {
+        return;
+      }
+      problems.add(problem);
     } on XtaskFormatException catch (problem) {
       problems.add(problem);
     }

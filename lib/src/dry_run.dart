@@ -53,6 +53,18 @@ Future<int> dryRun({
     try {
       resolved = bodies.resolveTask(step.task);
     } on RunFailure catch (failure) {
+      // **Not yet is not the same as wrong.** A task whose set the run itself
+      // produces cannot be resolved before the task that makes it has run, and
+      // this used to stop the print and answer 2 about a file that runs green.
+      //
+      // Asked of the type rather than of the exit code: guessing from the code
+      // and the task's set names called a boundary violation and an unknown
+      // verb premature too, and answered 0 for both. The original reason is
+      // still printed, so nothing is hidden.
+      if (failure is NotYetFailure) {
+        log('${step.task.name}: cannot be resolved yet — ${failure.message}');
+        continue;
+      }
       log('error: ${failure.message}');
       // The same code the run would answer with, including the third outcome:
       // a body that would have succeeded and a continuation that would not.

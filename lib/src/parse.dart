@@ -173,6 +173,7 @@ NamedSet _namedSet(YamlNode node, String name, SourceSpan keySpan) {
       exclude: exclude == null
           ? const []
           : _stringList(exclude, '`exclude:` of set `$name`'),
+      produced: _flag(node, 'produced', 'set `$name`'),
       span: keySpan,
     );
   }
@@ -241,7 +242,7 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     needs: _names(map, 'needs', name),
     then: _names(map, 'then', name),
     gate: _names(map, 'gate', name),
-    serial: _flag(map, 'serial', name),
+    serial: _flag(map, 'serial', 'task `$name`'),
     interruptible: _interruptible(map, name, body),
     exclusive: _names(map, 'exclusive', name),
   );
@@ -443,7 +444,7 @@ void _checkAllMarker(String name, Task task, SourceSpan keySpan) {
 /// stopping a Dart function from outside, which Dart cannot do — the flag
 /// would read as a promise and the verb would carry on writing to the disk.
 bool _interruptible(YamlMap map, String taskName, Body? body) {
-  final asked = _flag(map, 'interruptible', taskName);
+  final asked = _flag(map, 'interruptible', 'task `$taskName`');
   if (!asked || body is! DoBody) {
     return asked;
   }
@@ -459,7 +460,7 @@ bool _interruptible(YamlMap map, String taskName, Body? body) {
 ///
 /// `serial: yes` is a string in YAML 1.2 and would be truthy in a language
 /// that guessed. This file does not guess.
-bool _flag(YamlMap map, String key, String taskName) {
+bool _flag(YamlMap map, String key, String owner) {
   final node = map.nodes[key];
   if (node == null) {
     return false;
@@ -469,8 +470,8 @@ bool _flag(YamlMap map, String key, String taskName) {
     return value;
   }
   throw XtaskFormatException(
-    '`$key:` of task `$taskName` is `$value`, and it is a yes or no — write '
-    '`true` or `false`',
+    '`$key:` of $owner is `$value`, and it is a yes or no — write `true` or '
+    '`false`',
     node.span,
   );
 }

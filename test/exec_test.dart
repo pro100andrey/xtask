@@ -65,6 +65,10 @@ final class FakeStarter implements ProcessStarter {
   /// which "are these two running at once" is a question with an answer.
   final holds = <String, Completer<void>>{};
 
+  /// Executables started with no output sink — the streaming path, where the
+  /// child writes straight through and nothing is collected.
+  final streamed = <String>[];
+
   /// Which executables were given a reason to stop early, by name.
   final stoppable = <String, Future<void>>{};
 
@@ -87,6 +91,9 @@ final class FakeStarter implements ProcessStarter {
     void Function(String line)? output,
   }) async {
     final name = p.basename(executable);
+    if (output == null) {
+      streamed.add(name);
+    }
     if (until != null) {
       // The real starter kills the process; here it is enough to answer the
       // way a stopped one does.
@@ -1501,6 +1508,27 @@ void main() {
       expect(starter.started, hasLength(1));
       starter.holds['ruff']!.complete();
       await running;
+    });
+  });
+
+  group('a one-step plan keeps its live output', () {
+    test('because there is no second task to interleave with', () async {
+      // Buffering the task as well as its members took §5.2's live output and
+      // bought nothing: the announcement promised output as each member ends
+      // while none of it arrived until the whole task did.
+      given(['pkg/a/x']);
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        concurrency: 4,
+      );
+      // Nothing collects the child's output: it writes straight through, as
+      // §5.2 promises when there is only one thing writing.
+      expect(starter.streamed, ['ruff']);
     });
   });
 

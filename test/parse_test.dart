@@ -1000,6 +1000,25 @@ tasks: {}
   });
 
   group('a boolean key is a boolean', () {
+    test('and a set is not called a task when one is wrong', () {
+      expect(
+        () => parseXtaskFile(
+          'version: 1\n'
+          'sets:\n  s:\n    include: [a]\n    produced: yes\n'
+          'tasks:\n'
+          r'  a: {desc: x, all: s, run: [d, $all]}'
+          '\n',
+        ),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('of set `s`'),
+          ),
+        ),
+      );
+    });
+
     test('`serial: yes` is a string in YAML and is refused, not guessed', () {
       expect(
         () => parseXtaskFile(

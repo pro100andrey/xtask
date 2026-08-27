@@ -116,6 +116,66 @@ void main() {
     });
   });
 
+  group('a set another task produces is not judged before it runs', () {
+    test('and the file that used to be called invalid is clean', () {
+      // It ran green and both `--validate` and `--dry-run` called it broken:
+      // one question with three answers, and the gate §8 calls the first to
+      // adopt was the one saying a working file is wrong.
+      given(['build/keep/x']);
+      final report = check(
+        'version: 1\n'
+        "sets:\n  made:\n    include: ['build/*.txt']\n"
+        '    produced: true\n'
+        'tasks:\n'
+        '  make: {desc: p, run: [touch, build/a.txt]}\n'
+        r'  use: {desc: c, needs: [make], all: made, run: [echo, $all]}'
+        '\n',
+        withFilesystem: true,
+      );
+      expect(report.ok, isTrue, reason: report.toString());
+    });
+
+    test('but a set nothing runs before is still checked', () {
+      // `needs:` is a task saying out loud that something runs first. Without
+      // it, an empty set is the typo the rule exists for.
+      final report = check(
+        'version: 1\n'
+        "sets:\n  src:\n    include: ['nothing-matches/*']\n"
+        'tasks:\n'
+        r'  a: {desc: x, all: src, run: [echo, $all]}'
+        '\n',
+        withFilesystem: true,
+      );
+      expect(report.toString(), contains('is empty'));
+    });
+
+    test('and only its emptiness is passed over', () {
+      // Skipping the whole expansion took the repository boundary with it —
+      // and that fence exists because a set is fed to verbs that delete.
+      final report = check(
+        'version: 1\n'
+        "sets:\n  made:\n    include: ['/etc/host*']\n    produced: true\n"
+        'tasks:\n'
+        r'  a: {desc: x, all: made, run: [echo, $all]}'
+        '\n',
+        withFilesystem: true,
+      );
+      expect(report.toString(), contains('reaches outside the repository'));
+    });
+
+    test('a pattern that is not a pattern is still reported', () {
+      final report = check(
+        'version: 1\n'
+        "sets:\n  made:\n    include: ['[']\n    produced: true\n"
+        'tasks:\n'
+        r'  a: {desc: x, all: made, run: [echo, $all]}'
+        '\n',
+        withFilesystem: true,
+      );
+      expect(report.problems, isNotEmpty, reason: report.toString());
+    });
+  });
+
   group('a file with nothing wrong', () {
     test('reports nothing', () {
       final report = check(

@@ -285,7 +285,12 @@ final class BodyResolver {
             'task `${task.name}`: ${resolver.missingToolMessage(argv.first)}',
           );
         }
-        _refuseFoundMemberReadAsOption(task, argv, [...members, ?member]);
+        _refuseFoundMemberReadAsOption(
+          task,
+          argv.first,
+          [...argv.skip(1), ...task.args],
+          [...members, ?member],
+        );
         final arguments = List<String>.unmodifiable([
           ...substituted(argv.skip(1)),
           ...args,
@@ -332,14 +337,19 @@ final class BodyResolver {
   /// are programs for which `--` means something else.
   void _refuseFoundMemberReadAsOption(
     Task task,
-    List<String> argv,
+    String program,
+    List<String> written,
     List<String> members,
   ) {
     final from = sets[task.all ?? task.each];
     if (from is! GlobSet) {
       return;
     }
-    final bare = argv.indexWhere(
+    // **`args:` is argv too**, which the schema says in as many words. Looking
+    // only at `run:` skipped this check for the very shape it was written for:
+    // `run: [dart, format]` with `args: [\$all]` handed a repository file
+    // called `-n.dart` to the child as an option, silently.
+    final bare = written.indexWhere(
       (word) => word == allMarker || word == eachMarker,
     );
     if (bare == -1) {
@@ -348,7 +358,7 @@ final class BodyResolver {
       // marker that is not there — impossible to follow.
       return;
     }
-    if (argv.take(bare).contains('--')) {
+    if (written.take(bare).contains('--')) {
       return;
     }
     final found = members.where((member) => member.startsWith('-'));
@@ -357,7 +367,7 @@ final class BodyResolver {
     }
     throw RunFailure(
       ExitCode.invalidFile,
-      'task `${task.name}` would hand `${found.first}` to `${argv.first}` as '
+      'task `${task.name}` would hand `${found.first}` to `$program` as '
       'an argument, and a word beginning with `-` is an option to almost every '
       'program. This one was matched by a glob rather than written, so write '
       '`--` before the marker, which is where a command line says its operands '
@@ -478,8 +488,17 @@ final class BodyResolver {
   /// group opened for the task was never closed and everything after it on
   /// GitHub was folded into a task that had already stopped.
   List<String> _expand(Task task, String name) {
+    final set = _set(task, name);
     try {
-      return _expander.expand(name, _set(task, name));
+      return _expander.expand(name, set);
+    } on EmptySetException catch (problem) {
+      // Distinguished by type, so `--dry-run` can tell "not yet" from "wrong"
+      // instead of guessing from the exit code — which called a boundary
+      // violation and an unknown verb premature, and answered 0.
+      final message = 'task `${task.name}` cannot run:\n$problem';
+      throw set is GlobSet && set.produced
+          ? NotYetFailure(ExitCode.invalidFile, message)
+          : RunFailure(ExitCode.invalidFile, message);
     } on XtaskFormatException catch (problem) {
       throw RunFailure(
         ExitCode.invalidFile,

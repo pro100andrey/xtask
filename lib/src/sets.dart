@@ -219,7 +219,7 @@ final class SetExpander {
         'nothing under the repository root matches ${_quoted(include)}'
             '${exclude.isEmpty ? '' : ', with or without ${_quoted(exclude)}'}',
     };
-    throw XtaskFormatException(
+    throw EmptySetException(
       'set `$name` is empty — $detail. An empty set is refused rather than '
       'passed on: a task given no arguments where it expected files does not '
       'fail, it succeeds having done nothing, and in a gate that is a green '

@@ -389,6 +389,66 @@ void main() {
       expect(output(), contains('via  cmd.exe'));
     });
 
+    group('a set another task produces is not called wrong here either', () {
+      test('it says the timing rather than answering 2', () async {
+        given(['build/keep/x']);
+        final code = await dry(
+          'version: 1\n'
+              "sets:\n  made:\n    include: ['build/*.txt']\n"
+              '    produced: true\n'
+              'tasks:\n'
+              '  make: {desc: p, run: [touch, build/a.txt]}\n'
+              r'  use: {desc: c, needs: [make], all: made, run: [echo, $all]}'
+              '\n',
+          'use',
+        );
+        expect(code, ExitCode.success);
+        expect(output(), contains('cannot be resolved yet'));
+        // The original reason is printed under it, so nothing is hidden if the
+        // cause turns out to be something other than the timing.
+        expect(output(), contains('is empty'));
+      });
+
+      test('and a failure that is not the timing still stops the print', () {
+        // Guessing from the exit code and the task's set names called a
+        // boundary violation and an unknown verb premature too, and answered 0.
+        const escaping =
+            '  use: {desc: c, needs: [make], all: made, in: "../..", '
+            r'run: [echo, $all]}';
+        const unknownVerb = '  use: {desc: c, needs: [make], do: no-such-verb}';
+        for (final task in [escaping, unknownVerb]) {
+          expect(
+            () async {
+              given(['build/keep/x']);
+              final code = await dry(
+                'version: 1\n'
+                    "sets:\n  made:\n    include: ['build/*.txt']\n"
+                    '    produced: true\n'
+                    'tasks:\n'
+                    '  make: {desc: p, run: [touch, build/a.txt]}\n'
+                    '$task\n',
+                'use',
+              );
+              expect(code, ExitCode.invalidFile, reason: task);
+            },
+            returnsNormally,
+          );
+        }
+      });
+
+      test('and a task nothing runs before still stops the print', () async {
+        final code = await dry(
+          'version: 1\n'
+              "sets:\n  src:\n    include: ['nothing-matches/*']\n"
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [echo, $all]}'
+              '\n',
+          'a',
+        );
+        expect(code, ExitCode.invalidFile);
+      });
+    });
+
     test('a body that is not a shim says nothing about a shell', () async {
       await dry('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n', 'a');
       expect(output(), isNot(contains('cmd.exe')));

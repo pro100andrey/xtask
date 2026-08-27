@@ -231,7 +231,12 @@ final class Executor {
               took,
               failed,
               slots,
-              buffered: concurrent,
+              // **Only where a second TASK could interleave.** The members of
+              // one task buffer themselves one level down, so buffering the
+              // task as well took §5.2's live output from a one-step plan and
+              // bought nothing — the announcement promising output as each
+              // member ends while none of it arrived until the task did.
+              buffered: concurrent && plan.steps.length > 1,
             ).then((
               code,
             ) {
