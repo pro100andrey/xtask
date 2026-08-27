@@ -1,6 +1,7 @@
 import 'package:source_span/source_span.dart';
 import 'package:yaml/yaml.dart';
 
+import 'coherence.dart';
 import 'errors.dart';
 import 'model.dart';
 
@@ -246,196 +247,34 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     interruptible: _interruptible(map, name, body),
     exclusive: _names(map, 'exclusive', name),
   );
-  _checkAllMarker(name, task, keySpan);
-  _checkEachMarker(name, task, keySpan);
+  _refuseIncoherent(task);
   return task;
 }
 
-/// `\$all` as a word of its own, rather than the start of a longer name.
-final _bareMarker = RegExp(r'\$all(?![A-Za-z0-9_])');
-
-/// `$each` as a word of its own, rather than the start of a longer name.
-final _bareEach = RegExp(r'\$each(?![A-Za-z0-9_])');
-
-/// `each:` and its marker have to agree, and the marker has to END what it is
-/// written in.
+/// Refuses a task whose keys contradict each other — **all of them at once**.
 ///
-/// **The suffix is the line, and it is drawn once.** `$each` standing whole or
-/// finishing a string is a value put where a value goes — `packages/$each`,
-/// `--flavor=$each`. Text AFTER it is a derived path, `build/$each.dart`, and
-/// that is where a substitution stops being a value and becomes a
-/// computation. A computation wants a modifier, a modifier wants a language,
-/// and R1 exists to say this file is not one. Deriving a path is a verb's job.
-void _checkEachMarker(String name, Task task, SourceSpan keySpan) {
-  final argv = switch (task.body) {
-    RunBody(:final argv) => argv,
-    _ => const <String>[],
-  };
-
-  if (argv.isNotEmpty && _bareEach.hasMatch(argv.first)) {
-    throw XtaskFormatException(
-      'task `$name` runs `${argv.first}`. The first entry of `run:` is the '
-      'program, resolved on PATH before anything is substituted — a member '
-      'does not name one',
-      keySpan,
-    );
-  }
-
-  final written = [
-    ...argv.skip(1),
-    ...task.args,
-    ...task.env.values,
-    ?task.workingDirectory,
-  ];
-  // **Every occurrence but a trailing one.** `endsWith` alone looked only at
-  // the last, so `$each/$each` passed and the resolver — which substitutes the
-  // trailing one — left the other in the argument as literal text.
-  final badly = written.where(
-    (word) =>
-        _bareEach.hasMatch(word) &&
-        (_bareEach.allMatches(word).length > 1 || !word.endsWith(eachMarker)),
-  );
-  if (badly.isNotEmpty) {
-    throw XtaskFormatException(
-      'task `$name` writes `${badly.first}`. `\$each` stands for one member '
-      'and may end what it is written in, but nothing may follow it: '
-      r'`packages/$each` is a path composed around a value, and '
-      r'`$each.dart` is a path computed FROM one. Computing belongs in a '
-      'verb, where this file cannot go',
-      keySpan,
-    );
-  }
-
-  final used = written.any((word) => word.endsWith(eachMarker));
-  if (task.each != null && !used) {
-    throw XtaskFormatException(
-      'task `$name` has `each: ${task.each}` and never writes `\$each`, so '
-      'the body runs once per member with no way to tell them apart',
-      keySpan,
-    );
-  }
-  if (task.each == null && used) {
-    throw XtaskFormatException(
-      'task `$name` writes `\$each` and has no `each:` to say which set its '
-      'members come from',
-      keySpan,
-    );
-  }
-
-  // **The one pairing that is provably wrong.** `in: $each` says the member IS
-  // the directory, so the member is a path from the repository root and the
-  // body runs inside it; the same member in argv is then a path read from two
-  // different places. A COMPOSED `in:` — `packages/$each` — says the opposite,
-  // that the member is a name, and both halves are legitimate at once.
-  if (task.workingDirectory == eachMarker &&
-      [...argv.skip(1), ...task.args].any((w) => w.endsWith(eachMarker))) {
-    throw XtaskFormatException(
-      'task `$name` puts `\$each` in its arguments and also runs `in: '
-      r'$each`. A member is a path from the repository root, and `in:` moves '
-      'into it — the two would be relative to different places. Compose the '
-      r'directory instead, `in: some/dir/$each`, so the member is a name',
-      keySpan,
-    );
-  }
-}
-
-/// `all:` and its marker have to agree, and the marker has to be a whole
-/// argument.
+/// The rules are `coherence.dart`'s, and they answer with a list; the policy is
+/// this module's, and it is to refuse. A file with three marker mistakes used
+/// to cost three rounds of fix-and-rerun, because the first `throw` hid the
+/// other two — the very loop `validate.dart` argues against.
 ///
-/// **Refused here rather than left to make a strange run.** A set named and
-/// never used is a task that quietly does not check what its author thought;
-/// a marker with no set is a program handed the literal text `$all`. Neither
-/// fails — both succeed at the wrong thing, which is what §1 is about.
-///
-/// A marker inside a larger string is refused too, and that is the line R1
-/// draws: `$all` stands for N arguments, and there is nothing for N arguments
-/// to mean inside one. Splitting a string is a shell's job and this has no
-/// shell.
-void _checkAllMarker(String name, Task task, SourceSpan keySpan) {
-  final argv = switch (task.body) {
-    RunBody(:final argv) => argv,
-    _ => const <String>[],
-  };
-
-  // **The program is not an argument.** `run:` names an executable first, and
-  // §5.4 resolves it on PATH before anything is substituted — so `$all` there
-  // is not a set expanded into position, it is a program by that name. It
-  // counted as a marker here while the resolver substituted only over the
-  // arguments, which let a file declare a set, satisfy every check below and
-  // reach the command line with nothing: the run then answered 3, saying the
-  // machine lacked a tool, about a file that was wrong.
-  if (argv.isNotEmpty && _bareMarker.hasMatch(argv.first)) {
-    throw XtaskFormatException(
-      'task `$name` runs `${argv.first}`. `\$all` stands for arguments, and '
-      'the first entry of `run:` is the program — there is nothing for a set '
-      'to expand into there',
-      keySpan,
-    );
+/// This stays the only gate. A run does not validate first, and
+/// `BodyResolver._withMember` throws a `StateError` on a member that is not
+/// there, on the strength of the file having been refused here.
+void _refuseIncoherent(Task task) {
+  final wrong = incoherences(task);
+  if (wrong.isEmpty) {
+    return;
   }
-
-  final oneThing = [?task.workingDirectory, ...task.env.values].where(
-    _bareMarker.hasMatch,
+  if (wrong.length == 1) {
+    throw wrong.single;
+  }
+  // One caret, because every one of these is about the same task, and a span
+  // per paragraph would reprint the block once per mistake.
+  throw XtaskFormatException(
+    wrong.map((problem) => problem.message).join('\n\n'),
+    task.span,
   );
-  if (oneThing.isNotEmpty) {
-    final where = oneThing.first;
-    // Neither refused nor substituted before, so the body ran in a directory
-    // literally called `$all` and failed much later as "could not be started".
-    throw XtaskFormatException(
-      'task `$name` writes `\$all` in `$where`. It stands for every member of '
-      'a set, and a directory and an environment value are each one thing — '
-      'there is nothing for a list to be there',
-      keySpan,
-    );
-  }
-
-  final written = [...argv.skip(1), ...task.args];
-  final markers = written.where((word) => word == allMarker).length;
-  // A delimited token, so that `--allow=\$allowlist` — a literal argument for
-  // a tool that does its own expansion — is text and not a mistake.
-  final embedded = written.where(
-    (word) => word != allMarker && _bareMarker.hasMatch(word),
-  );
-
-  if (embedded.isNotEmpty) {
-    throw XtaskFormatException(
-      'task `$name` writes `${embedded.first}`. `\$all` stands for every '
-      'member of a set, so it is a whole argument or nothing — there is no '
-      'meaning for several arguments inside one, and no shell here to split '
-      'them',
-      keySpan,
-    );
-  }
-  if (task.all != null && markers == 0) {
-    throw XtaskFormatException(
-      'task `$name` has `all: ${task.all}` and never writes `\$all`, so the '
-      r'set reaches nothing. Put `$all` where its members belong',
-      keySpan,
-    );
-  }
-  if (task.all == null && markers > 0) {
-    throw XtaskFormatException(
-      'task `$name` writes `\$all` and has no `all:` to say which set it '
-      'stands for',
-      keySpan,
-    );
-  }
-  if (markers > 1) {
-    throw XtaskFormatException(
-      'task `$name` writes `\$all` $markers times. One set expanded twice into '
-      'one command line is two answers to what the task is about',
-      keySpan,
-    );
-  }
-  if (task.all != null && task.each != null) {
-    // The combination that used to be legal and meant nothing anybody wanted:
-    // every member of the `each:` set received the WHOLE `all:` set.
-    throw XtaskFormatException(
-      'task `$name` has both `each:` and `all:`. One runs the body once per '
-      'member and the other runs it once for all of them; a task is one or '
-      'the other',
-      keySpan,
-    );
-  }
 }
 
 /// `interruptible:`, refused where it cannot be honoured.

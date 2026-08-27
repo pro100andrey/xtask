@@ -731,6 +731,51 @@ tasks: {}
     });
   });
 
+  group('a task whose keys contradict each other', () {
+    String refusalOf(String yaml) {
+      try {
+        parseXtaskFile(yaml);
+      } on XtaskFormatException catch (e) {
+        return e.message;
+      }
+      fail('expected a refusal, got none');
+    }
+
+    test('is refused with every contradiction at once', () {
+      // **Three mistakes used to cost three rounds.** The first `throw` hid
+      // the rest, so a person fixed one, reran, fixed the next, reran — the
+      // loop `--validate` collects problems to avoid, reproduced one module
+      // earlier. The rules answer with a list now, and the parser is the
+      // policy that refuses on it.
+      final message = refusalOf(
+        'version: 1\n'
+        'sets:\n  pkgs: [a, b]\n'
+        'tasks:\n'
+        r'  a: {desc: x, run: [dart, test, --files=$all],'
+        ' all: pkgs, each: pkgs}\n',
+      );
+      // A marker buried in a larger word, a set that therefore reaches
+      // nothing, `each:` beside `all:`, and an `each:` with no `$each`. Four
+      // mistakes, one run.
+      expect(message, contains('whole argument or nothing'));
+      expect(message, contains(r'never writes `$all`'));
+      expect(message, contains('both `each:` and `all:`'));
+      expect(message, contains(r'never writes `$each`'));
+    });
+
+    test('and one contradiction still reads as one sentence', () {
+      // A single mistake must not grow a paragraph break just because several
+      // of them now can.
+      final message = refusalOf(
+        'version: 1\ntasks:\n'
+        r'  a: {desc: x, run: [dart, test, $all]}'
+        '\n',
+      );
+      expect(message, contains('has no `all:`'));
+      expect(message, isNot(contains('\n')));
+    });
+  });
+
   group('`all:` and its marker have to agree', () {
     String refusalOf(String yaml) {
       try {
