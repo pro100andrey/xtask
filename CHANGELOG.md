@@ -28,6 +28,32 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### The file says whether, the flag says how many
+
+```yaml
+pub-get:
+  each: packages
+  in: packages/$each
+  serial: true                  # one shared ~/.pub-cache
+  run: [dart, pub, get]
+
+e2e:
+  exclusive: [chromedriver]     # so does the other browser suite
+  run: [dart, test, test/web]
+```
+
+`-j` is a number about this machine at this moment; whether two things may
+happen together at all is a fact about the project, the same on every machine.
+Getting it wrong makes a run flaky rather than slow, which is a different kind
+of wrong. Both keys can only ever make a run slower and never change its
+result.
+
+Named rather than counted: a name is something `--validate` can cross-check,
+and it does — a token only one task holds keeps it apart from nobody, and a
+`serial:` on a task with no `each:` has one body and nothing to order. There is
+no `concurrency: N` key, because that is one machine's width written into a
+file every other machine reads.
+
 ### `-j` reaches the members of an `each:`
 
 The budget used to decide which **tasks** were admitted, so `-j 4` over one

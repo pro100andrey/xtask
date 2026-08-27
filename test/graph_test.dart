@@ -227,6 +227,25 @@ void main() {
     });
   });
 
+  group('a route is looked for down every edge, not only the first', () {
+    test('a dead branch does not mark what it touched unreachable', () {
+      // `seen` is the PATH, not the visited set. Kept across branches, a task
+      // a dead branch had walked through was never revisited, so `--why`
+      // answered "nothing reaches it" about a task a run does reach — the one
+      // answer §8 says this question exists to prevent.
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  dead: {desc: a, run: [d]}\n'
+        '  target: {desc: b, run: [d]}\n'
+        '  mid: {desc: c, needs: [target], run: [d]}\n'
+        '  top: {desc: d, needs: [dead, mid], run: [d]}\n'
+        '  other: {desc: e, needs: [mid, target], run: [d]}\n',
+      );
+      expect(routeTo(file, from: 'top', to: 'target'), isNotNull);
+      expect(routeTo(file, from: 'other', to: 'target'), isNotNull);
+    });
+  });
+
   group('the routes `--why` reads off the graph', () {
     const chain = '''
 version: 1

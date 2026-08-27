@@ -58,6 +58,7 @@ ValidationReport validateFile(
   _checkGraph(file, problems);
   _checkDeclaredGates(file, problems);
   _checkNoNameCollision(file, problems);
+  _checkExclusive(file, problems);
   if (sets != null) {
     _checkSetsExpand(file, sets, problems);
   }
@@ -271,6 +272,47 @@ void _checkNoNameCollision(
         'Rename one of them: a gate set is run by being named, so there is '
         'nothing left for a task of the same name to be',
         file.tasks[gate]!.span,
+      ),
+    );
+  }
+}
+
+/// A token only one task holds, and a `serial:` with nothing to serialise.
+///
+/// **Both are a key that does nothing, said out loud.** `exclusive:` keeps two
+/// tasks apart; a name only one task writes keeps it apart from nobody, and
+/// reads in the file as a guarantee that is being made. `serial:` orders the
+/// members of an `each:`, and on a task with no `each:` there is one body and
+/// nothing to order.
+void _checkExclusive(XtaskFile file, List<XtaskFormatException> problems) {
+  // Distinct TASKS, not occurrences: `exclusive: [db, db]` on one task counted
+  // as two holders and slipped past the very check below.
+  final holders = <String, Set<String>>{};
+  for (final task in file.tasks.values) {
+    for (final token in task.exclusive) {
+      holders.putIfAbsent(token, () => {}).add(task.name);
+    }
+    if (task.serial && task.each == null) {
+      problems.add(
+        XtaskFormatException(
+          'task `${task.name}` is `serial:` and has no `each:`, so there is '
+          'one body and nothing for it to be in order with',
+          task.span,
+        ),
+      );
+    }
+  }
+
+  for (final entry in holders.entries) {
+    if (entry.value.length > 1) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        'task `${entry.value.single}` holds `${entry.key}` exclusively and no '
+        'other task asks for it, so nothing is being kept apart. Name it in '
+        'the other task too, or drop it',
+        file.tasks[entry.value.single]!.span,
       ),
     );
   }

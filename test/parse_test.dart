@@ -978,6 +978,25 @@ tasks: {}
     });
   });
 
+  group('a boolean key is a boolean', () {
+    test('`serial: yes` is a string in YAML and is refused, not guessed', () {
+      expect(
+        () => parseXtaskFile(
+          'version: 1\nsets:\n  s: [a]\ntasks:\n'
+          r'  a: {desc: x, each: s, serial: yes, run: [d, $each]}'
+          '\n',
+        ),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('write `true` or `false`'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('`timeout:` is refused where it could not be honoured', () {
     test('a whole number of seconds is kept', () {
       final file = parseXtaskFile(

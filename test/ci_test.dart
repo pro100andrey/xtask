@@ -126,6 +126,24 @@ jobs:
       expect(report.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
     });
 
+    test('a step the command line would refuse is not vouched for', () {
+      // Skipping a flag's value without looking at it reported a green job
+      // for a step that exits 1 the moment it runs.
+      for (final command in [
+        'dart run :xtask ci-analyze -j abc',
+        'dart run :xtask ci-analyze -j',
+        'dart run :xtask ci-analyze --keep-going=true',
+      ]) {
+        workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: $command
+''');
+        expect(check().problems, isNotEmpty, reason: command);
+      }
+    });
+
     test('a lone dash is a diagnostic, not a crash', () {
       // Reaching for a second character raised a `RangeError` out of
       // `--check-ci` rather than reporting anything.

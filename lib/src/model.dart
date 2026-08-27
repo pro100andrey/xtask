@@ -28,6 +28,8 @@ const taskKeys = <String>{
   'needs',
   'then',
   'gate',
+  'serial',
+  'exclusive',
   'timeout',
 };
 
@@ -212,6 +214,8 @@ final class Task with Located {
     this.needs = const [],
     this.then = const [],
     this.gate = const [],
+    this.serial = false,
+    this.exclusive = const [],
     this.timeout,
   });
 
@@ -260,6 +264,26 @@ final class Task with Located {
 
   /// Continuations: run after this task's body, not a dependency (§4.3).
   final List<String> then;
+
+  /// Whether the members of this task's `each:` must not overlap.
+  ///
+  /// **A fact about the task, not a number for the machine.** `-j` says how
+  /// much may happen at once; this says whether these particular members may
+  /// happen together at all — `dart pub get` over six packages contends on one
+  /// `~/.pub-cache`, and `git add` over six fails outright on `index.lock`
+  /// rather than waiting. Getting it wrong makes a run FLAKY, which is a
+  /// different kind of wrong from making it slow, and it is the same on every
+  /// machine. So it lives in the file and the number does not.
+  final bool serial;
+
+  /// Tokens this task holds alone for as long as it runs.
+  ///
+  /// The same fact across tasks rather than within one: two suites that both
+  /// bind `:8080`, or both drive one browser, cannot overlap however
+  /// independent the graph says they are. Named rather than counted, because a
+  /// name is something `--validate` can cross-check and a count is one
+  /// machine's width written into a file every other machine reads.
+  final List<String> exclusive;
 
   /// The gate sets this task belongs to.
   final List<String> gate;

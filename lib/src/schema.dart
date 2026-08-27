@@ -225,6 +225,22 @@ const _taskKeys = <String, Map<String, Object?>>{
         'Variables that must already be set. Checked before the body runs; '
         'the engine installs nothing, it only says which one is missing.',
   },
+  'serial': {
+    'type': 'boolean',
+    'description':
+        "Whether this task's `each:` members must not overlap. `-j` says how "
+        'much may happen at once; this says whether these particular members '
+        'may happen together at all — one shared `pub` cache, one git index. '
+        'Getting it wrong makes a run flaky rather than slow, which is why it '
+        'is in the file and the number is not.',
+  },
+  'exclusive': {
+    ..._strings,
+    'description':
+        'Tokens this task holds alone while it runs. Two tasks the graph '
+        'calls independent may still share a port or a browser; naming what '
+        'they share is what keeps them apart.',
+  },
   'gate': {
     ..._strings,
     'description':

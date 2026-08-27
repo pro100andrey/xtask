@@ -195,8 +195,20 @@ String? _gateOf(String command) {
       return null;
     }
     final attached = word.length > flag.length;
-    if (!attached && _takesAValue.contains(flag) && i + 1 < after.length) {
-      i++;
+    if (_takesAValue.contains(flag)) {
+      // **The value is checked, not skipped.** `check -j abc` and a trailing
+      // `check -j` were vouched for here and refused by the command line, so
+      // `--check-ci` reported a green job for a step that cannot run.
+      final value = attached
+          ? word.substring(flag.length).replaceFirst('=', '')
+          : (i + 1 < after.length ? after[++i] : null);
+      if (value == null ||
+          (value != 'auto' && (int.tryParse(value) ?? 0) < 1)) {
+        return null;
+      }
+    } else if (attached) {
+      // `--keep-going=true` takes no value and the command line refuses it.
+      return null;
     }
   }
   return operands.length == 1 ? operands.single : null;

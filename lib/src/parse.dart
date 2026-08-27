@@ -241,6 +241,8 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     needs: _names(map, 'needs', name),
     then: _names(map, 'then', name),
     gate: _names(map, 'gate', name),
+    serial: _flag(map, 'serial', name),
+    exclusive: _names(map, 'exclusive', name),
   );
   _checkAllMarker(name, task, keySpan);
   _checkEachMarker(name, task, keySpan);
@@ -432,6 +434,26 @@ void _checkAllMarker(String name, Task task, SourceSpan keySpan) {
       keySpan,
     );
   }
+}
+
+/// A boolean key, refused rather than coerced.
+///
+/// `serial: yes` is a string in YAML 1.2 and would be truthy in a language
+/// that guessed. This file does not guess.
+bool _flag(YamlMap map, String key, String taskName) {
+  final node = map.nodes[key];
+  if (node == null) {
+    return false;
+  }
+  final value = node.value;
+  if (value is bool) {
+    return value;
+  }
+  throw XtaskFormatException(
+    '`$key:` of task `$taskName` is `$value`, and it is a yes or no — write '
+    '`true` or `false`',
+    node.span,
+  );
 }
 
 /// `timeout:` in seconds, refused where it cannot be honoured.

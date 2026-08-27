@@ -1538,6 +1538,78 @@ void main() {
     });
   });
 
+  group('the file says whether, the flag says how many', () {
+    test("`serial:` keeps a task's members from overlapping", () async {
+      // One shared `pub` cache, one git index: getting this wrong makes a run
+      // flaky rather than slow, and it is the same on every machine.
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, serial: true, run: [ruff]}'
+            '\n',
+        'a',
+        concurrency: 3,
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(1), reason: 'one at a time, at -j 3');
+      starter.holds['ruff']!.complete();
+      await running;
+      expect(starter.started, hasLength(3));
+    });
+
+    test('`exclusive:` keeps apart two tasks the graph does not', () async {
+      // Nothing in the plan says these two are related; the machine says so.
+      starter = FakeStarter()
+        ..holds['ruff'] = Completer<void>()
+        ..holds['pytest'] = Completer<void>();
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, exclusive: [port], run: [ruff]}\n'
+            '  b: {desc: y, exclusive: [port], run: [pytest]}\n'
+            '  all: {desc: z, needs: [a, b]}\n',
+        'all',
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(1), reason: 'the token is held');
+      starter.holds['ruff']!.complete();
+      await pumpEventQueue();
+      expect(starter.started, hasLength(2));
+      starter.holds['pytest']!.complete();
+      await running;
+    });
+
+    test('and two tasks sharing no token still run together', () async {
+      starter = FakeStarter()
+        ..holds['ruff'] = Completer<void>()
+        ..holds['pytest'] = Completer<void>();
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, exclusive: [one, two], run: [ruff]}\n'
+            '  b: {desc: y, exclusive: [two, one], run: [pytest]}\n'
+            '  c: {desc: z, run: [mypy]}\n'
+            '  all: {desc: w, needs: [a, b, c]}\n',
+        'all',
+        concurrency: 3,
+      );
+      await pumpEventQueue();
+      // `c` holds nothing, and `a`/`b` name the same pair in opposite
+      // orders — which is how two holders of one pair deadlock if the
+      // order is the one they wrote.
+      expect(starter.started.map((s) => p.basename(s.executable)), [
+        'ruff',
+        'mypy',
+      ]);
+      for (final hold in starter.holds.values) {
+        hold.complete();
+      }
+      await running;
+      expect(starter.started, hasLength(3));
+    });
+  });
+
   group('a failing member does not silence the rest', () {
     Future<int> overThree({required bool keepGoing}) {
       given(['pkg/one/x', 'pkg/two/x', 'pkg/three/x']);

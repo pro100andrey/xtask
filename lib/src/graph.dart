@@ -109,6 +109,12 @@ List<PlanEdge>? routeTo(
     if (!seen.add(at)) {
       return null;
     }
+    // **Removed again on the way out.** Kept, it marked every task a dead
+    // branch had touched as unreachable for the rest of the search, so a route
+    // that existed down a later edge was answered "nothing reaches it" — the
+    // one answer §8 says this question exists to prevent. Cheap here and
+    // wrong-shaped everywhere: `seen` is the path, not the visited set.
+    void done() => seen.remove(at);
     final task = file.tasks[at];
     if (task == null) {
       return null;
@@ -119,9 +125,11 @@ List<PlanEdge>? routeTo(
     ]) {
       final rest = walk(next);
       if (rest != null) {
+        done();
         return [PlanEdge(at, kind, next), ...rest];
       }
     }
+    done();
     return null;
   }
 

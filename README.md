@@ -319,6 +319,17 @@ web-e2e:
 which turns "a browser test failed somewhere inside" into "task `web-e2e`
 requires `CHROMEDRIVER`, which is not set".
 
+`-j` says **how many**; the file says **whether**. `serial: true` is one task
+whose members must not overlap — six packages sharing one `~/.pub-cache`, or
+one git index, where `git add` fails outright rather than waiting.
+`exclusive: [chromedriver]` is the same fact between tasks: two suites the
+graph calls independent may still drive the one browser on the machine. Both
+can only ever make a run slower, never change its result, which is the right
+property for something every machine reads — and getting them wrong makes a
+run **flaky**, which is a different kind of wrong from making it slow. A number
+would be one machine's width written into a file the rest of them share, so
+there is no key for it.
+
 ## Reading a run
 
 What a run tells you while it happens and when it ends — and what changes
@@ -441,6 +452,8 @@ registry will not accept that version again.
 | `needs` | direct requirements, run before this task, once per invocation |
 | `then` | continuations, run **after** this task's body |
 | `gate` | the gate sets this task belongs to |
+| `serial` | this task's `each:` members must not overlap, whatever `-j` says |
+| `exclusive` | tokens this task holds alone while it runs |
 | `timeout` | seconds a `run:` body may take before it is killed — per member under `each:` |
 
 `timeout:` is asked of the process, not waited out by the engine: the body is

@@ -64,6 +64,9 @@ final class Executor {
   /// pipeline wants the earliest possible red.
   final bool keepGoing;
 
+  /// The named mutexes this run's tasks share.
+  final _exclusive = _Exclusive();
+
   /// How many tasks may be in flight at once. 1 is §5.2's run.
   ///
   /// **This is the one place a documented promise is deliberately broken, and
@@ -108,7 +111,9 @@ final class Executor {
     final concurrent =
         concurrency > 1 &&
         (plan.steps.length > 1 ||
-            plan.steps.any((step) => step.task.each != null));
+            plan.steps.any(
+              (step) => step.task.each != null && !step.task.serial,
+            ));
 
     // Before the walk, so it is the first thing on the stream rather than the
     // first thing after a wait it was meant to explain.
@@ -180,6 +185,13 @@ final class Executor {
           break;
         }
         final step = waiting[at];
+        if (_exclusive.busy(step.task.exclusive)) {
+          // Left where it is rather than admitted and blocked: an admitted
+          // task holds one of `-j`'s places whether or not it is doing
+          // anything, so three tasks sharing a browser at `-j 3` kept every
+          // independent task out of the run.
+          continue;
+        }
         final blocker = _blockedBy(step, {...failed.keys, ...skipped.keys});
         if (blocker != null) {
           // Named, not dropped. A task that silently did not happen is
@@ -278,6 +290,13 @@ final class Executor {
     // one is a deadlock, and two two-member tasks at `-j 2` found it.
     await slots.take();
     slots.give();
+
+    // Acquired before the section opens, so a task waiting on a token does not
+    // leave an empty fold sitting there — and before the clock starts, for the
+    // reason above: waiting for somebody else's browser is not this task's
+    // work, and billing it made the second holder report its own duration plus
+    // the first one's.
+    await _exclusive.acquire(step.task.exclusive);
     final started = now();
     try {
       await _runTask(step.task, slots, lines?.add);
@@ -337,6 +356,7 @@ final class Executor {
       // summary is where the others are.
       return failure.code;
     } finally {
+      _exclusive.release(step.task.exclusive);
       // In a `finally`, so the task that FAILED is timed too. Where the run
       // spent itself before it broke is most of what somebody wants from a red
       // job.
@@ -424,7 +444,7 @@ final class Executor {
 
     // Buffering is the price of two things writing at once, and it is paid
     // only then: one member in flight keeps §5.2's live output exactly.
-    final together = slots.total > 1 && bodies.length > 1;
+    final together = slots.total > 1 && bodies.length > 1 && !task.serial;
 
     Future<void> member(int at) async {
       if (stop) {
@@ -651,6 +671,61 @@ final class Executor {
         );
     }
   }
+}
+
+/// Named mutexes, one holder each, for as long as a task runs.
+///
+/// **What the graph cannot say.** Two tasks with no `needs:` between them are
+/// independent as far as the plan is concerned, and may still both bind
+/// `:8080` or drive the one browser on the machine. The file names the thing
+/// they share; this makes the name mean something.
+final class _Exclusive {
+  final _held = <String, Future<void>>{};
+
+  /// Whether any of [tokens] is held right now.
+  ///
+  /// A hint for admission, not the guarantee: two tasks may both find a name
+  /// free in the same pass, and `acquire` is what actually keeps them apart.
+  /// Its worth is that a task blocked on a token does not sit in the walk's
+  /// admitted set holding one of `-j`'s places while it waits — three e2e
+  /// tasks sharing a browser at `-j 3` otherwise kept `format` and `analyze`
+  /// out of the run entirely.
+  bool busy(List<String> tokens) => tokens.any(_held.containsKey);
+
+  /// Holds every name in [tokens], in a fixed order.
+  ///
+  /// Sorted, because acquiring two names in the order they were written is how
+  /// two tasks holding the same pair in opposite orders deadlock.
+  Future<void> acquire(List<String> tokens) async {
+    final done = Completer<void>();
+    _release[tokens] = done;
+    for (final name in tokens.toSet().toList()..sort()) {
+      // Re-checked after the wait: whoever we waited for removes its entry
+      // before completing, and another waiter may take it in between.
+      while (_held.containsKey(name)) {
+        await _held[name];
+      }
+      _held[name] = done.future;
+    }
+  }
+
+  /// Lets go of everything `acquire` took for [tokens].
+  void release(List<String> tokens) {
+    final done = _release.remove(tokens);
+    if (done == null) {
+      return;
+    }
+    final names = tokens.toSet();
+    // `removeWhere`, not `remove`: the map's values are futures, so `remove`
+    // hands one back and dropping it is a discarded future.
+    //
+    // Removed before completing, so a waiter that wakes finds the name free
+    // rather than finding this same future still sitting there.
+    _held.removeWhere((name, _) => names.contains(name));
+    done.complete();
+  }
+
+  final _release = <List<String>, Completer<void>>{};
 }
 
 /// The concurrency budget, held by whatever is actually running.

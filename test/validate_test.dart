@@ -79,6 +79,43 @@ void main() {
     });
   });
 
+  group('a key that guarantees nothing is said out loud', () {
+    test('a token only one task holds keeps it apart from nobody', () {
+      final report = check(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, exclusive: [port], run: [dart]}\n',
+      );
+      expect(report.toString(), contains('nothing is being kept apart'));
+    });
+
+    test('and the same token twice on one task is still one holder', () {
+      // Counting occurrences rather than tasks let this slip past the very
+      // check it is the case for.
+      final report = check(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, exclusive: [db, db], run: [dart]}\n',
+      );
+      expect(report.toString(), contains('nothing is being kept apart'));
+    });
+
+    test('and two holders are what the key is for', () {
+      final report = check(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, exclusive: [port], run: [dart]}\n'
+        '  b: {desc: y, exclusive: [port], run: [dart]}\n',
+      );
+      expect(report.ok, isTrue, reason: report.toString());
+    });
+
+    test('`serial:` with no `each:` has nothing to put in order', () {
+      final report = check(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, serial: true, run: [dart]}\n',
+      );
+      expect(report.toString(), contains('nothing for it to be in order'));
+    });
+  });
+
   group('a file with nothing wrong', () {
     test('reports nothing', () {
       final report = check(
