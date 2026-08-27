@@ -335,15 +335,6 @@ tasks:
     desc: browser e2e for the web binding
     gate: [ci-web]
     run: [dart, test]
-  check:
-    desc: reproduce CI locally
-    collects: check
-  ci-analyze:
-    desc: the analyze job
-    collects: ci-analyze
-  ci-web:
-    desc: the web job
-    collects: ci-web
 ''';
 
     group('found from wherever the command was run', () {
@@ -405,7 +396,9 @@ tasks:
           );
           // Which is not the order the tasks are written in: `web-e2e` comes
           // third in the file and its gate set comes last here.
-          expect(out, contains('ungated'));
+          // Every task in this file is in a gate set, so there is no such
+          // heading — which is the point of the heading being complete.
+          expect(out, isNot(contains('ungated')));
         },
       );
 
@@ -442,10 +435,10 @@ tasks:
       test("in the file's order, which is the run order (§4.3)", () async {
         writeFile('''
 version: 1
+gates: [check]
 tasks:
   zebra: {desc: cheap, gate: [check], run: [dart]}
   alpha: {desc: slow, gate: [check], run: [dart]}
-  check: {desc: c, collects: check}
 ''');
         await run(['--gate-members', 'check']);
         expect(out, ['zebra', 'alpha']);
@@ -484,7 +477,8 @@ tasks:
           writeFile(lake);
           expect(await run(['--validate']), ExitCode.success);
           expect(printed(), contains(p.join(root.path, xtaskFileName)));
-          expect(printed(), contains('6 tasks'));
+          expect(printed(), contains('3 tasks'));
+          expect(printed(), contains('3 gate sets'));
         },
       );
 
@@ -501,27 +495,39 @@ tasks:
       test('reports every problem at once, not the first', () async {
         writeFile('''
 version: 1
+gates: [empty-one]
 tasks:
   a: {desc: x, do: nobody-registered-this}
-  b: {desc: x, gate: [orphaned], run: [dart]}
 ''');
         expect(await run(['--validate']), ExitCode.invalidFile);
         expect(complained(), contains('nobody-registered-this'));
-        expect(complained(), contains('orphaned'));
+        expect(complained(), contains('empty-one'));
       });
 
-      test('a cycle a `collects:` closes is caught', () async {
-        // Why the validator is given the COLLECTED file. The edges a gate set
-        // creates do not exist until the rewrite, so validating what was
-        // written would miss a ring that a run walks straight into.
+      test('a cycle is caught, with the ring spelled out', () async {
         writeFile('''
 version: 1
+gates: [check]
 tasks:
-  a: {desc: x, needs: [check], gate: [check], run: [dart]}
-  check: {desc: c, collects: check}
+  a: {desc: x, needs: [b], gate: [check], run: [dart]}
+  b: {desc: y, needs: [a], run: [dart]}
 ''');
         expect(await run(['--validate']), ExitCode.invalidFile);
         expect(complained(), contains('need each other'));
+      });
+
+      test('a gate set named in `needs:` is refused', () async {
+        // An edge runs between tasks. Before, `needs: [check]` reached a
+        // composite that happened to share the gate's name; now it names a
+        // list, and a list is not a step.
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, needs: [check], gate: [check], run: [dart]}
+''');
+        expect(await run(['--validate']), ExitCode.invalidFile);
+        expect(complained(), contains('edges between tasks'));
       });
 
       test('a file that does not parse is refused with its span', () async {
@@ -708,15 +714,15 @@ tasks:
       });
 
       test('a task with nothing of its own to run is refused', () async {
-        // A composite gathers other tasks. Handing it arguments that reach
-        // nothing is a command that looks as though it did what was asked.
+        // A gate set gathers tasks. Handing it arguments that reach nothing
+        // is a command that looks as though it did what was asked.
         writeFile(lake);
         expect(await run(['check', '--', '-n', 'x']), ExitCode.invalidFile);
         expect(complained(), contains('`-n`'));
         expect(starter.started, isEmpty);
       });
 
-      test('but the same composite runs fine without them', () async {
+      test('but the same gate set runs fine without them', () async {
         writeFile(lake);
         expect(await run(['check']), ExitCode.success);
       });
@@ -735,19 +741,19 @@ tasks:
           starter = FakeStarter({'ruff': 1, 'pytest': 1});
           writeFile('''
 version: 1
+gates: [check]
 tasks:
   lint: {desc: a, gate: [check], run: [ruff]}
   unit: {desc: b, gate: [check], run: [pytest]}
-  check: {desc: c, collects: check}
 ''');
           expect(await run(['check', '--keep-going']), ExitCode.taskFailed);
           expect(starter.started, hasLength(2));
           expect(printed(), contains('failed   lint (exit 1)'));
           expect(printed(), contains('failed   unit (exit 1)'));
-          expect(
-            printed(),
-            contains('skipped  check — needs `lint`, which did not pass'),
-          );
+          // Nothing is skipped: a gate set has no composite standing after
+          // its members, so both failures are reported and neither blocks a
+          // third thing that does not exist.
+          expect(printed(), isNot(contains('skipped')));
         },
       );
 
@@ -755,10 +761,10 @@ tasks:
         starter = FakeStarter({'ruff': 1, 'pytest': 1});
         writeFile('''
 version: 1
+gates: [check]
 tasks:
   lint: {desc: a, gate: [check], run: [ruff]}
   unit: {desc: b, gate: [check], run: [pytest]}
-  check: {desc: c, collects: check}
 ''');
         expect(await run(['check']), ExitCode.taskFailed);
         expect(starter.started, hasLength(1));
@@ -770,10 +776,10 @@ tasks:
           starter = FakeStarter({'ruff': 1, 'pytest': 1});
           writeFile('''
 version: 1
+gates: [check]
 tasks:
   lint: {desc: a, gate: [check], run: [ruff]}
   unit: {desc: b, gate: [check], run: [pytest]}
-  check: {desc: c, collects: check}
 ''');
           await run(
             ['check', '--keep-going'],
@@ -784,13 +790,87 @@ tasks:
       );
     });
 
+    group('a gate set is run by being named', () {
+      test('and runs its tasks in the order the file writes them', () async {
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  zebra: {desc: cheap, gate: [check], run: [ruff]}
+  alpha: {desc: slow, gate: [check], run: [pytest]}
+''');
+        expect(await run(['check']), ExitCode.success);
+        expect(
+          starter.started.map((s) => p.basename(s.executable)),
+          ['ruff', 'pytest'],
+        );
+      });
+
+      test(
+        'a task nothing gathers is still runnable by its own name',
+        () async {
+          writeFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, gate: [check], run: [ruff]}
+  aot: {desc: y, run: [pytest]}
+''');
+          expect(await run(['aot']), ExitCode.success);
+          expect(starter.started, hasLength(1));
+        },
+      );
+
+      test('an empty gate set is refused rather than run in silence', () async {
+        // It printed nothing and answered 0, so a CI job whose only step is
+        // `xtask check` passed in silence when every member's `gate:` was
+        // misspelled.
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, gate: [chekc], run: [ruff]}
+''');
+        expect(await run(['check']), ExitCode.invalidFile);
+        expect(complained(), contains('has no tasks in it'));
+        expect(starter.started, isEmpty);
+      });
+
+      test('a name that is both a gate set and a task is refused', () async {
+        // Silently preferring the gate set would run a plan the reader did
+        // not ask for, and the composite this replaced could not be
+        // ambiguous.
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, gate: [check], run: [ruff]}
+  check: {desc: y, run: [pytest]}
+''');
+        expect(await run(['check']), ExitCode.invalidFile);
+        expect(complained(), contains('both a gate set and a task'));
+        expect(starter.started, isEmpty);
+      });
+
+      test('a name that is neither is refused as a task', () async {
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, gate: [check], run: [ruff]}
+''');
+        expect(await run(['chekc']), ExitCode.invalidFile);
+        expect(complained(), contains('there is no task called `chekc`'));
+      });
+    });
+
     group('--why', () {
       const chain = '''
 version: 1
+gates: [check]
 tasks:
   install: {desc: a, run: [dart]}
   lint: {desc: b, gate: [check], needs: [install], run: [dart]}
-  check: {desc: c, collects: check}
   publish: {desc: d, then: [announce], run: [dart]}
   announce: {desc: e, run: [dart]}
 ''';
@@ -798,21 +878,19 @@ tasks:
       test('names each entry point and the edges that reach it', () async {
         writeFile(chain);
         expect(await run(['--why', 'install']), ExitCode.success);
-        expect(printed(), contains('check'));
-        expect(printed(), contains('check needs lint'));
+        expect(printed(), contains('gate check'));
+        expect(printed(), contains('gate check runs lint'));
         expect(printed(), contains('lint needs install'));
       });
 
-      test('and it asks the file with `collects:` already resolved', () async {
-        // Otherwise every member of a gate looks like an entry point: it is
-        // the composite naming them that makes them not one.
+      test('a gate set is an entry point of its own', () async {
+        // The half that used to be free: a composite was a task, so
+        // `entryPoints` found it. A declared gate set has no such edge, and
+        // without it `--why` would answer "nothing reaches it" about a task
+        // every `check` runs.
         writeFile(chain);
-        await run(['--why', 'install']);
-        expect(
-          out.where((l) => !l.startsWith(' ')),
-          isNot(contains('lint')),
-          reason: '`lint` is named by `check`, so it is not where a run starts',
-        );
+        await run(['--why', 'lint']);
+        expect(out.where((l) => !l.startsWith(' ')), contains('gate check'));
       });
 
       test('a `then:` is reported as one, not as a requirement', () async {
@@ -823,8 +901,14 @@ tasks:
 
       test('an entry point is told it is one', () async {
         writeFile(chain);
-        await run(['--why', 'check']);
+        await run(['--why', 'publish']);
         expect(printed(), contains('where a run starts'));
+      });
+
+      test('and a gate set is told it is not a task', () async {
+        writeFile(chain);
+        expect(await run(['--why', 'check']), ExitCode.invalidFile);
+        expect(complained(), contains('is a gate set, not a task'));
       });
 
       test('a task in no plan at all gets the answer, not an error', () async {
@@ -865,10 +949,10 @@ tasks:
       test('the whole gate still runs, and still passes', () async {
         writeFile('''
 version: 1
+gates: [check]
 tasks:
   lint: {desc: a, gate: [check], run: [ruff]}
   unit: {desc: b, gate: [check], run: [pytest]}
-  check: {desc: c, collects: check}
 ''');
         expect(await run(['check', '--parallel=2']), ExitCode.success);
         expect(starter.started, hasLength(2));

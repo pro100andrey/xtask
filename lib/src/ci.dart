@@ -49,7 +49,7 @@ final class CiReport {
   /// Every shell step that is a well-formed invocation, by gate set.
   final List<({CiStep step, String gate})> invocations;
 
-  /// Steps that are not one, and gates named by one that nothing collects.
+  /// Steps that are not one, and gates named by one that is not declared.
   final List<String> problems;
 
   /// Gate sets no job runs.
@@ -89,7 +89,7 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     );
   }
 
-  final collected = collectedGates(file);
+  final declared = file.gates.keys.toSet();
 
   final steps = <CiStep>[];
   for (final workflow in directory.listSync().whereType<File>()) {
@@ -115,12 +115,12 @@ CiReport checkCi(XtaskFile file, {required String root}) {
       );
       continue;
     }
-    if (!collected.contains(gate)) {
+    if (!declared.contains(gate)) {
       problems.add(
         '${step.workflow}: job `${step.job}` runs the gate set `$gate`, which '
-        'no task collects — so the job runs nothing'
-        '${collected.isEmpty ? '' : '. Collected: '
-                  '${(collected.toList()..sort()).join(', ')}'}',
+        'this file does not declare — so the job runs nothing'
+        '${declared.isEmpty ? '' : '. Declared: '
+                  '${(declared.toList()..sort()).join(', ')}'}',
       );
       continue;
     }
@@ -139,7 +139,7 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     invocations: List.unmodifiable(invocations),
     problems: List.unmodifiable(problems),
     unrun: List.unmodifiable([
-      for (final gate in collected.toList()..sort())
+      for (final gate in declared.toList()..sort())
         if (!run.contains(gate) && tasksInGate(file, gate).isNotEmpty) gate,
     ]),
   );

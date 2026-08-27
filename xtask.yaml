@@ -48,9 +48,6 @@ tasks:
     gate: [check]
     run: [dart, test]
 
-  check:
-    desc: everything that must pass before work is called done
-    collects: check
 
   # In its own gate set, and that is the whole point — which trying the other
   # arrangement taught, in four seconds.
@@ -77,9 +74,6 @@ tasks:
     gate: [release]
     run: [dart, pub, publish, --dry-run]
 
-  release:
-    desc: everything that must hold before this package can be published
-    collects: release
 
   # A person's convenience, and the one task in this file no gate reaches.
   #

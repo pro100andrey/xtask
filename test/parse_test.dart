@@ -67,7 +67,6 @@ tasks:
 
   check:
     desc: reproduce CI locally
-    collects: check
 ''');
     });
 
@@ -97,7 +96,6 @@ tasks:
 
     test('a composite has no body at all', () {
       expect(file.tasks['check']!.body, isNull);
-      expect(file.tasks['check']!.collects, 'check');
     });
 
     test(r'keeps `in: $each` as written, unsubstituted', () {
@@ -128,7 +126,7 @@ tasks:
   });
 
   group('declaration order', () {
-    // §4.3 makes the run order of a `collects:` composite the order tasks are
+    // §4.3 makes the run order of a gate set the order its tasks are
     // written in, so that cheap gates come before slow ones. That rests on the
     // parser keeping a mapping's key order, which every YAML implementation
     // does and the YAML specification does not promise. These two tests are
@@ -360,7 +358,7 @@ tasks:
       );
       expect(message, contains('unknown key in task `a`: `gates`'));
       // The list is what tells somebody who wrote the old name where to go.
-      expect(message, contains('collects'));
+      expect(message, contains('gate'));
     });
 
     test('are reported at the line they were written on', () {
@@ -707,6 +705,21 @@ tasks: {}
       );
     });
 
+    test('a name that is the empty string is refused', () {
+      expect(
+        () => parseXtaskFile(
+          "version: 1\ngates: ['']\ntasks:\n  a: {desc: x, run: [d]}\n",
+        ),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('no name'),
+          ),
+        ),
+      );
+    });
+
     test('an empty list is refused rather than read as none', () {
       expect(
         () => parseXtaskFile(
@@ -782,7 +795,8 @@ tasks: {}
     test('and neither can a task with no body to spend it', () {
       expect(
         () => parseXtaskFile(
-          'version: 1\ntasks:\n  a: {desc: x, timeout: 5, collects: g}\n',
+          'version: 1\ntasks:\n  a: {desc: x, timeout: 5, needs: [b]}\n'
+          '  b: {desc: y, run: [d]}\n',
         ),
         throwsA(isA<XtaskFormatException>()),
       );

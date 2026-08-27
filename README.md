@@ -47,9 +47,6 @@ tasks:
     gate: [check]
     run: [pytest, -q]
 
-  check:
-    desc: everything that must pass before work is called done
-    collects: check
 ```
 
 Those two are a Python repository's tools; put in whatever your own repository
@@ -72,13 +69,11 @@ before calling work done — and also the whole of the CI job, the same command,
 because there is only one list and it is not in either of them. `xtask --list`
 prints the tasks with their descriptions.
 
-Two keys in that file are doing the work, and they point in opposite
-directions. `gate: [check]` is written on a check and means *I am a member of
-the group called `check`*. `collects: check` is written on the task you type
-and means *I run that whole group*, in the order the file writes it. A task
-named `check` collecting a gate named `check` is the ordinary case and not a
-cycle — [Gate sets](#gate-sets-and-ci) says why, and why the
-whole tool exists for those two keys.
+Two lines in that file are doing the work. `gates: [check]` at the top says
+which groups this repository has; `gate: [check]` on a task says it is in one.
+`xtask check` then runs the group, in the order the file writes it — a gate set
+is not a task and needs none. [Gate sets](#gate-sets-and-ci) says why the whole
+tool exists for those two lines.
 
 ## Using it from Dart
 
@@ -261,21 +256,17 @@ gates: [check, release]
 Names only — a gate set is not a task and has nothing to describe. Declaring
 them is what makes a misspelling a refusal: a gate that came into existence by
 being mentioned could not be misspelled, because the misspelling was a new
-gate. `collects: chekc` used to gather a set with no members, run, do nothing
-and go green, from one transposed letter. The order is the author's, and is the
-order a report groups by.
+gate. The order is the author's, and is the order `--list` groups by.
 
-A task lists the sets it belongs to; a composite `collects:` a set and
-therefore needs every task in it, in the order they appear in the file (cheap
-gates before slow ones). A declared set nothing is in is refused too, for the
-reason the empty-set rule exists: a gate that examined nothing reports the same
-green as one that passed.
+A task lists the sets it belongs to, and `xtask check` runs every task in
+`check`, in the order they appear in the file (cheap gates before slow ones).
+A declared set nothing is in is refused, for the reason the empty-set rule
+exists: a gate that examined nothing reports the same green as one that passed.
 
-`collects:` names **one** set, not a list — a composite is the thing you type,
-and one command gathering two unrelated sets is two commands wearing one name.
-And the composite named after its own set, which the first example writes, is
-not the cycle it looks like: the engine drops a composite from the members it
-gathers, because gathering a set does not mean gathering yourself.
+There is no composite task, and nothing to keep in step with the declaration. A
+gate set and a task may not share a name — a person types one word — and
+`needs:` may not name a gate set, because an edge runs between tasks and a gate
+set is a list rather than a step.
 
 That is the whole mechanism for removing the duplicate list. A CI job runs
 **one invocation**:
@@ -448,7 +439,6 @@ registry will not accept that version again.
 | `needs` | direct requirements, run before this task, once per invocation |
 | `then` | continuations, run **after** this task's body |
 | `gate` | the gate sets this task belongs to |
-| `collects` | names a gate set this task is the composite of |
 | `timeout` | seconds a `run:` body may take before it is killed — per member under `each:` |
 
 `timeout:` is asked of the process, not waited out by the engine: the body is

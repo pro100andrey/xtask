@@ -28,7 +28,6 @@ const taskKeys = <String>{
   'needs',
   'then',
   'gate',
-  'collects',
   'timeout',
 };
 
@@ -83,9 +82,8 @@ final class XtaskFile {
   /// mentioned could not be misspelled.** It used to: a gate existed as soon
   /// as a task said it was in one, so `gate: [chekc]` made a new gate with one
   /// member — caught, but only sideways, by the orphan check downstream — and
-  /// `collects: chekc` made a composite that gathered nothing, ran, did
-  /// nothing and went green. One list is what lets both sides of that be a
-  /// refusal that names the line.
+  /// a misspelling was simply a different gate set. One declared list is
+  /// what makes a name in `gate:` checkable at all.
   ///
   /// The order is the author's and is the order a report groups by. It carries
   /// no description: a gate set is not a task, it is the name of who runs a
@@ -96,8 +94,8 @@ final class XtaskFile {
   final Map<String, NamedSet> sets;
 
   /// Named tasks, **in declaration order**, which is load-bearing: §4.3 makes
-  /// the run order of a `collects:` composite the order they appear in the
-  /// file, so that cheap gates come before slow ones. Dart's default map
+  /// the run order of a gate set the order its tasks appear in the file, so
+  /// that cheap gates come before slow ones. Dart's default map
   /// preserves insertion order and the parser inserts in document order; the
   /// YAML specification does not promise this, so a test pins it.
   ///
@@ -170,7 +168,6 @@ final class Task with Located {
     this.needs = const [],
     this.then = const [],
     this.gate = const [],
-    this.collects,
     this.timeout,
   });
 
@@ -225,9 +222,4 @@ final class Task with Located {
   /// carried on writing to the disk, which is worse than no deadline at all.
   /// `parse` refuses the combination rather than letting it half-work.
   final int? timeout;
-
-  /// Names a gate set this task is the composite of (§4.3). Deliberately
-  /// spelled nothing like `gate:`: the two mean opposite things, and a
-  /// one-letter difference would be a typo that changes behaviour silently.
-  final String? collects;
 }

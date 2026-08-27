@@ -16,7 +16,17 @@ implicit version could not do, having neither an order of its own nor a
 complete list. `ungated` is a heading only a declaration makes trustworthy: a
 task under it is one nothing runs, rather than one the report did not think of.
 
-**Breaking:** a file that uses gate sets must declare them.
+A gate set is now run by being named — `xtask check` — and `collects:` is
+gone with the composite it created. The composite existed only to give a gate
+set a name, a description and a way to be run; the declaration gives all three,
+and removing it removes the rewrite that turned one into a task, the special
+case where a composite in its own gate had to be dropped from its own members,
+and the class of file where the two could disagree. A gate set and a task may
+not share a name, and `needs:`/`then:` may not name a gate set: an edge runs
+between tasks, and a list is not a step.
+
+**Breaking:** a file that uses gate sets must declare them, and `collects:` is
+no longer a key — delete the composite and run the gate set by name.
 
 ### Three failures a committed file could reach with nothing said about it
 

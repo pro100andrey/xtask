@@ -56,7 +56,7 @@ void main() {
       final report = check(
         'version: 1\ngates: [check]\ntasks:\n'
         '  a: {desc: x, gate: [check], run: [dart, analyze]}\n'
-        '  check: {desc: y, collects: check}\n',
+        '',
       );
       expect(report.ok, isTrue, reason: report.toString());
       expect(report.problems, isEmpty);
@@ -73,7 +73,6 @@ void main() {
     test('but a composite that gathers a gate set is fine', () {
       final report = check(
         'version: 1\ngates: [check]\ntasks:\n'
-        '  check: {desc: x, collects: check}\n'
         '  a: {desc: y, gate: [check], run: [dart]}\n',
       );
       expect(report.ok, isTrue, reason: report.toString());
@@ -173,28 +172,11 @@ void main() {
   });
 
   group('a gate set is declared before it is used', () {
-    test(
-      'a misspelled `collects:` is a refusal, not a gate with no members',
-      () {
-        // The hole this closes. `collects: chekc` gathered a gate nothing was
-        // in, so the composite ran, did nothing and answered 0 — a green result
-        // nobody checked, from one transposed letter. Nothing caught it: the
-        // orphan rule looks at `gate:`, not at `collects:`.
-        final report = check(
-          'version: 1\ngates: [check]\ntasks:\n'
-          '  a: {desc: x, gate: [check], run: [dart]}\n'
-          '  check: {desc: y, collects: chekc}\n',
-        );
-        expect(report.toString(), contains('`gates:` does not declare'));
-        expect(report.toString(), contains('Declared: `check`'));
-      },
-    );
-
     test('a misspelled `gate:` says what the declared names are', () {
       final report = check(
         'version: 1\ngates: [check]\ntasks:\n'
         '  a: {desc: x, gate: [chekc], run: [dart]}\n'
-        '  check: {desc: y, collects: check}\n',
+        '',
       );
       expect(report.toString(), contains('names the gate set `chekc`'));
     });
@@ -203,7 +185,7 @@ void main() {
       final report = check(
         'version: 1\ngates: [check, release]\ntasks:\n'
         '  a: {desc: x, gate: [check], run: [dart]}\n'
-        '  check: {desc: y, collects: check}\n',
+        '',
       );
       expect(report.toString(), contains('gate set `release` is declared'));
       expect(report.toString(), contains('checks nothing'));
@@ -213,7 +195,7 @@ void main() {
       final report = check(
         'version: 1\ntasks:\n'
         '  a: {desc: x, gate: [check], run: [dart]}\n'
-        '  check: {desc: y, collects: check}\n',
+        '',
       );
       expect(report.toString(), contains('`gates: [check]`'));
     });
@@ -227,35 +209,33 @@ void main() {
     });
   });
 
-  group('an orphan gate is a task that believes it is checked', () {
-    test('a gate nothing collects is refused', () {
+  group('a gate set and a task are two kinds of thing with one name space', () {
+    test('sharing a name is refused, because a person types one word', () {
       final report = check(
-        'version: 1\ngates: [check, ci-web]\ntasks:\n'
-        '  a: {desc: x, gate: [ci-web], run: [dart]}\n'
-        '  b: {desc: z, gate: [check], run: [dart]}\n'
-        '  check: {desc: y, collects: check}\n',
+        'version: 1\ngates: [check]\ntasks:\n'
+        '  check: {desc: x, gate: [check], run: [dart]}\n',
       );
-      expect(report.toString(), contains('no task collects it'));
-      expect(report.toString(), contains('looks checked and is not'));
-      expect(report.toString(), contains('Collected: check'));
+      expect(report.toString(), contains('both a gate set and a task'));
     });
 
-    test('every gate a task claims is checked, not just the first', () {
+    test('`needs:` may not name a gate set', () {
+      // An edge runs between tasks. A gate set is a list, not a step, and
+      // letting one be a node would give the run order two authors.
       final report = check(
-        'version: 1\ngates: [check, ci-web, ci-test]\ntasks:\n'
-        '  a: {desc: x, gate: [check, ci-web, ci-test], run: [dart]}\n'
-        '  check: {desc: y, collects: check}\n',
+        'version: 1\ngates: [check]\ntasks:\n'
+        '  a: {desc: x, gate: [check], run: [dart]}\n'
+        '  b: {desc: y, needs: [check], run: [dart]}\n',
       );
-      expect(report.problems, hasLength(2), reason: report.toString());
+      expect(report.toString(), contains('edges between tasks'));
     });
 
-    test('a gate that is collected passes', () {
+    test('`then:` may not either', () {
       final report = check(
-        'version: 1\ngates: [ci-web]\ntasks:\n'
-        '  a: {desc: x, gate: [ci-web], run: [dart]}\n'
-        '  ci-web: {desc: y, collects: ci-web}\n',
+        'version: 1\ngates: [check]\ntasks:\n'
+        '  a: {desc: x, gate: [check], run: [dart]}\n'
+        '  b: {desc: y, then: [check], run: [dart]}\n',
       );
-      expect(report.ok, isTrue, reason: report.toString());
+      expect(report.toString(), contains('edges between tasks'));
     });
   });
 
@@ -307,7 +287,7 @@ void main() {
           '  idle: {desc: does nothing}\n'
           '  ghost-verb: {desc: y, do: nope}\n'
           '  ghost-set: {desc: z, argv-from: nowhere, run: [dart]}\n'
-          '  orphan: {desc: w, gate: [nobody], run: [dart]}\n'
+          '  orphan: {desc: w, gate: [nobody, missing], run: [dart]}\n'
           '  ring-a: {desc: v, needs: [ring-b]}\n'
           '  ring-b: {desc: u, needs: [ring-a]}\n',
         ),

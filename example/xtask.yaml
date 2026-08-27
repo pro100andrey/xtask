@@ -32,6 +32,3 @@ tasks:
     do: count-lines
     argv-from: sources
 
-  check:
-    desc: everything that must pass before work is called done
-    collects: check

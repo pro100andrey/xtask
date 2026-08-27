@@ -76,8 +76,9 @@ Map<String, Map<String, Object?>> get _topLevel => {
     'description':
         'Every gate set this file has, in the order a report groups by. Names '
         'only — a gate set is not a task and has nothing to describe. '
-        'Declaring them is what makes a misspelled `gate:` or `collects:` a '
-        'refusal rather than a new gate nobody runs.',
+        'A gate set is run by being named — `xtask check`. Declaring them '
+        'is what makes a misspelled `gate:` a refusal rather than a new gate '
+        'set nobody runs.',
   },
   'sets': {
     'type': 'object',
@@ -90,8 +91,8 @@ Map<String, Map<String, Object?>> get _topLevel => {
   'tasks': {
     'type': 'object',
     'description':
-        'The graph. Declaration order is meaningful: a `collects:` composite '
-        'runs its gate members in the order they appear here.',
+        'The graph. Declaration order is meaningful: a gate set runs its tasks '
+        'in the order they appear here.',
     'additionalProperties': _task,
   },
 };
@@ -165,13 +166,6 @@ const _taskKeys = <String, Map<String, Object?>>{
     'type': 'string',
     'description':
         'A set whose members are appended as arguments, already expanded.',
-  },
-  'collects': {
-    'type': 'string',
-    'description':
-        'Names a gate set this task is the composite of — it needs every task '
-        'in that set. Spelled nothing like `gate:` on purpose: the two mean '
-        'opposite things.',
   },
   'desc': {
     'type': 'string',

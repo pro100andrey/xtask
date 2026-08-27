@@ -260,6 +260,22 @@ tasks:
       expect(lines.last, contains('aot'));
     });
 
+    test('a task whose gate set is misspelled still appears', () {
+      // It belongs to no declared set, so it matched neither bucket and
+      // vanished from the listing entirely — one transposed letter turning
+      // this report into a lie by omission. Naming the misspelling is
+      // `--validate`'s job; being complete is this one's.
+      final lines = grouping(
+        parsed(
+          'version: 1\ngates: [check]\ntasks:\n'
+          '  a: {desc: x, gate: [check], run: [d]}\n'
+          '  b: {desc: y, gate: [chekc], run: [d]}\n',
+        ),
+      );
+      expect(lines.join('\n'), contains('b '));
+      expect(lines, contains('ungated'));
+    });
+
     test('a file with no gate sets is one flat column, with no heading', () {
       final lines = grouping(
         parsed('version: 1\ntasks:\n  a: {desc: x, run: [d]}\n'),

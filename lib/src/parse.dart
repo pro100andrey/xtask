@@ -47,7 +47,7 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
     version: version,
     gates: Map.unmodifiable(_gates(root)),
     // Unmodifiable, and §4.3 is why for `tasks`: its ORDER is load-bearing —
-    // a `collects:` composite runs its members in the order they appear — and
+    // a gate set runs its tasks in the order they appear — and
     // a map anybody downstream can reorder is an order nobody can rely on.
     sets: Map.unmodifiable(_sets(root)),
     tasks: Map.unmodifiable(_tasks(root)),
@@ -113,6 +113,13 @@ Map<String, SourceSpan?> _gates(YamlMap root) {
   final gates = <String, SourceSpan?>{};
   for (final item in node.nodes) {
     final name = _name(item, 'a gate name');
+    if (name.isEmpty) {
+      throw XtaskFormatException(
+        'a gate set with no name. `--list` would print a heading with nothing '
+        'after it, and nothing could name it in a `gate:`',
+        item.span,
+      );
+    }
     if (gates.containsKey(name)) {
       throw XtaskFormatException(
         'gate set `$name` is declared twice. The order of this list is the '
@@ -176,9 +183,9 @@ Map<String, Task> _tasks(YamlMap root) {
   }
 
   final map = _asMap(node, '`tasks:`');
-  // Insertion order is document order, and §4.3 leans on it: a `collects:`
-  // composite runs its members in the order they appear, so that cheap gates
-  // come before slow ones. A test pins this rather than trusting it — the
+  // Insertion order is document order, and §4.3 leans on it: a gate set runs
+  // its tasks in the order they appear, so that cheap gates come before slow
+  // ones. A test pins this rather than trusting it — the
   // YAML specification does not promise a mapping keeps its order, every
   // implementation does, and the gap between those two sentences is exactly
   // where a gate would silently reorder.
@@ -226,7 +233,6 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     needs: _names(map, 'needs', name),
     then: _names(map, 'then', name),
     gate: _names(map, 'gate', name),
-    collects: _optionalString(map, 'collects', name),
   );
 }
 

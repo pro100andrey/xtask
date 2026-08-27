@@ -220,8 +220,15 @@ List<String> grouping(XtaskFile file) {
       ],
     [
       'ungated',
+      // **Every task no DECLARED gate set runs**, not only the ones that
+      // claim no gate. A task whose `gate:` is misspelled belongs to no
+      // declared set, and matching neither bucket made it vanish from the
+      // listing entirely — one transposed letter turning this report into a
+      // lie by omission, which is the failure grouping was added to prevent.
+      // `--validate` is what names the misspelling; this only has to be
+      // complete.
       for (final task in file.tasks.values)
-        if (task.gate.isEmpty) row(task),
+        if (!task.gate.any(file.gates.containsKey)) row(task),
     ],
   ]..removeWhere((group) => group.length == 1);
 

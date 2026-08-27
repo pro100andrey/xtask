@@ -42,10 +42,23 @@ Set<String> zeroOrMoreDirectories(String pattern) {
 
   final withStar = pattern.substring(0, index + 3);
   final withoutStar = pattern.substring(0, index);
-  final tails = zeroOrMoreDirectories(pattern.substring(index + 3));
+  final rest = pattern.substring(index + 3);
+  final tails = zeroOrMoreDirectories(rest);
+
+  // **Unless dropping it would empty a brace alternative.** `{**/,b}` has an
+  // alternative that is nothing BUT the globstar, so the zero-directory
+  // reading of it is `{,b}` — which `package:glob` builds without complaint
+  // and then throws `Bad state: No element` from, at match time, past the
+  // `FormatException` guard that catches a malformed pattern. A variant this
+  // function invented must not be one the file could not have written.
+  final emptiesAnAlternative =
+      (withoutStar.endsWith('{') || withoutStar.endsWith(',')) &&
+      (rest.isEmpty || rest.startsWith(',') || rest.startsWith('}'));
+
   return {
     for (final tail in tails) withStar + tail,
-    for (final tail in tails) withoutStar + tail,
+    if (!emptiesAnAlternative)
+      for (final tail in tails) withoutStar + tail,
     // `**/` on its own yields the empty pattern, which `Glob` refuses. It is
     // the engine's own by-product, so it is dropped here rather than surfacing
     // as a crash on a pattern the library accepts.

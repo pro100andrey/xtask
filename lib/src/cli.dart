@@ -532,11 +532,6 @@ Future<int> runCli(
 
   final known = {...builtInVerbs(root: root), ...verbs};
 
-  // Composites are given their members before anything looks at the graph —
-  // for planning, and for validating too, because a `collects:` that closes a
-  // ring is a cycle only after the rewrite that creates the edges.
-  final collected = withCollectedGates(file);
-
   try {
     switch (request) {
       case ShowUsage() || EmitSchema() || ShowVersion():
@@ -544,7 +539,7 @@ Future<int> runCli(
 
       case Validate():
         final problems = validateFile(
-          collected,
+          file,
           knownVerbs: known.keys.toSet(),
           sets: SetExpander(root: root),
         );
@@ -581,15 +576,19 @@ Future<int> runCli(
         return ExitCode.success;
 
       case WhyTask(:final task):
-        if (!collected.tasks.containsKey(task)) {
+        if (file.gates.containsKey(task)) {
+          // Answerable, but not this question. What puts a gate set in a plan
+          // is that somebody typed it; what is IN it is `--gate-members`.
+          throw XtaskFormatException(
+            '`$task` is a gate set, not a task — a run reaches it because '
+            'somebody typed it. For what it runs, `--gate-members $task`',
+            file.gates[task],
+          );
+        }
+        if (!file.tasks.containsKey(task)) {
           throw XtaskFormatException('there is no task called `$task`');
         }
-        report
-            .why(task, {
-              for (final entry in entryPoints(collected))
-                entry: ?routeTo(collected, from: entry, to: task),
-            })
-            .forEach(out);
+        report.why(task, _routesTo(file, task)).forEach(out);
         return ExitCode.success;
 
       case GateMembers(:final gate):
@@ -599,11 +598,11 @@ Future<int> runCli(
         return ExitCode.success;
 
       case DryRunTask(:final task, :final arguments):
-        _refuseArgumentsWithNowhereToGo(collected, task, arguments);
+        _refuseArgumentsWithNowhereToGo(file, task, arguments);
         return await dryRun(
-          file: collected,
+          file: file,
           root: root,
-          plan: planRun(collected, task),
+          plan: _planFor(file, task),
           resolver: resolver,
           log: out,
           verbs: known,
@@ -617,12 +616,12 @@ Future<int> runCli(
         :final keepGoing,
         :final concurrency,
       ):
-        _refuseArgumentsWithNowhereToGo(collected, task, arguments);
+        _refuseArgumentsWithNowhereToGo(file, task, arguments);
         return await Executor(
           bodies: BodyResolver(
             root: root,
             resolver: resolver,
-            sets: collected.sets,
+            sets: file.sets,
             verbs: known,
             environment: environment,
             passedThrough: (task: task, arguments: arguments),
@@ -632,7 +631,7 @@ Future<int> runCli(
           markers: LogMarkers.forHost(environment),
           keepGoing: keepGoing,
           concurrency: concurrency,
-        ).run(planRun(collected, task));
+        ).run(_planFor(file, task));
     }
   } on XtaskFormatException catch (problem) {
     err('$problem');
@@ -640,38 +639,123 @@ Future<int> runCli(
   }
 }
 
-/// Refuses arguments handed to a task that has no body to hand them to.
+/// Refuses arguments handed to something with no body to hand them to.
 ///
-/// A composite gathers other tasks and runs nothing of its own, so `xtask
-/// check -- --name x` has nowhere to put `--name x`. Passing them silently to
-/// nothing is the exact shape of failure this tool exists against: a command
-/// that looks as though it did what was asked.
+/// A gate set gathers tasks and runs nothing of its own, so `xtask check --
+/// --name x` has nowhere to put `--name x`; so does a task whose whole content
+/// is `needs:`. Passing them silently to nothing is the exact shape of failure
+/// this tool exists against: a command that looks as though it did what was
+/// asked.
 void _refuseArgumentsWithNowhereToGo(
   XtaskFile file,
   String name,
   List<String> arguments,
 ) {
+  if (arguments.isEmpty) {
+    return;
+  }
+  final quoted = arguments.map((a) => '`$a`').join(' ');
+  if (file.gates.containsKey(name)) {
+    throw XtaskFormatException(
+      '`$name` is a gate set, so there is nothing for $quoted to be an '
+      'argument to. Name the task that takes them',
+      file.gates[name],
+    );
+  }
   final task = file.tasks[name];
-  if (arguments.isEmpty || task == null || task.body != null) {
+  if (task == null || task.body != null) {
     return;
   }
   throw XtaskFormatException(
     'task `$name` has no `run:` and no `do:` of its own, so there is nothing '
-    'for ${arguments.map((a) => '`$a`').join(' ')} to be an argument to. Name '
-    'the task that takes them',
+    'for $quoted to be an argument to. Name the task that takes them',
     task.span,
   );
 }
 
+/// Every way a run reaches [task]: the gate sets that run it, and the tasks
+/// somebody types that lead to it.
+///
+/// **The gate sets are the half that used to be free.** A composite was a
+/// task, so `entryPoints` found it and the route ran through its `needs:`. A
+/// declared gate set has no such edge, and without this `--why format` would
+/// answer "nothing reaches it" about a task that every `check` runs — the one
+/// answer §8 says this question exists to prevent.
+Map<String, List<PlanEdge>> _routesTo(XtaskFile file, String task) {
+  final routes = <String, List<PlanEdge>>{};
+  for (final gate in file.gates.keys) {
+    for (final member in tasksInGate(file, gate)) {
+      final route = routeTo(file, from: member.name, to: task);
+      if (route == null) {
+        continue;
+      }
+      // The first member that reaches it, which is the one the run reaches it
+      // through: members are planned in declared order.
+      // The edge is written even when the member IS the task, because an
+      // empty route means "you typed it" — true of a task, and never of a
+      // gate set, which reaches it by running it.
+      routes.putIfAbsent(
+        'gate $gate',
+        () => [PlanEdge('gate $gate', 'runs', member.name), ...route],
+      );
+    }
+  }
+  for (final entry in entryPoints(file)) {
+    final route = routeTo(file, from: entry, to: task);
+    if (route != null) {
+      routes[entry] = route;
+    }
+  }
+  return routes;
+}
+
+/// The plan for [name], whether it is a gate set or a task.
+///
+/// **One name space, asked in one place.** §7 says a person types what they
+/// want to happen, and a gate set is as much that as a task is — `xtask check`
+/// used to work only because a composite task happened to carry the same name.
+/// A gate set is now what its declaration says it is, so this is where the two
+/// meet, and `_checkNoNameCollision` in the validator is what keeps the
+/// question answerable.
+Plan _planFor(XtaskFile file, String name) {
+  if (!file.gates.containsKey(name)) {
+    return planRun(file, name);
+  }
+  if (file.tasks.containsKey(name)) {
+    // §8 reports this too, but a run must not quietly pick one of them: the
+    // composite this replaced could not be ambiguous, and silently preferring
+    // the gate set would run a plan the reader did not ask for.
+    throw XtaskFormatException(
+      '`$name` is both a gate set and a task, so there is no telling which '
+      'one this asks for. Rename one of them',
+      file.gates[name],
+    );
+  }
+  final plan = planGate(file, name);
+  if (plan.steps.isEmpty) {
+    // **Silence would be a green gate that ran nothing.** An empty plan
+    // printed nothing and answered 0, so a CI job whose only step is `xtask
+    // check` passed in complete silence when every member's `gate:` was
+    // misspelled — the exact failure this tool is against, reached by the one
+    // path that does not validate first.
+    throw XtaskFormatException(
+      'gate set `$name` has no tasks in it, so running it would check '
+      'nothing and answer 0. Put a task in it, or stop declaring it',
+      file.gates[name],
+    );
+  }
+  return plan;
+}
+
 /// [gate], if the file knows the name.
 ///
-/// A gate set nobody is in and nothing collects is a typo, and the answer to a
-/// typo must not be an empty list: `--gate-members ci-analize` printing
-/// nothing reads as "that job checks nothing", which is the failure this whole
-/// tool is about. Whether a gate that DOES exist is orphaned is `--validate`'s
-/// question (§8), not this one's.
+/// A gate set that is not declared is a typo, and the answer to a typo must
+/// not be an empty list: `--gate-members ci-analize` printing nothing reads as
+/// "that job checks nothing", which is the failure this whole tool is about.
+/// Whether a DECLARED gate has members is `--validate`'s question (§8), not
+/// this one's.
 String _gate(XtaskFile file, String gate) {
-  final known = gateSets(file);
+  final known = file.gates.keys.toSet();
   if (known.contains(gate)) {
     return gate;
   }

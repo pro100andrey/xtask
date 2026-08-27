@@ -26,7 +26,7 @@ final class SetExpander {
   /// The answer is unmodifiable, and both branches answer alike. The list arm
   /// used to hand back the parsed model's own list while the glob arm built a
   /// fresh one, so the obvious `expand(...)..addAll(task.args)` worked against
-  /// a glob and permanently poisoned a list — in a `collects:` gate, the second
+  /// a glob and permanently poisoned a list — in a gate set, the second
   /// task sharing an `argv-from` would receive the first one's arguments
   /// appended to the file list, and the gate would go green having checked the
   /// wrong thing. Invisible for globs, which is most of the suite.

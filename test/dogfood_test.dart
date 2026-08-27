@@ -54,7 +54,7 @@ void main() {
       // broken task file cannot be green. This project registers no verbs of
       // its own (§9), so what a `do:` may name is the built-in list.
       final report = validateFile(
-        withCollectedGates(file),
+        file,
         knownVerbs: builtInVerbNames,
         sets: SetExpander(root: root),
       );
@@ -62,12 +62,12 @@ void main() {
     });
 
     test('and every gate it declares gathers something', () {
-      // A composite over an empty gate is the failure this whole tool is
-      // about: a command that passes having examined nothing. Asked of every
-      // collected gate rather than of `check` by name — naming them here
-      // would be a list of gates beside the file's own, and the second one is
-      // always the one that stops being updated.
-      final gates = collectedGates(file);
+      // A gate set with no members is the failure this whole tool is about: a
+      // command that passes having examined nothing. Asked of every declared
+      // gate rather than of `check` by name — naming them here would be a
+      // list of gates beside the file's own, and the second one is always the
+      // one that stops being updated.
+      final gates = file.gates.keys;
       expect(gates, isNotEmpty);
       for (final gate in gates) {
         expect(tasksInGate(file, gate), isNotEmpty, reason: 'gate `$gate`');
@@ -85,18 +85,13 @@ void main() {
       // A test that asked about `check` would have called a task CI runs on
       // every push "typed by hand", and the word would have been wrong.
       //
-      // Planned from each composite's own name rather than from the gate's:
-      // they happen to match in this file and nothing makes them.
-      //
       // What is left is equality, not containment. A task added and forgotten
       // fails here, and so does a name left behind after the task it excused
       // is gone. It is not a second copy of any gate: their members are
       // exactly what is not written on this line.
       const typedByHand = {'aot'};
-      final collected = withCollectedGates(file);
       final reached = {
-        for (final task in file.tasks.values)
-          if (task.collects != null) ...planRun(collected, task.name).names,
+        for (final gate in file.gates.keys) ...planGate(file, gate).names,
       };
       expect(
         file.tasks.keys.toSet().difference(reached),
@@ -216,7 +211,7 @@ void main() {
           reason: block,
         );
         final report = validateFile(
-          withCollectedGates(file),
+          file,
           knownVerbs: {
             ...builtInVerbNames,
             ...file.tasks.values.map(

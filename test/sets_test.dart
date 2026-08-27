@@ -332,6 +332,20 @@ void main() {
       );
     });
 
+    test('a globstar that IS a brace alternative is left alone', () {
+      // The zero-directory reading of `{**/,b}` is `{,b}` — an empty
+      // alternative, which `package:glob` builds without complaint and then
+      // throws `Bad state: No element` from at MATCH time, past the
+      // `FormatException` guard that catches a malformed pattern. A variant
+      // this engine invents must not be one the file could not have written.
+      given(['a.dart', 'deep/a.dart']);
+      expect(
+        () => expandGlob(['{**/,b}*.dart']),
+        returnsNormally,
+        reason: 'it crashed the whole run, past every exit code',
+      );
+    });
+
     test('an excluded directory is not descended into either', () {
       given(['x/test_data/deep/deeper/a.lake']);
       expect(

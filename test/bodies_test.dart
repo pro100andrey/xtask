@@ -79,11 +79,16 @@ void main() {
       );
     });
 
-    test('and NONE for a composite, which is not a special case', () {
+    test('and NONE for a task with no body, not a special case', () {
       // An empty list says "nothing of its own" without the caller needing to
       // ask a second question about the body.
       expect(
-        resolve('version: 1\ntasks:\n  c: {desc: x, collects: g}\n', 'c'),
+        resolve(
+          'version: 1\ntasks:\n'
+              '  c: {desc: x, needs: [d]}\n'
+              '  d: {desc: y, run: [dart]}\n',
+          'c',
+        ),
         isEmpty,
       );
     });

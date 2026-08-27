@@ -8,6 +8,7 @@
 library;
 
 import 'errors.dart';
+import 'gates.dart';
 import 'model.dart';
 
 /// One task, in the position the run reaches it.
@@ -68,9 +69,9 @@ final class PlanEdge {
 
 /// The tasks nothing else names — the ones somebody types.
 ///
-/// Ask it of a file whose `collects:` has already been rewritten, or every
-/// member of a gate looks like an entry point: it is the composite naming them
-/// that makes them not one.
+/// A gate set's members are among them: typing `xtask format` is as real an
+/// entry as typing `xtask check`, and §7 says both are things a person does.
+/// What a gate set adds is a second way in, which `--why` reports separately.
 List<String> entryPoints(XtaskFile file) {
   final named = <String>{};
   for (final task in file.tasks.values) {
@@ -137,6 +138,23 @@ List<PlanEdge>? routeTo(
 /// exist and for a cycle, which is reported with the cycle spelled out.
 Plan planRun(XtaskFile file, String taskName) {
   final planner = _Planner(file)..resolve(taskName, from: null);
+  return Plan(List.unmodifiable(planner.steps));
+}
+
+/// The order the tasks in gate set [gate] resolve to, in declared order.
+///
+/// **What `collects:` used to be, without the composite.** A gate set was
+/// rewritten into an ordinary task whose `needs:` were its members, so that
+/// this file would not have to learn a third kind of edge. It still does not:
+/// one planner, seeded with each member in turn, gives the same order, the
+/// same run-once rule and the same cycle report — and drops the special case
+/// the rewrite needed, where a composite in the gate set it gathers had to be
+/// removed from its own members to avoid needing itself.
+Plan planGate(XtaskFile file, String gate) {
+  final planner = _Planner(file);
+  for (final task in tasksInGate(file, gate)) {
+    planner.resolve(task.name, from: null);
+  }
   return Plan(List.unmodifiable(planner.steps));
 }
 

@@ -20,11 +20,10 @@ void main() {
 
   const lake = '''
 version: 1
+gates: [ci-analyze, ci-web]
 tasks:
   analyze: {desc: a, gate: [ci-analyze], run: [dart, analyze]}
   web-e2e: {desc: b, gate: [ci-web], run: [dart, test]}
-  ci-analyze: {desc: c, collects: ci-analyze}
-  ci-web: {desc: d, collects: ci-web}
 ''';
 
   CiReport check([String yaml = lake]) =>
@@ -92,7 +91,7 @@ jobs:
       expect(report.problems.single, contains('&&'));
     });
 
-    test('a gate set nothing collects is a typo, and named as one', () {
+    test('a gate set the file does not declare is a typo, named as one', () {
       workflow('ci.yml', '''
 jobs:
   analyze:
@@ -147,10 +146,9 @@ jobs:
 ''');
       final report = check('''
 version: 1
+gates: [ci-analyze]
 tasks:
   analyze: {desc: a, gate: [ci-analyze], run: [dart, analyze]}
-  ci-analyze: {desc: c, collects: ci-analyze}
-  empty: {desc: d, collects: nobody-is-in-this}
 ''');
       expect(report.unrun, isEmpty);
     });

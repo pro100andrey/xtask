@@ -115,6 +115,7 @@ void main() {
       final dart = Platform.resolvedExecutable;
       File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
         'version: 1\n'
+        'gates: [both]\n'
         'tasks:\n'
         '  one:\n'
         '    desc: first\n'
@@ -123,10 +124,7 @@ void main() {
         '  two:\n'
         '    desc: second\n'
         '    gate: [both]\n'
-        "    run: ['$dart', --version]\n"
-        '  both:\n'
-        '    desc: everything\n'
-        '    collects: both\n',
+        "    run: ['$dart', --version]\n",
       );
       run = await Process.run(
         dart,

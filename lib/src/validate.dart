@@ -57,7 +57,7 @@ ValidationReport validateFile(
 
   _checkGraph(file, problems);
   _checkDeclaredGates(file, problems);
-  _checkGates(file, problems);
+  _checkNoNameCollision(file, problems);
   if (sets != null) {
     _checkSetsExpand(file, sets, problems);
   }
@@ -68,14 +68,14 @@ ValidationReport validateFile(
 /// A task with no body, nothing to depend on and no gate set to gather is a
 /// task that does nothing (§8).
 void _checkDoesSomething(Task task, List<XtaskFormatException> problems) {
-  if (task.body != null || task.needs.isNotEmpty || task.collects != null) {
+  if (task.body != null || task.needs.isNotEmpty) {
     return;
   }
   problems.add(
     XtaskFormatException(
-      'task `${task.name}` has no body, no `needs:` and no `collects:`, so '
-      'running it does nothing. A composite gathers something; a task that '
-      'gathers nothing is a name with a description attached',
+      'task `${task.name}` has no body and no `needs:`, so running it does '
+      'nothing. A gate set gathers tasks; a task that gathers nothing is a '
+      'name with a description attached',
       task.span,
     ),
   );
@@ -169,19 +169,13 @@ void _checkGraph(XtaskFile file, List<XtaskFormatException> problems) {
 /// Every gate set a task names is one the file declares, and every declared
 /// one has members.
 ///
-/// **The half of this that nothing caught.** A gate set used to exist by being
-/// mentioned, so a misspelling made a new one. On the `gate:` side that was
-/// caught sideways — the orphan check below notices that nothing collects it —
-/// but `collects: chekc` gathered a gate with no members, ran, did nothing and
-/// answered 0. A composite that gathers nothing is precisely the green result
-/// nobody checked that §1 is about, and it took one transposed letter.
+/// **A gate set that existed by being mentioned could not be misspelled**, so
+/// `gate: [chekc]` was simply a different gate set — one nothing ran, and one
+/// nothing could name as missing. §1's green result nobody checked, from one
+/// transposed letter.
 void _checkDeclaredGates(XtaskFile file, List<XtaskFormatException> problems) {
   final declared = file.gates.keys.toSet();
-  final used = <String>{
-    for (final task in file.tasks.values) ...task.gate,
-    for (final task in file.tasks.values)
-      if (task.collects != null) task.collects!,
-  };
+  final used = <String>{for (final task in file.tasks.values) ...task.gate};
 
   if (declared.isEmpty) {
     if (used.isNotEmpty) {
@@ -198,7 +192,7 @@ void _checkDeclaredGates(XtaskFile file, List<XtaskFormatException> problems) {
   }
 
   for (final task in file.tasks.values) {
-    for (final gate in [...task.gate, ?task.collects]) {
+    for (final gate in task.gate) {
       if (declared.contains(gate)) {
         continue;
       }
@@ -227,31 +221,53 @@ void _checkDeclaredGates(XtaskFile file, List<XtaskFormatException> problems) {
   }
 }
 
-String _quoted(Iterable<String> names) =>
-    (names.toList()..sort()).map((name) => '`$name`').join(', ');
-
-/// An orphan gate: a task that believes it is checked and is not (§8).
-void _checkGates(XtaskFile file, List<XtaskFormatException> problems) {
-  final collected = collectedGates(file);
+/// A gate set and a task may not share a name, and neither may an edge name a
+/// gate set.
+///
+/// **Because a person types one name.** A gate set used to BE a task, so
+/// `xtask check` was unambiguous by construction. Now the two are different
+/// kinds of thing reached by one word, and a file where `check` is both leaves
+/// the command line with a question nothing in the file answers. `needs:` is
+/// the same problem from the other side: it is an edge between tasks, and a
+/// gate set is not a node — letting it name one would give the run order two
+/// authors, which is what `collects:` was rewritten away to avoid.
+void _checkNoNameCollision(
+  XtaskFile file,
+  List<XtaskFormatException> problems,
+) {
+  for (final gate in file.gates.keys) {
+    if (!file.tasks.containsKey(gate)) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        '`$gate` is both a gate set and a task, and a person types one name. '
+        'Rename one of them: a gate set is run by being named, so there is '
+        'nothing left for a task of the same name to be',
+        file.tasks[gate]!.span,
+      ),
+    );
+  }
 
   for (final task in file.tasks.values) {
-    for (final gate in task.gate) {
-      if (collected.contains(gate)) {
+    for (final named in [...task.needs, ...task.then]) {
+      if (!file.gates.containsKey(named)) {
         continue;
       }
       problems.add(
         XtaskFormatException(
-          'task `${task.name}` is in the gate set `$gate`, and no task '
-          'collects it — so nothing ever runs it. That is worse than being in '
-          'no gate at all: the task looks checked and is not'
-          '${collected.isEmpty ? '' : '. Collected: '
-                    '${(collected.toList()..sort()).join(', ')}'}',
+          'task `${task.name}` names the gate set `$named` in `needs:` or '
+          '`then:`, and those are edges between tasks. A gate set is a list, '
+          'not a step: name the tasks, or put this one in the set',
           task.span,
         ),
       );
     }
   }
 }
+
+String _quoted(Iterable<String> names) =>
+    (names.toList()..sort()).map((name) => '`$name`').join(', ');
 
 /// A set that expands to nothing (§4.2), found without running anything.
 void _checkSetsExpand(
