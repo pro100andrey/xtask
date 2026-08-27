@@ -1425,6 +1425,54 @@ void main() {
     });
   });
 
+  group('a failing member does not silence the rest', () {
+    Future<int> overThree({required bool keepGoing}) {
+      given(['pkg/one/x', 'pkg/two/x', 'pkg/three/x']);
+      starter = FakeStarter({'ruff': 1});
+      return runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        keepGoing: keepGoing,
+      );
+    }
+
+    test('--keep-going runs every one and names them all', () async {
+      // The loop this ends: the first bad file abandoned the rest, so a run
+      // reported one problem and a person fixed, reran, fixed, reran.
+      expect(await overThree(keepGoing: true), ExitCode.taskFailed);
+      expect(starter.started, hasLength(3));
+      final said = logged.join('\n');
+      expect(said, contains('3 of 3 members failed'));
+      expect(said, contains('`pkg/one`'));
+      expect(said, contains('`pkg/three`'));
+    });
+
+    test('and without it, what did not run is said out loud', () async {
+      // A member that never ran read exactly like one that passed.
+      expect(await overThree(keepGoing: false), ExitCode.taskFailed);
+      expect(starter.started, hasLength(1));
+      expect(logged.join('\n'), contains('2 of 3 not attempted'));
+    });
+
+    test('one member says nothing about counts', () async {
+      given(['pkg/one/x']);
+      starter = FakeStarter({'ruff': 1});
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+      );
+      expect(logged.join('\n'), isNot(contains('of 1')));
+    });
+  });
+
   group('a body that raises rather than answering', () {
     test("closes its section even when the failure is not this one's to "
         'answer', () async {

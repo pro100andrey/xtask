@@ -130,7 +130,7 @@
           },
           "each": {
             "type": "string",
-            "description": "A set whose members the body runs once per, sequentially, with `$each` standing for the member — a whole argument, or the end of one: `packages/$each`. Nothing may follow it. A failure stops at that member, and the member is named."
+            "description": "A set whose members the body runs once per, sequentially, with `$each` standing for the member — a whole argument, or the end of one: `packages/$each`. Nothing may follow it. A failure names the member; without `--keep-going` it also stops the rest."
           },
           "in": {
             "type": "string",

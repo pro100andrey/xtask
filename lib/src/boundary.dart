@@ -7,10 +7,10 @@ import 'package:path/path.dart' as p;
 /// current directory. `p.windows.isAbsolute` says false about it, correctly,
 /// and it still is not this repository's to name.
 ///
-/// One letter and a colon, so `web:build` is not this and `a:b` is. §4.2 says
-/// a set's members are paths, and the members of one are checked as paths; a
-/// set of values that are not paths at all is not expressible yet, and when it
-/// is, this is the test it will not be asked.
+/// One letter and a colon, so `web:build` is not this and `a:b` is. A set that
+/// holds paths is checked as one; a `values:` set is not asked this at all,
+/// which is what the key is for — the question means nothing about `dev`, and
+/// asking it refused `a:b` for looking like a drive.
 final _drive = RegExp('^[A-Za-z]:');
 
 /// Whether [path] names anything the repository root does not own.

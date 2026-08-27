@@ -307,6 +307,22 @@ void main() {
       expect(output(), isNot(contains('HOME')));
     });
 
+    test(r'with $each already standing for the member', () async {
+      // Every other line of this block was substituted, so it promised
+      // `FLAVOR=$each` while the run exported `FLAVOR=dev`.
+      await dry(
+        'version: 1\n'
+            'sets:\n  f:\n    values: [dev, prod]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: f, env: {FLAVOR: $each}, run: [d, $each]}'
+            '\n',
+        'a',
+      );
+      expect(output(), contains('env  FLAVOR=dev'));
+      expect(output(), contains('env  FLAVOR=prod'));
+      expect(output(), isNot(contains(r'FLAVOR=$each')));
+    });
+
     test('and no task is wrapped in a section', () async {
       // §7.1's markers exist to fold a task's OUTPUT, and a dry run produces
       // none: its own report is the plan, and a header above each block would

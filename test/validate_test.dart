@@ -51,6 +51,34 @@ void main() {
     });
   });
 
+  group('an `in:` composed out of values', () {
+    test('is checked here too, not only when a run reaches it', () {
+      // A `values:` set is exempt from the boundary — its members are not
+      // paths — and `in: sub/$each` builds one out of them. Checking only the
+      // written string left a file `--validate` called clean and `--dry-run`
+      // refused, which is the gap this check exists to close.
+      final report = check(
+        'version: 1\n'
+        "sets:\n  f:\n    values: [dev, '../../etc']\n"
+        'tasks:\n'
+        r'  a: {desc: x, each: f, in: sub/$each, run: [dart]}'
+        '\n',
+      );
+      expect(report.toString(), contains('reaches outside the repository'));
+    });
+
+    test('and ordinary values say nothing', () {
+      final report = check(
+        'version: 1\n'
+        'sets:\n  f:\n    values: [dev, prod]\n'
+        'tasks:\n'
+        r'  a: {desc: x, each: f, in: sub/$each, run: [dart]}'
+        '\n',
+      );
+      expect(report.ok, isTrue, reason: report.toString());
+    });
+  });
+
   group('a file with nothing wrong', () {
     test('reports nothing', () {
       final report = check(

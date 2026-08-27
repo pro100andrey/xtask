@@ -42,6 +42,7 @@ sealed class Resolved {
     required this.member,
     required this.workingDirectory,
     required this.environment,
+    required this.declaredEnvironment,
     required this.arguments,
   });
 
@@ -62,6 +63,16 @@ sealed class Resolved {
   /// actually sees, rather than what the file adds.
   final Map<String, String> environment;
 
+  /// Only what the task's own `env:` adds, with markers already standing for
+  /// what they name.
+  ///
+  /// **Computed once, because two things print it.** A report shows what the
+  /// file declared rather than the hundred variables that are part of the
+  /// terminal — and it was rendering the WRITTEN text, so `--dry-run` promised
+  /// `FLAVOR=$each` while the run exported `FLAVOR=dev`. Every other line of
+  /// that block was substituted.
+  final Map<String, String> declaredEnvironment;
+
   /// Everything after the program name: for a `run:` body the rest of its
   /// `argv`, then `args:`, each with its markers already standing for what
   /// they name — a set is expanded where it is written, not appended.
@@ -75,6 +86,7 @@ final class ResolvedProcess extends Resolved {
     required super.member,
     required super.workingDirectory,
     required super.environment,
+    required super.declaredEnvironment,
     required super.arguments,
     required this.executable,
     required this.runInShell,
@@ -103,6 +115,7 @@ final class ResolvedVerb extends Resolved {
     required super.member,
     required super.workingDirectory,
     required super.environment,
+    required super.declaredEnvironment,
     required super.arguments,
     required this.verb,
     required this.implementation,
@@ -229,14 +242,17 @@ final class BodyResolver {
       ...substituted(task.args),
       if (passed != null && passed.task == task.name) ...passed.arguments,
     ]);
-    final env = Map<String, String>.unmodifiable({
-      ...environment,
-      // A value goes where a value goes, and an environment value is one.
-      // Left out, `env: {FLAVOR: $each}` reached the child as the literal
-      // text `$each` — accepted by every check and wrong in the one place
-      // nobody looks.
+    // A value goes where a value goes, and an environment value is one. Left
+    // out, `env: {FLAVOR: $each}` reached the child as the literal text
+    // `$each` — accepted by every check and wrong in the one place nobody
+    // looks.
+    final declared = Map<String, String>.unmodifiable({
       for (final entry in task.env.entries)
         entry.key: _withMember(entry.value, member),
+    });
+    final env = Map<String, String>.unmodifiable({
+      ...environment,
+      ...declared,
     });
 
     switch (body) {
@@ -255,6 +271,7 @@ final class BodyResolver {
           member: member,
           workingDirectory: where,
           environment: env,
+          declaredEnvironment: declared,
           arguments: args,
           verb: verb,
           implementation: implementation,
@@ -281,6 +298,7 @@ final class BodyResolver {
           member: member,
           workingDirectory: where,
           environment: env,
+          declaredEnvironment: declared,
           arguments: arguments,
           executable: executable,
           runInShell: runInShell,

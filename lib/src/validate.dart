@@ -52,7 +52,7 @@ ValidationReport validateFile(
     _checkDoesSomething(task, problems);
     _checkVerb(task, knownVerbs, problems);
     _checkSetReferences(task, file, problems);
-    _checkWorkingDirectory(task, problems);
+    _checkWorkingDirectory(task, file, problems);
   }
 
   _checkGraph(file, problems);
@@ -89,17 +89,43 @@ void _checkDoesSomething(Task task, List<XtaskFormatException> problems) {
 /// `--validate` called clean was refused by `--dry-run`. §8's claim is that
 /// this class is found without running anything, and `in:` is a written
 /// string, checkable the moment the file is read.
-void _checkWorkingDirectory(Task task, List<XtaskFormatException> problems) {
+void _checkWorkingDirectory(
+  Task task,
+  XtaskFile file,
+  List<XtaskFormatException> problems,
+) {
   final written = task.workingDirectory;
-  if (written == null || !leavesRoot(written)) {
+  if (written == null) {
     return;
   }
-  problems.add(
-    XtaskFormatException(
-      workingDirectoryLeavesRoot(task: task.name, written: written),
-      task.span,
-    ),
-  );
+
+  // **The composed form too, where the members are known here.** A `values:`
+  // set is deliberately exempt from the boundary — its members are not paths —
+  // and `in: sub/$each` builds one out of them. Checking only the written
+  // string reopened the gap this function was added to close: a file
+  // `--validate` called clean, refused by `--dry-run`. Those members are
+  // literal and sitting in the file, so composing them costs nothing and
+  // needs no filesystem.
+  final set = file.sets[task.each];
+  final composed = [
+    written,
+    if (written.endsWith(eachMarker) && set is ValueSet)
+      for (final value in set.values)
+        written.substring(0, written.length - eachMarker.length) + value,
+  ];
+
+  for (final path in composed) {
+    if (!leavesRoot(path)) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        workingDirectoryLeavesRoot(task: task.name, written: path),
+        task.span,
+      ),
+    );
+    return;
+  }
 }
 
 void _checkVerb(

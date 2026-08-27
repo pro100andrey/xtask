@@ -28,6 +28,18 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### `--keep-going` reaches the members of an `each:`
+
+The first bad member abandoned the rest, with or without the flag, and the
+summary said nothing about them — so `format` over forty packages reported one
+unformatted file per run and a person fixed, reran, fixed, reran, which is the
+loop `--keep-going` exists to end. A member that never ran also read exactly
+like one that passed.
+
+With the flag every member runs and the failures are named. Without it the
+task still stops at the first, and the summary says how many were not tried.
+The exit code stays the first failing member's, as it is for tasks.
+
 ### A set can say it does not hold paths
 
 ```yaml

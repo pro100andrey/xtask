@@ -178,7 +178,8 @@ The file name *is* the declaration: `dart run :xtask` resolves to
 ```shell
 xtask <task>                 run a task and everything it needs
 xtask <task> -- <args>       and pass those arguments to its body
-xtask <task> --keep-going    report every failure, not just the first
+xtask <task> --keep-going    report every failure, not just the first —
+                             across tasks and across an `each:`
 xtask <task> --parallel      run independent tasks at once — which costs
                              seeing their output as it arrives
 xtask --list                 every task, grouped under its gate set,

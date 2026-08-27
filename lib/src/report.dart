@@ -334,7 +334,7 @@ List<String> describe(Resolved body, {bool header = true}) {
     // printing it would bury the two lines that are part of the plan under a
     // hundred that are part of the terminal. What `env-required` asked for is
     // not printed either: by the time a body resolves, it is set.
-    for (final variable in body.task.env.entries)
+    for (final variable in body.declaredEnvironment.entries)
       '  env  ${variable.key}=${_quoted(variable.value)}',
     if (body case ResolvedProcess(timeout: final limit?))
       '  for  at most ${limit.inSeconds}s, then it is killed',

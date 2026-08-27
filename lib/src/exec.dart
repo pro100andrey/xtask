@@ -357,9 +357,72 @@ final class Executor {
       return;
     }
 
-    for (final body in bodies) {
-      await _runBody(body, sink);
+    // **`--keep-going` reaches members, and members that did not run are
+    // said out loud.** Neither was true: the first bad file abandoned the rest
+    // silently, so `format` over forty packages reported one unformatted file
+    // per run and a person fixed, reran, fixed, reran — the exact loop
+    // `--keep-going` exists to end. And a member that never ran read exactly
+    // like one that passed, which is the failure this whole tool is about.
+    RunFailure? first;
+    final failedMembers = <String>[];
+    for (var at = 0; at < bodies.length; at++) {
+      try {
+        await _runBody(bodies[at], sink);
+      } on Object catch (thrown) {
+        if (thrown is XtaskFormatException) {
+          rethrow;
+        }
+        // **Anything, not only a `RunFailure`.** A verb is arbitrary project
+        // Dart and can throw whatever it likes; catching one type meant a
+        // `StateError` from member 2 left through the loop and discarded what
+        // member 1 had already told us and the fact that member 3 never ran —
+        // the silence this whole change was written to end.
+        final failure = thrown is RunFailure ? thrown : _threw(task, thrown);
+        first ??= failure;
+        failedMembers.add(bodies[at].member ?? task.name);
+        if (!keepGoing) {
+          throw RunFailure(
+            failure.code,
+            _tally(failure, bodies.length, failedMembers, at + 1),
+          );
+        }
+      }
     }
+    if (first != null) {
+      throw RunFailure(
+        // **The FIRST failing member's code**, as with tasks: a run with three
+        // failures cannot honestly claim to be about all of them, and the
+        // summary is where the others are.
+        first.code,
+        _tally(first, bodies.length, failedMembers, bodies.length),
+      );
+    }
+  }
+
+  /// [failure]'s message, with what happened to the other members after it.
+  ///
+  /// Says nothing at all when there is one member: "1 of 1 members failed" is
+  /// noise around a sentence that was already complete.
+  String _tally(
+    RunFailure failure,
+    int members,
+    List<String> failed,
+    int attempted,
+  ) {
+    if (members == 1) {
+      return failure.message;
+    }
+    final named = failed.take(5).map((member) => '`$member`').join(', ');
+    final more = failed.length > 5 ? ' and ${failed.length - 5} more' : '';
+    final unattempted =
+        '${members - attempted} of $members not attempted — '
+        '`--keep-going` runs them all';
+    return [
+      failure.message,
+      if (failed.length > 1)
+        '${failed.length} of $members members failed: $named$more',
+      if (attempted < members) unattempted,
+    ].join('\n');
   }
 
   Future<void> _runBody(
