@@ -63,7 +63,8 @@ sealed class Resolved {
   final Map<String, String> environment;
 
   /// Everything after the program name: for a `run:` body the rest of its
-  /// `argv`, then `args:`, then the expanded `argv-from` set.
+  /// `argv`, then `args:`, each with its markers already standing for what
+  /// they name — a set is expanded where it is written, not appended.
   final List<String> arguments;
 }
 
@@ -156,9 +157,9 @@ final class BodyResolver {
   /// carried with the arguments and compared by name — a task pulled in
   /// through `needs:` gets what the file says it gets and nothing else.
   ///
-  /// They land **after** `args:` and the expanded `argv-from`, where a command
-  /// line belongs: last, and therefore able to add to what the file already
-  /// said rather than being buried in front of it.
+  /// They land **after** `args:` and anything a marker expanded to, where a
+  /// command line belongs: last, and therefore able to add to what the file
+  /// already said rather than being buried in front of it.
   final ({String task, List<String> arguments})? passedThrough;
 
   final SetExpander _expander;
@@ -217,9 +218,15 @@ final class BodyResolver {
     final members = task.all == null
         ? const <String>[]
         : _expand(task, task.all!);
+    List<String> substituted(Iterable<String> written) => [
+      for (final argument in written)
+        if (argument == allMarker)
+          ...members
+        else
+          _withMember(argument, member),
+    ];
     final args = List<String>.unmodifiable([
-      for (final argument in task.args)
-        if (argument == allMarker) ...members else argument,
+      ...substituted(task.args),
       if (passed != null && passed.task == task.name) ...passed.arguments,
     ]);
     final env = Map<String, String>.unmodifiable({
@@ -257,8 +264,7 @@ final class BodyResolver {
           );
         }
         final arguments = List<String>.unmodifiable([
-          for (final argument in argv.skip(1))
-            if (argument == allMarker) ...members else argument,
+          ...substituted(argv.skip(1)),
           ...args,
         ]);
         final runInShell = resolver.needsShell(executable);
@@ -327,6 +333,25 @@ final class BodyResolver {
     }
   }
 
+  /// [written] with a trailing `$each` replaced by [member].
+  ///
+  /// Only at the end, which `parse` has already refused anything else for.
+  /// The prefix survives, and that is the whole of what it buys: a set may
+  /// hold the bare name a path cannot be derived from — `lake_cli` — and the
+  /// path is composed where it is used, `in: packages/$each`. Both halves are
+  /// then available to one task, which nothing else in this design offers.
+  static String _withMember(String written, String? member) {
+    if (!written.endsWith(eachMarker)) {
+      return written;
+    }
+    if (member == null) {
+      // `parse` refuses this shape, so reaching it means the file said one
+      // thing and this read another.
+      throw StateError('`$eachMarker` with no member');
+    }
+    return written.substring(0, written.length - eachMarker.length) + member;
+  }
+
   /// Where a body runs. `$each` is the member; anything else is relative to
   /// the repository root (§4.3).
   String _workingDirectory(Task task, String? member) {
@@ -343,15 +368,15 @@ final class BodyResolver {
         workingDirectoryLeavesRoot(task: task.name, written: written),
       );
     }
-    if (written == r'$each') {
+    if (written.endsWith(eachMarker)) {
       if (member == null) {
         throw RunFailure(
           ExitCode.invalidFile,
-          'task `${task.name}` uses `in: \$each` without an `each:` set, so '
+          'task `${task.name}` uses `in: $written` without an `each:` set, so '
           'there is no member for it to stand for',
         );
       }
-      return p.join(root, member);
+      return p.join(root, _withMember(written, member));
     }
     return p.join(root, written);
   }

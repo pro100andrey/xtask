@@ -27,7 +27,7 @@ final class SetExpander {
   /// used to hand back the parsed model's own list while the glob arm built a
   /// fresh one, so the obvious `expand(...)..addAll(task.args)` worked against
   /// a glob and permanently poisoned a list — in a gate set, the second
-  /// task sharing an `argv-from` would receive the first one's arguments
+  /// task sharing an `all:` would receive the first one's arguments
   /// appended to the file list, and the gate would go green having checked the
   /// wrong thing. Invisible for globs, which is most of the suite.
   List<String> expand(String name, NamedSet set) {
@@ -193,7 +193,7 @@ final class SetExpander {
   /// An expansion that found nothing is an error, and there is no key to
   /// soften it (§4.2).
   ///
-  /// A task whose `argv-from` came back empty runs its body with no arguments,
+  /// A task whose `all:` came back empty runs its body with no arguments,
   /// and `dart format` with no arguments formats the whole tree. The worse
   /// case is quieter: inside a gate, the set was empty, the task passed, the
   /// gate went green and nothing was checked — defect 3 of §1 reproduced by a

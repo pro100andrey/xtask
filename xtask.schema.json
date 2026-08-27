@@ -112,11 +112,11 @@
           },
           "each": {
             "type": "string",
-            "description": "A set whose members the body runs once per, sequentially. A failure stops at that member, and the member is named."
+            "description": "A set whose members the body runs once per, sequentially, with `$each` standing for the member — a whole argument, or the end of one: `packages/$each`. Nothing may follow it. A failure stops at that member, and the member is named."
           },
           "in": {
             "type": "string",
-            "description": "Where the body runs, relative to the repository root — or the literal `$each`, which stands for the current member of `each:`."
+            "description": "Where the body runs, relative to the repository root. May end with `$each`, which stands for the current member of `each:` — as the whole value, or composed: `packages/$each`."
           },
           "env": {
             "type": "object",

@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/bodies.dart';
 import 'package:xtask/src/context.dart';
+import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/exec.dart';
 import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
@@ -1099,15 +1100,18 @@ void main() {
       );
     });
 
-    test(r'`in: $each` without an `each:` set is refused', () async {
-      final code = await runFile(
-        'version: 1\ntasks:\n'
-            r'  a: {desc: x, in: $each, run: [dart]}'
-            '\n',
-        'a',
+    test(r'`in: $each` without an `each:` set is refused when read', () {
+      // Refused by the parser now, before a plan exists — earlier than this
+      // used to be caught, and with the line it was written on.
+      expect(
+        () => runFile(
+          'version: 1\ntasks:\n'
+              r'  a: {desc: x, in: $each, run: [dart]}'
+              '\n',
+          'a',
+        ),
+        throwsA(isA<XtaskFormatException>()),
       );
-      expect(code, ExitCode.invalidFile);
-      expect(logged.join('\n'), contains(r'`in: $each` without an `each:`'));
     });
   });
 

@@ -185,8 +185,10 @@ const _taskKeys = <String, Map<String, Object?>>{
   'each': {
     'type': 'string',
     'description':
-        'A set whose members the body runs once per, sequentially. A failure '
-        'stops at that member, and the member is named.',
+        'A set whose members the body runs once per, sequentially, with '
+        r'`$each` standing for the member — a whole argument, or the end of '
+        r'one: `packages/$each`. Nothing may follow it. A failure stops at '
+        'that member, and the member is named.',
   },
   'env': {
     'type': 'object',
@@ -210,8 +212,9 @@ const _taskKeys = <String, Map<String, Object?>>{
   'in': {
     'type': 'string',
     'description':
-        'Where the body runs, relative to the repository root — or the '
-        r'literal `$each`, which stands for the current member of `each:`.',
+        'Where the body runs, relative to the repository root. May end with '
+        r'`$each`, which stands for the current member of `each:` — as the '
+        r'whole value, or composed: `packages/$each`.',
   },
   'needs': {
     ..._strings,

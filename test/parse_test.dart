@@ -819,6 +819,35 @@ tasks: {}
       );
     });
 
+    test('a longer program name that merely starts with it is text', () {
+      // The sibling check for `$each` was already delimited; this one used
+      // `contains`, so a program called `$allowed-tool` was refused for a
+      // substring.
+      expect(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          r'  a: {desc: x, run: ["$allowed-tool", hi]}'
+          '\n',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test(r'`in: $all` is refused — a list is not one directory', () {
+      // Neither refused nor substituted before, so the body ran in a
+      // directory literally called `$all` and failed much later as "could not
+      // be started".
+      expect(
+        refusalOf(
+          'version: 1\nsets:\n  s: [a]\n'
+          'tasks:\n'
+          r'  a: {desc: x, all: s, in: $all, run: [dart, $all]}'
+          '\n',
+        ),
+        contains('there is nothing for a list to be there'),
+      );
+    });
+
     test('`each:` and `all:` together are refused', () {
       // The combination that used to be legal and meant nothing anybody
       // wanted: every member of the `each:` set received the WHOLE `all:` set.
@@ -830,6 +859,94 @@ tasks: {}
           '\n',
         ),
         contains('one or\nthe other'.replaceAll('\n', ' ')),
+      );
+    });
+  });
+
+  group(r'`$each` may end what it is written in, nothing may follow', () {
+    String refused(String yaml) {
+      try {
+        parseXtaskFile(yaml);
+      } on XtaskFormatException catch (e) {
+        return e.message;
+      }
+      fail('expected a refusal, got none');
+    }
+
+    String withTask(String task) =>
+        'version: 1\nsets:\n  s: [a]\ntasks:\n  a: {desc: x, $task}\n';
+
+    test('a derived path is refused, and told where deriving belongs', () {
+      // `packages/$each` composes a path AROUND a value. `$each.dart`
+      // computes one FROM it, and a computation wants a modifier, and a
+      // modifier wants a language.
+      expect(
+        refused(withTask(r'each: s, run: [gen, build/$each.dart]')),
+        contains('nothing may follow it'),
+      );
+    });
+
+    test('a prefix is fine, in `run:` and in `in:` alike', () {
+      expect(
+        () => parseXtaskFile(
+          withTask(r'each: s, in: packages/$each, run: [d, --flavor=$each]'),
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('the marker twice in one argument is refused', () {
+      // `endsWith` alone looked only at the last occurrence, so `$each/$each`
+      // passed and the resolver — which substitutes the trailing one — left
+      // the other in the argument as literal text.
+      expect(
+        refused(withTask(r'each: s, run: [echo, $each/$each]')),
+        contains('nothing may follow it'),
+      );
+    });
+
+    test('but once per argument, in several arguments, is fine', () {
+      expect(
+        () => parseXtaskFile(withTask(r'each: s, run: [cp, $each, bak/$each]')),
+        returnsNormally,
+      );
+    });
+
+    test('the marker as the program is refused', () {
+      expect(
+        refused(withTask(r'each: s, run: [$each]')),
+        contains('the program'),
+      );
+    });
+
+    test('a set named and never used is refused', () {
+      expect(
+        refused(withTask('each: s, run: [dart]')),
+        contains('never writes'),
+      );
+    });
+
+    test('a marker with no `each:` is refused', () {
+      expect(
+        refused(withTask(r'run: [dart, $each]')),
+        contains('no `each:`'),
+      );
+    });
+
+    test('a longer name that merely starts with it is text', () {
+      expect(
+        () => parseXtaskFile(withTask(r'run: [echo, $eachother]')),
+        returnsNormally,
+      );
+    });
+
+    test(r'`$each` in argv with `in: $each` is refused as provably wrong', () {
+      // The member is a path from the root and `in:` moves into it, so the
+      // two would be relative to different places. A composed `in:` says the
+      // opposite — that the member is a name — and is legitimate.
+      expect(
+        refused(withTask(r'each: s, in: $each, run: [dart, $each]')),
+        contains('relative to different places'),
       );
     });
   });

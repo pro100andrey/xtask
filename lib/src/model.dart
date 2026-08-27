@@ -41,6 +41,22 @@ const taskKeys = <String>{
 /// declared, pass every check, and reach nothing.
 const allMarker = r'$all';
 
+/// The one word that stands for the member an `each:` body is running for.
+///
+/// **A value, and it may end a string.** `$each` used to be legal in `in:`
+/// alone, so a member could be a working directory and nothing else — which
+/// made "run this over every file" unwritable, the hole this whole key exists
+/// to fill. It may now stand as a whole argument or at the END of one, and
+/// nothing may follow it.
+///
+/// That line is not arbitrary, and it is the same line twice: allowing a
+/// prefix is what lets a set hold the part that cannot be derived — the bare
+/// name — with the path composed where it is needed. Forbidding a suffix is
+/// what stops derived paths, because `$each.dart` is where a substitution
+/// stops being a value and starts being a computation, and a computation
+/// wants a modifier, and a modifier wants a language.
+const eachMarker = r'$each';
+
 /// Every key the document may carry at the top level (§4.1).
 const topLevelKeys = <String>{'version', 'gates', 'sets', 'tasks'};
 

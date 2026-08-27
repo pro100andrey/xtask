@@ -235,6 +235,7 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     gate: _names(map, 'gate', name),
   );
   _checkAllMarker(name, task, keySpan);
+  _checkEachMarker(name, task, keySpan);
   return task;
 }
 
@@ -253,6 +254,86 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
 /// `\$all` as a word of its own, rather than the start of a longer name.
 final _bareMarker = RegExp(r'\$all(?![A-Za-z0-9_])');
 
+/// `$each` as a word of its own, rather than the start of a longer name.
+final _bareEach = RegExp(r'\$each(?![A-Za-z0-9_])');
+
+/// `each:` and its marker have to agree, and the marker has to END what it is
+/// written in.
+///
+/// **The suffix is the line, and it is drawn once.** `$each` standing whole or
+/// finishing a string is a value put where a value goes — `packages/$each`,
+/// `--flavor=$each`. Text AFTER it is a derived path, `build/$each.dart`, and
+/// that is where a substitution stops being a value and becomes a
+/// computation. A computation wants a modifier, a modifier wants a language,
+/// and R1 exists to say this file is not one. Deriving a path is a verb's job.
+void _checkEachMarker(String name, Task task, SourceSpan keySpan) {
+  final argv = switch (task.body) {
+    RunBody(:final argv) => argv,
+    _ => const <String>[],
+  };
+
+  if (argv.isNotEmpty && _bareEach.hasMatch(argv.first)) {
+    throw XtaskFormatException(
+      'task `$name` runs `${argv.first}`. The first entry of `run:` is the '
+      'program, resolved on PATH before anything is substituted — a member '
+      'does not name one',
+      keySpan,
+    );
+  }
+
+  final written = [...argv.skip(1), ...task.args, ?task.workingDirectory];
+  // **Every occurrence but a trailing one.** `endsWith` alone looked only at
+  // the last, so `$each/$each` passed and the resolver — which substitutes the
+  // trailing one — left the other in the argument as literal text.
+  final badly = written.where(
+    (word) =>
+        _bareEach.hasMatch(word) &&
+        (_bareEach.allMatches(word).length > 1 || !word.endsWith(eachMarker)),
+  );
+  if (badly.isNotEmpty) {
+    throw XtaskFormatException(
+      'task `$name` writes `${badly.first}`. `\$each` stands for one member '
+      'and may end what it is written in, but nothing may follow it: '
+      r'`packages/$each` is a path composed around a value, and '
+      r'`$each.dart` is a path computed FROM one. Computing belongs in a '
+      'verb, where this file cannot go',
+      keySpan,
+    );
+  }
+
+  final used = written.any((word) => word.endsWith(eachMarker));
+  if (task.each != null && !used) {
+    throw XtaskFormatException(
+      'task `$name` has `each: ${task.each}` and never writes `\$each`, so '
+      'the body runs once per member with no way to tell them apart',
+      keySpan,
+    );
+  }
+  if (task.each == null && used) {
+    throw XtaskFormatException(
+      'task `$name` writes `\$each` and has no `each:` to say which set its '
+      'members come from',
+      keySpan,
+    );
+  }
+
+  // **The one pairing that is provably wrong.** `in: $each` says the member IS
+  // the directory, so the member is a path from the repository root and the
+  // body runs inside it; the same member in argv is then a path read from two
+  // different places. A COMPOSED `in:` — `packages/$each` — says the opposite,
+  // that the member is a name, and both halves are legitimate at once.
+  if (task.workingDirectory == eachMarker &&
+      [...argv.skip(1), ...task.args].any((w) => w.endsWith(eachMarker))) {
+    throw XtaskFormatException(
+      'task `$name` puts `\$each` in its arguments and also runs `in: '
+      r'$each`. A member is a path from the repository root, and `in:` moves '
+      'into it — the two would be relative to different places. Compose the '
+      r'directory instead, `in: some/dir/$each`, so the member is a name',
+      keySpan,
+    );
+  }
+}
+
 void _checkAllMarker(String name, Task task, SourceSpan keySpan) {
   final argv = switch (task.body) {
     RunBody(:final argv) => argv,
@@ -266,11 +347,23 @@ void _checkAllMarker(String name, Task task, SourceSpan keySpan) {
   // arguments, which let a file declare a set, satisfy every check below and
   // reach the command line with nothing: the run then answered 3, saying the
   // machine lacked a tool, about a file that was wrong.
-  if (argv.isNotEmpty && argv.first.contains(allMarker)) {
+  if (argv.isNotEmpty && _bareMarker.hasMatch(argv.first)) {
     throw XtaskFormatException(
       'task `$name` runs `${argv.first}`. `\$all` stands for arguments, and '
       'the first entry of `run:` is the program — there is nothing for a set '
       'to expand into there',
+      keySpan,
+    );
+  }
+
+  final where = task.workingDirectory;
+  if (where != null && _bareMarker.hasMatch(where)) {
+    // Neither refused nor substituted before, so the body ran in a directory
+    // literally called `$all` and failed much later as "could not be started".
+    throw XtaskFormatException(
+      'task `$name` says `in: $where`. `\$all` stands for every member of a '
+      'set, and `in:` is one directory — there is nothing for a list to be '
+      'there',
       keySpan,
     );
   }

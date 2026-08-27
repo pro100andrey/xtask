@@ -236,7 +236,9 @@ void main() {
 
     test('a set that does not exist is still 2', () async {
       final code = await dry(
-        'version: 1\ntasks:\n  a: {desc: x, each: absent, run: [dart]}\n',
+        'version: 1\ntasks:\n'
+            r'  a: {desc: x, each: absent, in: $each, run: [dart]}'
+            '\n',
         'a',
       );
       expect(code, ExitCode.invalidFile);

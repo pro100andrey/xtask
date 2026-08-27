@@ -18,9 +18,13 @@ final class VerbContext {
     required this.log,
   });
 
-  /// Everything the body was given, in one list: the task's `args:`, then the
-  /// members of its `argv-from` set, then whatever the command line passed
-  /// after `--`.
+  /// Everything the body was given, in one list: the task's `args:` with any
+  /// `\$all` and `\$each` already standing for what they name, then whatever
+  /// the command line passed after `--`.
+  ///
+  /// **In place, not appended.** A set used to be added at the end and nowhere
+  /// else; `\$all` is written where its members belong, so the order here is
+  /// the order the file wrote.
   ///
   /// Already expanded, so a verb never touches the filesystem to find out what
   /// it was asked about — and **a verb is reached by `--` exactly as a process

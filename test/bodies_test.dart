@@ -7,6 +7,7 @@ import 'package:xtask/src/context.dart';
 import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
+import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 
 void main() {
@@ -173,7 +174,9 @@ void main() {
     test('a set that does not exist', () {
       expect(
         () => resolve(
-          'version: 1\ntasks:\n  a: {desc: x, each: absent, run: [dart]}\n',
+          'version: 1\ntasks:\n'
+              r'  a: {desc: x, each: absent, in: $each, run: [dart]}'
+              '\n',
           'a',
         ),
         refused(ExitCode.invalidFile, contains('absent')),
@@ -185,7 +188,7 @@ void main() {
         () => resolve(
           'version: 1\n'
               'sets:\n  pkgs:\n    include: [packages/*]\n'
-              'tasks:\n  a: {desc: x, each: pkgs, run: [dart]}\n',
+              'tasks:\n  a: {desc: x, each: pkgs, in: \$each, run: [dart]}\n',
           'a',
         ),
         refused(ExitCode.invalidFile, contains('cannot run')),
@@ -208,14 +211,24 @@ void main() {
       }
     });
 
-    test(r'`in: $each` with no `each:`', () {
+    test(r'`in: $each` with no `each:`, if the model is hand-built', () {
+      // The parser refuses this shape now, one step earlier and with the line
+      // — so the only way here is a model assembled in code. The check stays
+      // because the resolver is a public seam and must not read a member that
+      // is not there.
       expect(
-        () => resolve(
-          'version: 1\ntasks:\n'
-              r'  a: {desc: x, in: $each, run: [dart]}'
-              '\n',
-          'a',
-        ),
+        () =>
+            BodyResolver(
+              root: root.path,
+              resolver: posix(),
+            ).resolveTask(
+              const Task(
+                name: 'a',
+                desc: 'x',
+                body: RunBody(['dart']),
+                workingDirectory: r'$each',
+              ),
+            ),
         refused(ExitCode.invalidFile, contains(r'$each')),
       );
     });
@@ -343,6 +356,50 @@ void main() {
         verbs: {'v': (_) async => 0},
       ).single;
       expect(body.arguments, ['--in', 'a.dart']);
+    });
+  });
+
+  group('`each:` puts its member where the marker stands', () {
+    test('as a whole argument — the case that did not exist before', () {
+      // Until now a member could be a working directory and nothing else, so
+      // "run this over every file" was unwritable.
+      for (final name in ['a.dart', 'b.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      final bodies = resolve(
+        'version: 1\n'
+            'sets:\n  src:\n    include: ["*.dart"]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: src, run: [fmt, $each]}'
+            '\n',
+        'a',
+      );
+      expect(
+        bodies.map((b) => (b as ResolvedProcess).arguments),
+        [
+          ['a.dart'],
+          ['b.dart'],
+        ],
+      );
+    });
+
+    test('and at the end of one, which composes a path around a name', () {
+      Directory(p.join(root.path, 'packages', 'lake')).createSync(
+        recursive: true,
+      );
+      final body = resolve(
+        'version: 1\n'
+            'sets:\n  pkgs: [lake]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: packages/$each,'
+            r' run: [dart, test, --name, $each]}'
+            '\n',
+        'a',
+      ).single;
+      // Both halves at once: the directory is the composed path, and the
+      // argument is the bare name it was composed from.
+      expect(body.workingDirectory, p.join(root.path, 'packages', 'lake'));
+      expect((body as ResolvedProcess).arguments, ['test', '--name', 'lake']);
     });
   });
 

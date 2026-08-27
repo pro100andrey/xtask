@@ -28,6 +28,36 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### `$each` reaches the arguments, so per-file work can be written at all
+
+The member of an `each:` set used to be reachable only through `in:`, so a
+member could be a working directory and nothing else — and "run this over
+every file" was unwritable. `$each` now stands as a whole argument or at the
+**end** of one, with nothing after it:
+
+```yaml
+format:
+  each: sources
+  run: [dart, format, $each]
+
+test:
+  each: packages            # bare names
+  in: packages/$each        # the path, composed
+  run: [dart, test, --name, $each]
+```
+
+Allowing a prefix is what lets a set hold the part that cannot be derived —
+the bare name — with the path composed where it is needed, so one task can
+have both halves. Forbidding a suffix is what keeps `build/$each.dart` out:
+deriving a path from a value is a computation, a computation wants a modifier,
+and a modifier wants a language. That is a verb's job.
+
+Refused when the file is read: a marker with no `each:`, an `each:` whose
+marker is never written, the marker as the program in `run:`, text after the
+marker, and `$each` in the arguments together with `in: $each` — the member is
+a path from the root and `in:` moves into it, so the two would be relative to
+different places. A composed `in:` says the opposite and is fine.
+
 ### `argv-from:` becomes `all:`, and the set goes where you write it
 
 `argv-from:` appended its set to the end of argv and nowhere else, so

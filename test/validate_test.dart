@@ -110,7 +110,9 @@ void main() {
   group('a name that refers to nothing', () {
     test('`each:` naming a missing set', () {
       final report = check(
-        'version: 1\ntasks:\n  a: {desc: x, each: ghost, run: [dart]}\n',
+        'version: 1\ntasks:\n'
+        r'  a: {desc: x, each: ghost, in: $each, run: [dart]}'
+        '\n',
       );
       expect(report.toString(), contains('there is no set called `ghost`'));
     });

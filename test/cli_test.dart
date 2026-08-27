@@ -655,13 +655,13 @@ tasks:
           // A set expanding to nothing is an error §8 catches without running
           // anything — but reached here it must still close the group it
           // opened, or everything after it folds into a task that has stopped.
-          writeFile('''
+          writeFile(r'''
 version: 1
 sets:
   pkgs:
     include: [packages/*]
 tasks:
-  a: {desc: x, each: pkgs, run: [dart, test]}
+  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}
 ''');
           final code = await run(
             ['a'],

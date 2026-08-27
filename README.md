@@ -432,8 +432,8 @@ registry will not accept that version again.
 | `do` | a verb: `remove`, or one this project registered |
 | `args` | extra arguments appended to the body |
 | `all` | a set whose members replace the `$all` marker, in one invocation — a whole argument, written once |
-| `each` | a set whose members the body runs once per, sequentially |
-| `in` | where the body runs, relative to the root — or the literal `$each` |
+| `each` | a set whose members the body runs once per, sequentially, with `$each` standing for the member |
+| `in` | where the body runs, relative to the root — may end with `$each` |
 | `env` | environment for this task only |
 | `env-required` | variables that must already be set, checked before the body runs |
 | `needs` | direct requirements, run before this task, once per invocation |
@@ -483,8 +483,14 @@ tasks:
     args: [$all]
 ```
 
-`each:` runs the body once per member, sequentially, with `in: $each` putting
-each run in that member's own directory. `needs:` is "before, and once however
+`each:` runs the body once per member, sequentially. `$each` is that member,
+and it may stand as a whole argument or **end** one — `packages/$each`,
+`--flavor=$each` — with nothing after it. That line is the same line twice: a
+prefix lets a set hold the part a path cannot be derived from, the bare name,
+so one task can have both `in: packages/$each` and `--name $each`; and no
+suffix is what keeps `build/$each.dart` out, because deriving a path from a
+value is a computation, a computation wants a modifier, and a modifier wants a
+language. Deriving belongs in a verb. `needs:` is "before, and once however
 many tasks ask for it"; `then:` is "after, and only if the body worked" —
 which is the whole reason exit code `4` exists, because `publish` succeeding
 and `announce` failing is a third ending and not a failure to publish.
