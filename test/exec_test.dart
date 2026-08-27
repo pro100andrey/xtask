@@ -64,6 +64,13 @@ final class FakeStarter implements ProcessStarter {
   /// which "are these two running at once" is a question with an answer.
   final holds = <String, Completer<void>>{};
 
+  /// Executables that cannot be started at all, by name.
+  ///
+  /// `Process.start` throws rather than answering when the working directory
+  /// is not there, so a fake that can only return an exit code cannot reach
+  /// the case at all — which is why nothing here caught it for so long.
+  final refuses = <String>{};
+
   @override
   Future<int> start(
     String executable,
@@ -75,6 +82,14 @@ final class FakeStarter implements ProcessStarter {
     void Function(String line)? output,
   }) async {
     final name = p.basename(executable);
+    if (refuses.contains(name)) {
+      throw ProcessException(
+        executable,
+        arguments,
+        'No such file or directory',
+        2,
+      );
+    }
     started.add(
       Started(
         executable,
@@ -1360,6 +1375,93 @@ void main() {
     });
   });
 
+  group('a process that cannot be started at all', () {
+    test('is a task failure, not an unhandled exception', () async {
+      starter.refuses.add('dart');
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n',
+        'a',
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(
+        logged.join('\n'),
+        contains('task `a` could not be started: No such file or directory'),
+      );
+    });
+
+    test('names the member it was at', () async {
+      given(['packages/one/x', 'packages/two/x']);
+      starter.refuses.add('dart');
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [packages/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}'
+            '\n',
+        'a',
+      );
+      expect(logged.join('\n'), contains('at `packages/one`'));
+    });
+
+    test('leaves no section open on a host that folds', () async {
+      // The half of this nobody could see from a terminal: only a
+      // `RunFailure` reaches the annotation, and the annotation is what emits
+      // `::endgroup::`. An escaping exception left the group open, so the rest
+      // of the job folded into a task that had already died.
+      starter.refuses.add('dart');
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n',
+        'a',
+        markers: const GitHubMarkers(),
+      );
+      final marks = logged.where((l) => l.startsWith('::')).toList();
+      expect(marks.where((l) => l == '::group::a'), hasLength(1));
+      expect(marks.where((l) => l == '::endgroup::'), hasLength(1));
+      expect(marks.last, startsWith('::error::'));
+    });
+  });
+
+  group('a body that raises rather than answering', () {
+    test('is a task failure, not exit 255', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: boom}\n',
+        'a',
+        verbs: {'boom': (_) => throw StateError('nope')},
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(logged.join('\n'), contains('task `a` threw StateError'));
+    });
+
+    test('closes its section on a host that folds', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: boom}\n',
+        'a',
+        verbs: {'boom': (_) => throw StateError('nope')},
+        markers: const GitHubMarkers(),
+      );
+      final marks = logged.where((l) => l.startsWith('::')).toList();
+      expect(marks.where((l) => l == '::endgroup::'), hasLength(1));
+      expect(marks.last, startsWith('::error::'));
+    });
+
+    test("a verb's own ProcessException is not read as this body failing "
+        'to start', () async {
+      // A verb that shells out to something absent raises the same exception
+      // a body does. Reported as "could not be started" it would print
+      // `do <verb>` underneath, sending the reader at the wrong command.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: boom}\n',
+        'a',
+        verbs: {
+          'boom': (_) => throw const ProcessException('git', ['log']),
+        },
+      );
+      final said = logged.join('\n');
+      expect(said, contains('threw ProcessException'));
+      expect(said, isNot(contains('could not be started')));
+    });
+  });
+
   group('the real starter, against a real process', () {
     // The one thing the fake cannot answer. Everything else above is about
     // which processes would start; this is about a process actually starting.
@@ -1373,6 +1475,23 @@ void main() {
         runInShell: false,
       );
       expect(code, 0);
+    });
+
+    test('a missing working directory throws rather than answering', () {
+      // What makes the wrapper above necessary rather than defensive: the
+      // real starter cannot report this as a code, because there is no
+      // process to get a code from.
+      const starter = SystemProcessStarter();
+      expect(
+        () => starter.start(
+          Platform.resolvedExecutable,
+          ['--version'],
+          workingDirectory: p.join(Directory.current.path, 'no_such_dir_9f2'),
+          environment: Platform.environment,
+          runInShell: false,
+        ),
+        throwsA(isA<ProcessException>()),
+      );
     });
 
     test('a process that overstays is killed, and says so', () async {

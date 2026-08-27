@@ -95,10 +95,7 @@ void _checkWorkingDirectory(Task task, List<XtaskFormatException> problems) {
   }
   problems.add(
     XtaskFormatException(
-      'task `${task.name}` says `in: $written`, which reaches outside the '
-      'repository. A working directory is relative to the root and stays '
-      'there — a task that runs somewhere the repository does not own is not '
-      'something this file can vouch for',
+      workingDirectoryLeavesRoot(task: task.name, written: written),
       task.span,
     ),
   );

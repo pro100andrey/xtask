@@ -329,10 +329,7 @@ final class BodyResolver {
       // levels above the root, and answered 0.
       throw RunFailure(
         ExitCode.invalidFile,
-        'task `${task.name}` says `in: $written`, which reaches outside the '
-        'repository. A working directory is relative to the root and stays '
-        'there — a task that runs somewhere the repository does not own is '
-        'not something this file can vouch for',
+        workingDirectoryLeavesRoot(task: task.name, written: written),
       );
     }
     if (written == r'$each') {

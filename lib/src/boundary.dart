@@ -38,3 +38,18 @@ bool leavesRoot(String path) =>
     _drive.hasMatch(path) ||
     p.posix.split(path).contains('..') ||
     p.windows.split(path).contains('..');
+
+/// Why `in: [written]` on task [task] is refused.
+///
+/// Here rather than at either caller, because it was written at both: the
+/// resolver refuses this when a run reaches the task, `--validate` refuses it
+/// when the file is read, and one boundary saying two slightly different
+/// sentences is how a diagnostic starts drifting from the rule it reports.
+String workingDirectoryLeavesRoot({
+  required String task,
+  required String written,
+}) =>
+    'task `$task` says `in: $written`, which reaches outside the repository. '
+    'A working directory is relative to the root and stays there — a task '
+    'that runs somewhere the repository does not own is not something this '
+    'file can vouch for';

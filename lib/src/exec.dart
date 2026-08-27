@@ -220,6 +220,19 @@ final class Executor {
   }
 
   /// One task, timed, and reported where the mode says to report it.
+  /// What an exception that is not a [RunFailure] comes to.
+  ///
+  /// Named rather than swallowed: the type and the message are the whole of
+  /// the bug report, and which task was running is the half that says where to
+  /// look. Answers 1, because a body that threw is a body that did not do its
+  /// job — and code 3 stays reserved for §5.4 having proved a tool absent.
+  RunFailure _threw(Task task, Object thrown) => RunFailure(
+    ExitCode.taskFailed,
+    'task `${task.name}` threw ${thrown.runtimeType}: $thrown. A body that '
+    "raises rather than answering is either the project's own verb or a "
+    'fault in this engine; either way it is this task that stopped',
+  );
+
   Future<int?> _runOne(
     PlanStep step,
     Map<String, Duration> took,
@@ -232,7 +245,21 @@ final class Executor {
     try {
       await _runTask(step.task, lines?.add);
       return null;
-    } on RunFailure catch (failure) {
+    } on Object catch (thrown) {
+      // **One clause, because there is one ending.** `on RunFailure` alone
+      // left every other exception to leave the process at 255 — a number
+      // §5.3 does not have — with the section still open, because only the
+      // annotation below emits `::endgroup::`. A verb is arbitrary project
+      // Dart (§9) and can throw anything; so, being honest about it, can a
+      // fault in this engine. Neither is an exit code, and both are a task
+      // that failed.
+      if (thrown is XtaskFormatException) {
+        // Not this method's to answer. §8's code 2 belongs to the file being
+        // wrong, and `cli.dart` is where that sentence is written.
+        rethrow;
+      }
+      final failure = thrown is RunFailure ? thrown : _threw(step.task, thrown);
+
       // Closes the open section and annotates, in that order and for that
       // reason: an `::error::` inside a group is folded away with it, so the
       // one line somebody needs would be the one they have to expand a
@@ -325,7 +352,47 @@ final class Executor {
   ) async {
     final task = resolved.task;
     final member = resolved.member;
-    final code = await _perform(resolved, sink);
+
+    final int code;
+    try {
+      code = await _perform(resolved, sink);
+    } on ProcessException catch (failure) {
+      // **Only where "could not be started" is literally true.** A verb is
+      // arbitrary project Dart (§9), and one that shells out to `git` on a
+      // machine without it raises this too — reported here it would say the
+      // task could not be started and then print `do <verb>`, sending
+      // whoever reads it to inspect the wrong command entirely. A verb that
+      // throws is a verb that threw, and the general handler says so.
+      if (resolved is! ResolvedProcess) {
+        rethrow;
+      }
+
+      // **The one ending that used to escape §5.3 entirely.** `Process.start`
+      // throws rather than answering when the working directory does not
+      // exist, or when the executable stopped being startable between §5.4
+      // resolving it and this line. Nothing anywhere caught it: the run ended
+      // on an unhandled exception with exit 255 — a number the table does not
+      // have — and because only a `RunFailure` reaches the annotation, the
+      // `::group::` opened for this task was never closed. On GitHub the rest
+      // of the job then folded into a section belonging to a task that had
+      // already died, which is §7.1's readable failure turned inside out.
+      //
+      // Answers 1, which is where `executables.dart` already places a
+      // `ProcessException`: code 3 is §5.4 having PROVED the tool is absent,
+      // and a start that failed for some other reason is not that proof.
+      final where = member == null ? '' : ' at `$member`';
+      throw RunFailure(
+        ExitCode.taskFailed,
+        [
+          'task `${task.name}`$where could not be started: ${failure.message}',
+          // The same two lines an ordinary failure carries, and for the same
+          // reason: "which directory did it look in" is the whole answer here,
+          // and it is the line `describe` prints.
+          ...describe(resolved, header: false),
+        ].join('\n'),
+      );
+    }
+
     if (code != ExitCode.success) {
       // **A killed process is reported as killed, not as "exit code 124".**
       // The number is what a killed process answers with and what a shell
