@@ -331,12 +331,15 @@ void _checkSetsExpand(
     try {
       sets.expand(name, set);
     } on EmptySetException catch (problem) {
-      // **Only the emptiness is passed over, and only where the set says it is
-      // produced.** Skipping the whole expansion took the repository boundary
-      // and the pattern syntax with it: `include: ['/etc/host*']` validated
-      // clean, and the fence it dropped is the one whose reason is that a set
-      // is fed to verbs that delete.
-      if (set is GlobSet && set.produced) {
+      // **Only the emptiness is passed over, and only where the set said its
+      // members are made by the run.** Skipping the whole expansion took the
+      // repository boundary and the pattern syntax with it: `include:
+      // ['/etc/host*']` validated clean, and the fence it dropped is the one
+      // whose reason is that a set is fed to verbs that delete.
+      //
+      // Read off the refusal rather than worked out from the set again: the
+      // rule is `sets.dart`'s, and a copy here is a copy that can disagree.
+      if (problem.onlyYet) {
         return;
       }
       problems.add(problem);

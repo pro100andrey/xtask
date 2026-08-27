@@ -282,6 +282,11 @@ final class SetExpander {
       'fail, it succeeds having done nothing, and in a gate that is a green '
       'result nobody checked',
       set.span,
+      // **The one place this is decided.** `produced:` says the members are
+      // made by the run, so before the task that makes them has run this
+      // emptiness is a moment rather than a mistake. Every reader used to
+      // work that out again from the set it happened to be holding.
+      onlyYet: set is GlobSet && set.produced,
     );
   }
 

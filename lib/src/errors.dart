@@ -54,7 +54,20 @@ base class RunFailure implements Exception {
 /// apart wrongly: `--dry-run` reported a boundary violation and an unknown
 /// verb as "cannot be resolved yet" and answered 0.
 final class EmptySetException extends XtaskFormatException {
-  EmptySetException(super.message, [super.span]);
+  EmptySetException(super.message, super.span, {required this.onlyYet});
+
+  /// Whether this emptiness could stop being true once the run has begun.
+  ///
+  /// **Decided where the set is, and carried rather than re-derived.** A set
+  /// whose members the run itself makes is empty before its task has run and
+  /// full afterwards, and all three readers of this need to tell that apart:
+  /// `--validate` passes over it, a run refuses it, `--dry-run` says "not
+  /// yet". Each of them used to write the test out — `set is GlobSet &&
+  /// set.produced`, in two modules — which is one rule kept in step by hand,
+  /// and a third copy the day a second kind of set can be produced.
+  ///
+  /// The verdict travels with the refusal because the refusal is what travels.
+  final bool onlyYet;
 }
 
 /// A body that cannot resolve yet because a set it names is still empty.

@@ -448,8 +448,12 @@ final class BodyResolver {
       // Distinguished by type, so `--dry-run` can tell "not yet" from "wrong"
       // instead of guessing from the exit code — which called a boundary
       // violation and an unknown verb premature, and answered 0.
+      //
+      // Whether it is only-yet is the refusal's to say, not this module's:
+      // asking the set again here was the same rule written a second time, in
+      // a file that has no business knowing what `produced:` means.
       final message = 'task `${task.name}` cannot run:\n$problem';
-      throw set is GlobSet && set.produced
+      throw problem.onlyYet
           ? NotYetFailure(ExitCode.invalidFile, message)
           : RunFailure(ExitCode.invalidFile, message);
     } on XtaskFormatException catch (problem) {
