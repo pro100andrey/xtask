@@ -45,6 +45,7 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
 
   return XtaskFile(
     version: version,
+    gates: Map.unmodifiable(_gates(root)),
     // Unmodifiable, and §4.3 is why for `tasks`: its ORDER is load-bearing —
     // a `collects:` composite runs its members in the order they appear — and
     // a map anybody downstream can reorder is an order nobody can rely on.
@@ -80,6 +81,48 @@ int _version(YamlMap root) {
     );
   }
   return value;
+}
+
+/// The declared gate sets, in the order written, each with its own line.
+///
+/// **A list of names and nothing else.** A gate set is not a task: it has no
+/// description, no body and nothing to run of its own — it is the name of who
+/// runs a list, and the list is whichever tasks say they are in it. Giving it
+/// a description here would invite a second one on the composite that gathers
+/// it, and two descriptions of one thing is the defect §1 exists to remove.
+Map<String, SourceSpan?> _gates(YamlMap root) {
+  final node = root.nodes['gates'];
+  if (node == null) {
+    return const {};
+  }
+  if (node is! YamlList) {
+    throw XtaskFormatException(
+      '`gates:` is a list of names — `gates: [check, release]`. Names only: '
+      'a gate set is not a task and has nothing to describe',
+      node.span,
+    );
+  }
+  if (node.nodes.isEmpty) {
+    throw XtaskFormatException(
+      '`gates:` is written with no names. Leave it out rather than declare '
+      'nothing: an empty list says a file has gate sets and then names none',
+      node.span,
+    );
+  }
+
+  final gates = <String, SourceSpan?>{};
+  for (final item in node.nodes) {
+    final name = _name(item, 'a gate name');
+    if (gates.containsKey(name)) {
+      throw XtaskFormatException(
+        'gate set `$name` is declared twice. The order of this list is the '
+        'order a report groups by, and a name in it twice has two places',
+        item.span,
+      );
+    }
+    gates[name] = item.span;
+  }
+  return gates;
 }
 
 Map<String, NamedSet> _sets(YamlMap root) {

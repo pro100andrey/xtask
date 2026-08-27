@@ -34,6 +34,8 @@ Then write `xtask.yaml` at the repository root. This is a whole one:
 ```yaml
 version: 1
 
+gates: [check]
+
 tasks:
   lint:
     desc: check the style
@@ -184,7 +186,8 @@ xtask <task> -- <args>       and pass those arguments to its body
 xtask <task> --keep-going    report every failure, not just the first
 xtask <task> --parallel      run independent tasks at once — which costs
                              seeing their output as it arrives
-xtask --list                 every task, with its description
+xtask --list                 every task, grouped under its gate set,
+                             in the order `gates:` declares
 xtask --list --gate <name>   only the tasks in that gate set
 xtask --gate-members <name>  the tasks in that gate set, one per line
 xtask --why <task>           what puts that task in a plan, and by which
@@ -249,9 +252,24 @@ check
 ## Gate sets, and CI
 
 A gate set is named after **who runs it** — one person's command, or one CI
-job's. A task lists the sets it belongs to; a composite `collects:` a set and
+job's. Every set the file has is declared once, at the top:
+
+```yaml
+gates: [check, release]
+```
+
+Names only — a gate set is not a task and has nothing to describe. Declaring
+them is what makes a misspelling a refusal: a gate that came into existence by
+being mentioned could not be misspelled, because the misspelling was a new
+gate. `collects: chekc` used to gather a set with no members, run, do nothing
+and go green, from one transposed letter. The order is the author's, and is the
+order a report groups by.
+
+A task lists the sets it belongs to; a composite `collects:` a set and
 therefore needs every task in it, in the order they appear in the file (cheap
-gates before slow ones).
+gates before slow ones). A declared set nothing is in is refused too, for the
+reason the empty-set rule exists: a gate that examined nothing reports the same
+green as one that passed.
 
 `collects:` names **one** set, not a list — a composite is the thing you type,
 and one command gathering two unrelated sets is two commands wearing one name.
@@ -517,8 +535,9 @@ version: 1
 The schema knows the **shape** of the file: it completes a task's keys, and
 underlines `dsec:` or a `gate:` written as a string, while you type. Everything
 that needs the graph or the filesystem — a cycle, a `needs:` pointing at
-nothing, an orphan gate, a glob matching nothing, an unregistered verb, an `in:`
-that reaches outside the repository — is what `--validate` answers. A schema catches a mistyped **key**; `--validate` catches
+nothing, an undeclared or empty gate set, an orphan gate, a glob matching
+nothing, an unregistered verb, an `in:` that reaches outside the repository —
+is what `--validate` answers. A schema catches a mistyped **key**; `--validate` catches
 a mistyped **name**.
 
 The schema describes one version of the engine, which is why it is generated

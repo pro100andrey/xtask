@@ -202,11 +202,29 @@ void main() {
         reason: 'the README used to carry two whole files; find them again',
       );
       for (final block in blocks) {
+        // **Validated, not merely parsed.** Parsing says the shape is right;
+        // §8's checks are what a reader meets the moment they copy the block
+        // and run the first gate this document tells them to adopt. The
+        // declared-gates rule landed in `--validate` and the flagship example
+        // was left using `gate:` without a `gates:` line, so the document's
+        // own first instruction refused the document's own first file. Only a
+        // check that asks the same question a reader will ask can catch that.
+        late final XtaskFile file;
         expect(
-          () => parseXtaskFile(block, sourceUrl: Uri.parse('README.md')),
+          () => file = parseXtaskFile(block, sourceUrl: Uri.parse('README.md')),
           returnsNormally,
           reason: block,
         );
+        final report = validateFile(
+          withCollectedGates(file),
+          knownVerbs: {
+            ...builtInVerbNames,
+            ...file.tasks.values.map(
+              (task) => task.body is DoBody ? (task.body! as DoBody).verb : '',
+            ),
+          }..remove(''),
+        );
+        expect(report.ok, isTrue, reason: '$block\n$report');
       }
     });
   });

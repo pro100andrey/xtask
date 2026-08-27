@@ -68,6 +68,17 @@ Map<String, Map<String, Object?>> get _topLevel => {
         'Required. The only version this engine reads; an unknown one is '
         'refused rather than read as best it can.',
   },
+  'gates': {
+    'type': 'array',
+    'items': {'type': 'string', 'minLength': 1},
+    'minItems': 1,
+    'uniqueItems': true,
+    'description':
+        'Every gate set this file has, in the order a report groups by. Names '
+        'only — a gate set is not a task and has nothing to describe. '
+        'Declaring them is what makes a misspelled `gate:` or `collects:` a '
+        'refusal rather than a new gate nobody runs.',
+  },
   'sets': {
     'type': 'object',
     'description':

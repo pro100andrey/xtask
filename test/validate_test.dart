@@ -54,7 +54,7 @@ void main() {
   group('a file with nothing wrong', () {
     test('reports nothing', () {
       final report = check(
-        'version: 1\ntasks:\n'
+        'version: 1\ngates: [check]\ntasks:\n'
         '  a: {desc: x, gate: [check], run: [dart, analyze]}\n'
         '  check: {desc: y, collects: check}\n',
       );
@@ -72,9 +72,11 @@ void main() {
 
     test('but a composite that gathers a gate set is fine', () {
       final report = check(
-        'version: 1\ntasks:\n  check: {desc: x, collects: check}\n',
+        'version: 1\ngates: [check]\ntasks:\n'
+        '  check: {desc: x, collects: check}\n'
+        '  a: {desc: y, gate: [check], run: [dart]}\n',
       );
-      expect(report.ok, isTrue);
+      expect(report.ok, isTrue, reason: report.toString());
     });
 
     test('and so is one that only depends on others', () {
@@ -170,11 +172,67 @@ void main() {
     });
   });
 
+  group('a gate set is declared before it is used', () {
+    test(
+      'a misspelled `collects:` is a refusal, not a gate with no members',
+      () {
+        // The hole this closes. `collects: chekc` gathered a gate nothing was
+        // in, so the composite ran, did nothing and answered 0 — a green result
+        // nobody checked, from one transposed letter. Nothing caught it: the
+        // orphan rule looks at `gate:`, not at `collects:`.
+        final report = check(
+          'version: 1\ngates: [check]\ntasks:\n'
+          '  a: {desc: x, gate: [check], run: [dart]}\n'
+          '  check: {desc: y, collects: chekc}\n',
+        );
+        expect(report.toString(), contains('`gates:` does not declare'));
+        expect(report.toString(), contains('Declared: `check`'));
+      },
+    );
+
+    test('a misspelled `gate:` says what the declared names are', () {
+      final report = check(
+        'version: 1\ngates: [check]\ntasks:\n'
+        '  a: {desc: x, gate: [chekc], run: [dart]}\n'
+        '  check: {desc: y, collects: check}\n',
+      );
+      expect(report.toString(), contains('names the gate set `chekc`'));
+    });
+
+    test('a declared gate nothing is in is refused', () {
+      final report = check(
+        'version: 1\ngates: [check, release]\ntasks:\n'
+        '  a: {desc: x, gate: [check], run: [dart]}\n'
+        '  check: {desc: y, collects: check}\n',
+      );
+      expect(report.toString(), contains('gate set `release` is declared'));
+      expect(report.toString(), contains('checks nothing'));
+    });
+
+    test('using gate sets without declaring any says how to start', () {
+      final report = check(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, gate: [check], run: [dart]}\n'
+        '  check: {desc: y, collects: check}\n',
+      );
+      expect(report.toString(), contains('`gates: [check]`'));
+    });
+
+    test('a file that neither declares nor uses gate sets is fine', () {
+      // The rule is about a file that USES them. A file with no gate sets at
+      // all is a legitimate file and this says nothing about it. (Declaring
+      // one nothing is in is the case above, and it is a refusal.)
+      final report = check('version: 1\ntasks:\n  a: {desc: x, run: [d]}\n');
+      expect(report.ok, isTrue, reason: report.toString());
+    });
+  });
+
   group('an orphan gate is a task that believes it is checked', () {
     test('a gate nothing collects is refused', () {
       final report = check(
-        'version: 1\ntasks:\n'
+        'version: 1\ngates: [check, ci-web]\ntasks:\n'
         '  a: {desc: x, gate: [ci-web], run: [dart]}\n'
+        '  b: {desc: z, gate: [check], run: [dart]}\n'
         '  check: {desc: y, collects: check}\n',
       );
       expect(report.toString(), contains('no task collects it'));
@@ -184,16 +242,16 @@ void main() {
 
     test('every gate a task claims is checked, not just the first', () {
       final report = check(
-        'version: 1\ntasks:\n'
+        'version: 1\ngates: [check, ci-web, ci-test]\ntasks:\n'
         '  a: {desc: x, gate: [check, ci-web, ci-test], run: [dart]}\n'
         '  check: {desc: y, collects: check}\n',
       );
-      expect(report.problems, hasLength(2));
+      expect(report.problems, hasLength(2), reason: report.toString());
     });
 
     test('a gate that is collected passes', () {
       final report = check(
-        'version: 1\ntasks:\n'
+        'version: 1\ngates: [ci-web]\ntasks:\n'
         '  a: {desc: x, gate: [ci-web], run: [dart]}\n'
         '  ci-web: {desc: y, collects: ci-web}\n',
       );
@@ -245,7 +303,7 @@ void main() {
     setUpAll(() {
       report = validateFile(
         parseXtaskFile(
-          'version: 1\ntasks:\n'
+          'version: 1\ngates: [nobody]\ntasks:\n'
           '  idle: {desc: does nothing}\n'
           '  ghost-verb: {desc: y, do: nope}\n'
           '  ghost-set: {desc: z, argv-from: nowhere, run: [dart]}\n'
@@ -278,7 +336,7 @@ void main() {
       for (final problem in report.problems) {
         expect(problem.span, isNotNull, reason: problem.message);
       }
-      expect(report.toString(), contains('line 3'));
+      expect(report.toString(), contains('line 4'));
     });
   });
 }

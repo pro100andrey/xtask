@@ -321,6 +321,7 @@ void main() {
 
     const lake = '''
 version: 1
+gates: [check, ci-analyze, ci-web]
 tasks:
   analyze:
     desc: analyze every package
@@ -392,19 +393,32 @@ tasks:
         expect(printed(), contains('browser e2e for the web binding'));
       });
 
+      test(
+        'grouped by the declared gate sets, in the declared order',
+        () async {
+          writeFile(lake);
+          await run(['--list']);
+          expect(out.first, 'gate check');
+          expect(
+            out.where((l) => l.startsWith('gate ')),
+            ['gate check', 'gate ci-analyze', 'gate ci-web'],
+          );
+          // Which is not the order the tasks are written in: `web-e2e` comes
+          // third in the file and its gate set comes last here.
+          expect(out, contains('ungated'));
+        },
+      );
+
       test("in the file's order, with the names in a column", () async {
         writeFile(lake);
         await run(['--list']);
-        expect(out.first, startsWith('analyze  '));
-        expect(out.map((l) => l.split(' ').first).take(3), [
-          'analyze',
-          'lake-format',
-          'web-e2e',
-        ]);
-        // Where each description starts: past the name and its padding.
-        final column = RegExp(r'^\S+\s+');
+        final rows = out.where((l) => l.startsWith('  ')).toList();
+        expect(rows.first.trim(), startsWith('analyze  '));
+        // Where each description starts: past the indent, the name and its
+        // padding.
+        final column = RegExp(r'^\s+\S+\s+');
         expect(
-          out.map((l) => column.firstMatch(l)!.end).toSet(),
+          rows.map((l) => column.firstMatch(l)!.end).toSet(),
           hasLength(1),
           reason: 'one column, so the descriptions line up',
         );

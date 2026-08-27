@@ -2,7 +2,23 @@
 
 ## Unreleased
 
-Three failures that a committed file could reach with nothing said about it.
+### Gate sets are declared
+
+`gates: [check, release]` at the top of the file, names only. A gate set used
+to exist by being mentioned, so a misspelling made a new one: on the `gate:`
+side that was caught sideways, by nothing collecting it, but `collects: chekc`
+gathered a set with no members, ran, did nothing and answered 0 — a green
+result nobody checked, from one transposed letter. Both sides are now a
+refusal that names the line, and so is a declared set no task is in.
+
+The order declared is the author's, and `--list` groups by it — which the
+implicit version could not do, having neither an order of its own nor a
+complete list. `ungated` is a heading only a declaration makes trustworthy: a
+task under it is one nothing runs, rather than one the report did not think of.
+
+**Breaking:** a file that uses gate sets must declare them.
+
+### Three failures a committed file could reach with nothing said about it
 
 - **The repository boundary is one check, and it reads both notations.** A
   set's written members and a task's `in:` never met it at all, so

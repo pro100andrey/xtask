@@ -406,7 +406,8 @@ const usage = [
   '  xtask <task> --keep-going    report every failure, not just the first',
   '  xtask <task> --parallel      run independent tasks at once — which costs',
   '                               seeing their output as it arrives',
-  '  xtask --list                 every task, with its description',
+  '  xtask --list                 every task, grouped under its gate set,',
+  '                               in the order `gates:` declares',
   '  xtask --list --gate <name>   only the tasks in that gate set',
   '  xtask --gate-members <name>  the tasks in that gate set, one per line',
   '  xtask --why <task>           what puts that task in a plan, and by which',
@@ -551,7 +552,14 @@ Future<int> runCli(
           err('$problems');
           return ExitCode.invalidFile;
         }
-        out(report.read(path, file.tasks.length, file.sets.length));
+        out(
+          report.read(
+            path,
+            file.tasks.length,
+            file.gates.length,
+            file.sets.length,
+          ),
+        );
         return ExitCode.success;
 
       case CheckCi():
@@ -564,12 +572,11 @@ Future<int> runCli(
         return ExitCode.success;
 
       case ListTasks(:final gate):
-        report
-            .listing(
-              gate == null
-                  ? file.tasks.values
-                  : tasksInGate(file, _gate(file, gate)),
-            )
+        // Narrowed to one set, the heading would repeat what was asked for;
+        // over the whole file it is what makes the answer readable.
+        (gate == null
+                ? report.grouping(file)
+                : report.listing(tasksInGate(file, _gate(file, gate))))
             .forEach(out);
         return ExitCode.success;
 

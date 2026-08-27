@@ -659,6 +659,64 @@ tasks: {}
     });
   });
 
+  group('`gates:` is a list of names and nothing else', () {
+    test('is read in the order written', () {
+      final file = parseXtaskFile(
+        'version: 1\ngates: [check, release, nightly]\n'
+        'tasks:\n  a: {desc: x, run: [d]}\n',
+      );
+      expect(file.gates.keys, ['check', 'release', 'nightly']);
+    });
+
+    test('every name carries the line it was written on', () {
+      final file = parseXtaskFile(
+        'version: 1\ngates: [check]\ntasks:\n  a: {desc: x, run: [d]}\n',
+      );
+      expect(file.gates['check']?.start.line, 1);
+    });
+
+    test('a mapping is refused — a gate set has nothing to describe', () {
+      expect(
+        () => parseXtaskFile(
+          'version: 1\ngates: {check: everything}\n'
+          'tasks:\n  a: {desc: x, run: [d]}\n',
+        ),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('is a list of names'),
+          ),
+        ),
+      );
+    });
+
+    test('the same name twice is refused', () {
+      expect(
+        () => parseXtaskFile(
+          'version: 1\ngates: [check, check]\n'
+          'tasks:\n  a: {desc: x, run: [d]}\n',
+        ),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('declared twice'),
+          ),
+        ),
+      );
+    });
+
+    test('an empty list is refused rather than read as none', () {
+      expect(
+        () => parseXtaskFile(
+          'version: 1\ngates: []\ntasks:\n  a: {desc: x, run: [d]}\n',
+        ),
+        throwsA(isA<XtaskFormatException>()),
+      );
+    });
+  });
+
   group('`timeout:` is refused where it could not be honoured', () {
     test('a whole number of seconds is kept', () {
       final file = parseXtaskFile(

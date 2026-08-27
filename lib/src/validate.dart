@@ -56,6 +56,7 @@ ValidationReport validateFile(
   }
 
   _checkGraph(file, problems);
+  _checkDeclaredGates(file, problems);
   _checkGates(file, problems);
   if (sets != null) {
     _checkSetsExpand(file, sets, problems);
@@ -164,6 +165,70 @@ void _checkGraph(XtaskFile file, List<XtaskFormatException> problems) {
     }
   }
 }
+
+/// Every gate set a task names is one the file declares, and every declared
+/// one has members.
+///
+/// **The half of this that nothing caught.** A gate set used to exist by being
+/// mentioned, so a misspelling made a new one. On the `gate:` side that was
+/// caught sideways — the orphan check below notices that nothing collects it —
+/// but `collects: chekc` gathered a gate with no members, ran, did nothing and
+/// answered 0. A composite that gathers nothing is precisely the green result
+/// nobody checked that §1 is about, and it took one transposed letter.
+void _checkDeclaredGates(XtaskFile file, List<XtaskFormatException> problems) {
+  final declared = file.gates.keys.toSet();
+  final used = <String>{
+    for (final task in file.tasks.values) ...task.gate,
+    for (final task in file.tasks.values)
+      if (task.collects != null) task.collects!,
+  };
+
+  if (declared.isEmpty) {
+    if (used.isNotEmpty) {
+      problems.add(
+        XtaskFormatException(
+          'this file uses gate sets — ${_quoted(used)} — and declares none. '
+          'Write `gates: [${(used.toList()..sort()).join(', ')}]` at the top: '
+          'a name that is only ever mentioned cannot be misspelled, because '
+          'the misspelling is a new gate set',
+        ),
+      );
+    }
+    return;
+  }
+
+  for (final task in file.tasks.values) {
+    for (final gate in [...task.gate, ?task.collects]) {
+      if (declared.contains(gate)) {
+        continue;
+      }
+      problems.add(
+        XtaskFormatException(
+          'task `${task.name}` names the gate set `$gate`, which `gates:` does '
+          'not declare. Declared: ${_quoted(declared)}',
+          task.span,
+        ),
+      );
+    }
+  }
+
+  for (final entry in file.gates.entries) {
+    if (tasksInGate(file, entry.key).isNotEmpty) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        'gate set `${entry.key}` is declared and no task is in it, so running '
+        'it checks nothing. A gate that examined nothing is worse than no '
+        'gate at all: it reports the same green as one that passed',
+        entry.value,
+      ),
+    );
+  }
+}
+
+String _quoted(Iterable<String> names) =>
+    (names.toList()..sort()).map((name) => '`$name`').join(', ');
 
 /// An orphan gate: a task that believes it is checked and is not (§8).
 void _checkGates(XtaskFile file, List<XtaskFormatException> problems) {

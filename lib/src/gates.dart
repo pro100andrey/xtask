@@ -56,6 +56,7 @@ XtaskFile withCollectedGates(XtaskFile file) {
 
   return XtaskFile(
     version: file.version,
+    gates: file.gates,
     sets: file.sets,
     tasks: Map.unmodifiable(rewritten),
   );

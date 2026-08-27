@@ -188,6 +188,51 @@ List<String> listing(Iterable<Task> tasks) {
   ];
 }
 
+/// `--list` over a whole file: the tasks grouped under the gate sets that run
+/// them, in the order the file declares.
+///
+/// **The reason gate sets are declared rather than inferred.** A gate that
+/// existed by being mentioned had no order of its own and no complete list, so
+/// this could only ever print one flat column — and "which of these does CI
+/// run" was a question a reader answered by scanning every task's `gate:` key
+/// and assembling the answer themselves.
+///
+/// A task in two sets appears under both, which is what it is. The last group
+/// is the one that could not be named before: `ungated` is complete only
+/// because the declaration says what all the gates are, so a task under it is
+/// one nothing runs rather than one this report did not think of.
+List<String> grouping(XtaskFile file) {
+  if (file.gates.isEmpty) {
+    // Nothing to group by. A single heading over the whole file would be a
+    // grouping the file does not have.
+    return listing(file.tasks.values);
+  }
+
+  final width = _widest(file.tasks.keys);
+  String row(Task task) => '  ${task.name.padRight(width)}  ${task.desc}';
+
+  final groups = <List<String>>[
+    for (final gate in file.gates.keys)
+      [
+        'gate $gate',
+        for (final task in file.tasks.values)
+          if (task.gate.contains(gate)) row(task),
+      ],
+    [
+      'ungated',
+      for (final task in file.tasks.values)
+        if (task.gate.isEmpty) row(task),
+    ],
+  ]..removeWhere((group) => group.length == 1);
+
+  return [
+    for (final (at, group) in groups.indexed) ...[
+      if (at > 0) '',
+      ...group,
+    ],
+  ];
+}
+
 /// `--why`: every entry point that reaches [task], and the route to it.
 ///
 /// A route that is empty means the entry point IS the task. A [routes] with no
@@ -233,8 +278,14 @@ String _ran(String workflow, String job, String gate) =>
 ///
 /// Not silence. Silence is what a gate that never ran also prints, and naming
 /// the file proves it read the one somebody meant.
-String read(String path, int tasks, int sets) =>
-    '$path: ${_count(tasks, 'task')}, ${_count(sets, 'set')}, nothing wrong';
+String read(String path, int tasks, int gates, int sets) => [
+  '$path: ${_count(tasks, 'task')}',
+  // Named only when there are any: a file with no gate sets is a legitimate
+  // file, and "0 gate sets" reads as something missing.
+  if (gates > 0) _count(gates, 'gate set'),
+  _count(sets, 'set'),
+  'nothing wrong',
+].join(', ');
 
 int _widest(Iterable<String> of) =>
     of.fold(0, (widest, s) => s.length > widest ? s.length : widest);

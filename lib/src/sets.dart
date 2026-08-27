@@ -145,10 +145,19 @@ final class SetExpander {
       'set `$name` reaches outside the repository with `$written`. What a set '
       'names is relative to the root and stays there: a set is fed to verbs '
       "that delete, and a path the repository does not own is not this file's "
-      'to name',
+      'to name'
+      '${_drivePrefixed(written) ? ' — one letter and a colon reads as a '
+                'Windows drive, whatever it was meant as' : ''}',
       set.span,
     );
   }
+
+  /// Whether [written] is refused for looking like `C:` rather than for
+  /// anything about paths — the one shape whose refusal needs explaining.
+  static bool _drivePrefixed(String written) =>
+      written.length > 1 &&
+      written[1] == ':' &&
+      RegExp('[A-Za-z]').hasMatch(written[0]);
 
   /// A pattern is always read as POSIX, whatever the host is.
   ///

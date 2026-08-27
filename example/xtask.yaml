@@ -2,6 +2,11 @@
 # and nothing in it can branch, capture output or reach a shell.
 version: 1
 
+# Declared, so that a misspelling here or in a task's `gate:` is a refusal
+# rather than a new gate set nobody runs. The order is the one a report
+# groups by.
+gates: [check]
+
 sets:
   # Expanded by the engine, in a deterministic order. A set that matches
   # nothing is an error, because a task given no files checked nothing.

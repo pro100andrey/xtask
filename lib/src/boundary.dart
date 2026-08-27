@@ -6,6 +6,11 @@ import 'package:path/path.dart' as p;
 /// A bare drive letter — `C:x`, which is relative to that drive's own
 /// current directory. `p.windows.isAbsolute` says false about it, correctly,
 /// and it still is not this repository's to name.
+///
+/// One letter and a colon, so `web:build` is not this and `a:b` is. §4.2 says
+/// a set's members are paths, and the members of one are checked as paths; a
+/// set of values that are not paths at all is not expressible yet, and when it
+/// is, this is the test it will not be asked.
 final _drive = RegExp('^[A-Za-z]:');
 
 /// Whether [path] names anything the repository root does not own.

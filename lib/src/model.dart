@@ -33,7 +33,7 @@ const taskKeys = <String>{
 };
 
 /// Every key the document may carry at the top level (§4.1).
-const topLevelKeys = <String>{'version', 'sets', 'tasks'};
+const topLevelKeys = <String>{'version', 'gates', 'sets', 'tasks'};
 
 /// Every key a glob set may carry (§4.2).
 ///
@@ -67,6 +67,7 @@ mixin Located {
 final class XtaskFile {
   const XtaskFile({
     required this.version,
+    required this.gates,
     required this.sets,
     required this.tasks,
   });
@@ -74,6 +75,22 @@ final class XtaskFile {
   /// Always [supportedVersion] — parsing refuses anything else rather than
   /// carrying the number forward for somebody downstream to check.
   final int version;
+
+  /// Every gate set the file declares, **in declaration order**, each with
+  /// the line it was written on.
+  ///
+  /// **Declared, because a gate set that came into existence by being
+  /// mentioned could not be misspelled.** It used to: a gate existed as soon
+  /// as a task said it was in one, so `gate: [chekc]` made a new gate with one
+  /// member — caught, but only sideways, by the orphan check downstream — and
+  /// `collects: chekc` made a composite that gathered nothing, ran, did
+  /// nothing and went green. One list is what lets both sides of that be a
+  /// refusal that names the line.
+  ///
+  /// The order is the author's and is the order a report groups by. It carries
+  /// no description: a gate set is not a task, it is the name of who runs a
+  /// list.
+  final Map<String, SourceSpan?> gates;
 
   /// Named sets, in declaration order. Unmodifiable — see [tasks].
   final Map<String, NamedSet> sets;

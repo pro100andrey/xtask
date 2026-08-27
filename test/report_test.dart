@@ -1,6 +1,7 @@
 import 'package:test/test.dart';
 import 'package:xtask/src/ci.dart';
 import 'package:xtask/src/graph.dart';
+import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/report.dart';
 
@@ -212,13 +213,76 @@ tasks:
     });
   });
 
+  group('--list groups by the gate sets the file declares', () {
+    XtaskFile parsed(String yaml) => parseXtaskFile(yaml);
+
+    test('in the declared order, with the tasks under each', () {
+      final lines = grouping(
+        parsed(
+          'version: 1\ngates: [check, release]\ntasks:\n'
+          '  format: {desc: f, gate: [check], run: [d]}\n'
+          '  test: {desc: t, gate: [check], run: [d]}\n'
+          '  publishable: {desc: p, gate: [release], run: [d]}\n',
+        ),
+      );
+      expect(lines.first, 'gate check');
+      expect(lines[1], contains('format'));
+      expect(lines[2], contains('test'));
+      expect(lines, contains('gate release'));
+      // Declared order, not alphabetical and not the tasks' order.
+      expect(
+        lines.indexOf('gate check'),
+        lessThan(lines.indexOf('gate release')),
+      );
+    });
+
+    test('a task in two sets appears under both, which is what it is', () {
+      final lines = grouping(
+        parsed(
+          'version: 1\ngates: [check, ci]\ntasks:\n'
+          '  a: {desc: x, gate: [check, ci], run: [d]}\n',
+        ),
+      );
+      expect(lines.where((l) => l.contains('  a ')), hasLength(2));
+    });
+
+    test('`ungated` is complete, which is what the declaration buys', () {
+      // A gate that existed by being mentioned had no complete list, so a
+      // heading saying "nothing runs these" could not be trusted.
+      final lines = grouping(
+        parsed(
+          'version: 1\ngates: [check]\ntasks:\n'
+          '  a: {desc: x, gate: [check], run: [d]}\n'
+          '  aot: {desc: y, run: [d]}\n',
+        ),
+      );
+      expect(lines, contains('ungated'));
+      expect(lines.last, contains('aot'));
+    });
+
+    test('a file with no gate sets is one flat column, with no heading', () {
+      final lines = grouping(
+        parsed('version: 1\ntasks:\n  a: {desc: x, run: [d]}\n'),
+      );
+      expect(lines, ['a  x']);
+    });
+  });
+
   test(
     '--validate says what it read, because silence is what a dead gate says',
     () {
-      expect(read('/repo/xtask.yaml', 4, 1), contains('4 tasks'));
-      expect(read('/repo/xtask.yaml', 4, 1), contains('1 set,'));
-      expect(read('/repo/xtask.yaml', 1, 0), contains('1 task,'));
-      expect(read('/repo/xtask.yaml', 1, 0), contains('0 sets'));
+      expect(read('/repo/xtask.yaml', 4, 2, 1), contains('4 tasks'));
+      expect(read('/repo/xtask.yaml', 4, 2, 1), contains('2 gate sets'));
+      expect(read('/repo/xtask.yaml', 4, 2, 1), contains('1 set,'));
+      expect(read('/repo/xtask.yaml', 1, 1, 0), contains('1 task,'));
+      expect(read('/repo/xtask.yaml', 1, 1, 0), contains('1 gate set,'));
+      expect(read('/repo/xtask.yaml', 1, 0, 0), contains('0 sets'));
+      // A file with no gate sets is a legitimate file, and "0 gate sets"
+      // reads as something missing rather than as something absent.
+      expect(
+        read('/repo/xtask.yaml', 1, 0, 0),
+        isNot(contains('gate set')),
+      );
     },
   );
 }

@@ -18,6 +18,11 @@
 # yaml-language-server: $schema=./xtask.schema.json
 version: 1
 
+# Declared, so that a misspelling here or in a task's `gate:` is a refusal
+# rather than a new gate set nobody runs. The order is the one a report
+# groups by.
+gates: [check, release]
+
 tasks:
   # Order inside the gate is the order written here, and it is the one place
   # ordering is implicit (§4.3). Cheapest first: an unformatted file is one
