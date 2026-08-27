@@ -228,6 +228,21 @@ void main() {
   });
 
   group('a route is looked for down every edge, not only the first', () {
+    test('and a ring does not make a later branch answer wrongly', () {
+      // What cannot reach the target is remembered, which is what keeps the
+      // search from re-walking every shared subtree once per path. A branch
+      // cut short by the path guard says nothing in general, so nothing is
+      // remembered once a ring has been met.
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  target: {desc: t, run: [d]}\n'
+        '  ring-a: {desc: a, needs: [ring-b], run: [d]}\n'
+        '  ring-b: {desc: b, needs: [ring-a, target], run: [d]}\n'
+        '  top: {desc: c, needs: [ring-a, target], run: [d]}\n',
+      );
+      expect(routeTo(file, from: 'top', to: 'target'), isNotNull);
+    });
+
     test('a dead branch does not mark what it touched unreachable', () {
       // `seen` is the PATH, not the visited set. Kept across branches, a task
       // a dead branch had walked through was never revisited, so `--why`

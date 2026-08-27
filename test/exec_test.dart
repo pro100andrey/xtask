@@ -1838,6 +1838,95 @@ void main() {
     });
   });
 
+  group('a verb is given what it needs to be the escape hatch it is', () {
+    test('it knows which member it is', () async {
+      // It ran once per member with the same arguments and a different
+      // working directory, and that was all it had — it could not name the
+      // member in a message or derive anything from it.
+      given(['pkg/a/x', 'pkg/b/x']);
+      final seen = <String?>[];
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, do: note}'
+            '\n',
+        'a',
+        verbs: {
+          'note': (context) async {
+            seen.add(context.member);
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(seen, ['pkg/a', 'pkg/b']);
+    });
+
+    test('and it can run a program the way `run:` does', () async {
+      // "Make it a verb" was advice that could not be taken: a verb reaching
+      // for `Process.start` lost §5.4's PATH walk and the code that says a
+      // tool is missing rather than broken.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) => context.run(['ruff', '--fix']),
+        },
+      );
+      expect(starter.started, hasLength(1));
+      expect(p.basename(starter.started.single.executable), 'ruff');
+      expect(starter.started.single.arguments, ['--fix']);
+    });
+
+    test('and it is refused a metacharacter through a batch shim', () async {
+      // `runInShell` was computed and this never asked — so a verb could hand
+      // `cmd.exe` the one injection §5.4 rule 3 exists to stop, while the same
+      // argv written as a `run:` body was refused.
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        resolver: ExecutableResolver(
+          environment: const {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
+          windows: true,
+          isRunnable: (path) => path.toLowerCase().endsWith('.bat'),
+        ),
+        verbs: {
+          'shell-out': (context) => context.run(['ruff', 'a&b']),
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(starter.started, isEmpty);
+    });
+
+    test('and a relative directory is read from the repository root', () async {
+      // Against the process's own directory it worked from the root and
+      // quietly targeted somewhere else from a subdirectory.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) =>
+              context.run(['ruff'], workingDirectory: 'packages/a'),
+        },
+      );
+      expect(
+        starter.started.single.workingDirectory,
+        p.join(root.path, 'packages', 'a'),
+      );
+    });
+
+    test('and a program it cannot find is still code 3', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) => context.run(['missing-tool']),
+        },
+      );
+      expect(code, ExitCode.missingTool);
+    });
+  });
+
   group('a body that raises rather than answering', () {
     test("closes its section even when the failure is not this one's to "
         'answer', () async {
@@ -1953,6 +2042,35 @@ void main() {
         reason: 'it was stopped, not waited out',
       );
     });
+
+    test('a killed process is not waited out through a grandchild', () async {
+      // Collecting ends when stdout and stderr close, and a grandchild that
+      // inherited them keeps them open — so `sh -c 'sleep …'` killed at once
+      // still took the full sleep to report, which is `interruptible:` giving
+      // back nothing and billing the wait as the task's own work.
+      const starter = SystemProcessStarter(grace: Duration(milliseconds: 200));
+      final giveUp = Completer<void>();
+      final began = DateTime.now();
+      final running = starter.start(
+        '/bin/sh',
+        ['-c', 'sleep 20; echo done'],
+        workingDirectory: Directory.current.path,
+        environment: Platform.environment,
+        runInShell: false,
+        until: giveUp.future,
+        // Piped, which is the mode `-j > 1` uses and the only one where the
+        // collecting can outlive the process.
+        output: (_) {},
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      giveUp.complete();
+      expect(await running, SystemProcessStarter.interrupted);
+      expect(
+        DateTime.now().difference(began),
+        lessThan(const Duration(seconds: 10)),
+        reason: 'it was stopped, not waited out',
+      );
+    }, testOn: 'posix');
 
     test('a process that overstays is killed, and says so', () async {
       // The one thing no fake can answer: whether the process actually dies.

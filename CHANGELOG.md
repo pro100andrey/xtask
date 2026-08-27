@@ -28,6 +28,47 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### A verb is given what it needs to be the escape hatch it is
+
+`VerbContext` carries `member` — which member of `each:` this invocation is
+for. A verb ran once per member with the same arguments and a different working
+directory, and that was all it had: it could not name the member in a message
+or derive anything from it.
+
+And `context.run(argv)` starts a program the way a `run:` body is started. R1
+puts logic in Dart and the README sends derived paths there — `x.proto` to
+`x.pb.dart` is a verb's job — but a verb that wanted to run a program reached
+for `Process.start` itself and lost the `PATH` walk, the `PATHEXT` rules, the
+refusal to hand `cmd.exe` a metacharacter through a batch shim, and the exit
+code that says a tool is missing rather than broken. Half an escape hatch is
+not one.
+
+`context.run` is refused a `cmd.exe` metacharacter through a batch shim, the
+same as a `run:` body, and a relative `workingDirectory` is read from the
+repository root — against the process's own it worked from the root and quietly
+targeted somewhere else from a subdirectory.
+
+**Breaking:** `VerbContext` takes a required `start`. Projects do not construct
+one; the engine does.
+
+### A killed process is not waited out through a grandchild
+
+Collecting a piped child's output ends when its stdout and stderr close, and a
+grandchild that inherited them keeps them open. So `run: [sh, -c, 'sleep 12;
+echo done']` under `interruptible:`, killed at 0.0s, still took twelve seconds
+to report — the feature giving back nothing, and billing the wait as the task's
+own work. The wait after a kill is bounded by the same grace period the kill
+itself uses: a moment for what was already written, and no longer. `timeout:`
+had the same hole.
+
+### `--why` remembers what cannot reach its target
+
+`seen` had to become the path rather than the visited set, or a dead branch
+marked everything it touched unreachable. A path set alone re-walks every
+shared subtree once per path, and `--why` asks once per gate member per gate.
+A no is remembered now — except past a ring, where a branch cut short by the
+path guard says nothing in general.
+
 ### The walk is pruned on the include patterns, not only on the exclusions
 
 Include patterns were used to match and never to prune, so

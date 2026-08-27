@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'errors.dart';
+import 'exit_codes.dart';
+
 /// Finding the program a task's `run:` names.
 ///
 /// This is the one place in the engine that knows starting a program means
@@ -208,3 +211,50 @@ bool _executableOnPosix(String path) {
 /// that before this is asked.
 bool _existsOnWindows(String path) =>
     FileStat.statSync(path).type == FileSystemEntityType.file;
+
+/// Characters `cmd.exe` acts on rather than passes along.
+const _cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"'};
+
+/// Refuses an argument the shell would reinterpret, when the shell is
+/// unavoidable — §5.4, rule 3.
+///
+/// A batch shim cannot be started by `CreateProcess`, so its arguments are
+/// parsed by `cmd.exe` whatever the caller intended, and Dart's own
+/// documentation says so. That leaves two ways to be wrong and one to be
+/// honest:
+///
+/// - quote for `cmd.exe` here **and** let `Process.start` quote for
+///   `CreateProcess` as well, which is two layers of quoting nobody can
+///   verify from a machine that is not Windows;
+/// - pass them through and let `&` end the command and start another one,
+///   silently, which is the worst outcome available;
+/// - refuse, name the character, and say what it would have done.
+///
+/// This takes the third. It costs a task that genuinely wants `&` in an
+/// argument to a `.bat` — which it can have by pointing at a `.exe`, or by
+/// making the job a verb, where R1 says logic belongs anyway. It is a
+/// **stated** limit rather than an untested claim of correctness, and it
+/// stops being needed the day this runs on a Windows CI machine that can
+/// prove an escaping pass right.
+void refuseShellMetacharacters(
+  String task,
+  String executable,
+  List<String> arguments,
+) {
+  for (final argument in arguments) {
+    for (final character in _cmdMetacharacters) {
+      if (!argument.contains(character)) {
+        continue;
+      }
+      throw RunFailure(
+        ExitCode.invalidFile,
+        'task `$task` passes `$argument` to `$executable`, which is '
+        'a batch file. Windows starts one through the shell whatever the '
+        'caller asks for, so `$character` in that argument would be read as '
+        'a shell operator rather than as text. Point the task at a real '
+        'executable, or make it a verb — a Dart function is where logic '
+        'belongs anyway',
+      );
+    }
+  }
+}

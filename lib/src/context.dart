@@ -16,6 +16,8 @@ final class VerbContext {
     required this.env,
     required this.workingDirectory,
     required this.log,
+    required this.start,
+    this.member,
   });
 
   /// Everything the body was given, in one list: the task's `args:` with any
@@ -48,6 +50,34 @@ final class VerbContext {
   /// grouping markers §7.1 needs, so it is given a sink instead of finding
   /// one.
   final void Function(String line) log;
+
+  /// The member of `each:` this invocation is for, or null when there is none.
+  ///
+  /// **A verb under `each:` could not tell which member it was.** It ran once
+  /// per member with the same arguments and a different working directory, and
+  /// that was all it had; anything else it wanted to say about the member —
+  /// name it in a message, derive a path from it — it could not, because it
+  /// did not know one.
+  final String? member;
+
+  /// How a program is started on this verb's behalf. Use [run].
+  final Future<int> Function(List<String> argv, {String? workingDirectory})
+  start;
+
+  /// Runs [argv] the way a `run:` body is run, and answers with its code.
+  ///
+  /// **Because "make it a verb" was advice that could not be taken.** R1 puts
+  /// logic in Dart and the README sends derived paths there — `x.proto` to
+  /// `x.pb.dart` is a verb's job — but a verb that wanted to run a program had
+  /// to reach for `Process.start` itself, and lost §5.4's `PATH` walk, its
+  /// `PATHEXT` rules, its refusal to hand `cmd.exe` a metacharacter through a
+  /// batch shim, and the exit code that says a tool is missing rather than
+  /// broken. Half an escape hatch is not one.
+  ///
+  /// [workingDirectory] defaults to [this.workingDirectory], which under
+  /// `each:` is already the member's own.
+  Future<int> run(List<String> argv, {String? workingDirectory}) =>
+      start(argv, workingDirectory: workingDirectory ?? this.workingDirectory);
 }
 
 /// Starting a process, as a seam.

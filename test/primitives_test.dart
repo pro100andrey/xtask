@@ -42,6 +42,8 @@ void main() {
       env: const {},
       workingDirectory: root.path,
       log: logged.add,
+      start: (_, {workingDirectory}) async =>
+          throw StateError('`remove` starts nothing'),
     ),
     root: root.path,
   );

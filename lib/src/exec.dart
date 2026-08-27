@@ -5,9 +5,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import 'bodies.dart';
 import 'context.dart';
 import 'errors.dart';
+import 'executables.dart';
 import 'exit_codes.dart';
 import 'graph.dart';
 import 'markers.dart';
@@ -712,6 +715,50 @@ final class Executor {
     return false;
   }
 
+  /// A program started on a verb's behalf, resolved the way §5.4 resolves one.
+  ///
+  /// Refuses in the same words a `run:` body is refused with — a name nothing
+  /// on `PATH` answers to is still code 3, because "the toolchain is not
+  /// installed" and "the code is broken" still reach different people.
+  Future<int> _startForVerb(
+    Resolved body,
+    List<String> argv,
+    String workingDirectory,
+    void Function(String line)? sink,
+  ) {
+    if (argv.isEmpty) {
+      throw RunFailure(
+        ExitCode.invalidFile,
+        'verb of task `${body.task.name}` asked to run nothing',
+      );
+    }
+    final executable = bodies.resolver.resolve(argv.first);
+    if (executable == null) {
+      throw RunFailure(
+        ExitCode.missingTool,
+        'task `${body.task.name}`: '
+        '${bodies.resolver.missingToolMessage(argv.first)}',
+      );
+    }
+    final arguments = argv.skip(1).toList();
+    final runInShell = bodies.resolver.needsShell(executable);
+    if (runInShell) {
+      // **The same refusal a `run:` body gets.** Computing `runInShell` and
+      // not asking this left a verb able to hand `cmd.exe` a metacharacter
+      // through a batch shim — the one injection §5.4 rule 3 exists to stop,
+      // and the one this very method promises it prevents.
+      refuseShellMetacharacters(body.task.name, executable, arguments);
+    }
+    return starter.start(
+      executable,
+      arguments,
+      workingDirectory: workingDirectory,
+      environment: body.environment,
+      runInShell: runInShell,
+      output: sink,
+    );
+  }
+
   /// Does what [body] resolved to, and answers with its exit code.
   Future<int> _perform(Resolved body, void Function(String line)? sink) {
     final say = sink ?? log;
@@ -723,6 +770,23 @@ final class Executor {
             env: body.environment,
             workingDirectory: body.workingDirectory,
             log: say,
+            member: body.member,
+            // The same resolution and the same starter a `run:` body gets, so
+            // a verb that runs a program keeps §5.4's answers rather than
+            // reaching for `Process.start` and losing them.
+            start: (argv, {workingDirectory}) => _startForVerb(
+              body,
+              argv,
+              // Relative to the repository root, as every other path in the
+              // file is — `in: packages/a` and this must mean one thing.
+              // Against the process's own directory it worked from the root
+              // and quietly targeted somewhere else from a subdirectory,
+              // which is a supported way to run xtask.
+              workingDirectory == null
+                  ? body.workingDirectory
+                  : p.join(bodies.root, workingDirectory),
+              sink,
+            ),
           ),
         );
 
@@ -968,7 +1032,13 @@ final class SystemProcessStarter implements ProcessStarter {
       process.kill(ProcessSignal.sigkill);
       await process.exitCode;
     }
-    await collecting;
+    // **Bounded, because the pipes may outlive the process.** Collecting ends
+    // when stdout and stderr close, and a grandchild that inherited them keeps
+    // them open — `sh -c 'sleep 12'` killed at 0.0s still took twelve seconds
+    // to report, which is `interruptible:` giving back exactly nothing and
+    // billing the wait as the task's own work. The same grace as the kill: a
+    // moment for what was already written, and no longer.
+    await collecting?.timeout(grace, onTimeout: () => const <void>[]);
     return stoppedEarly ? interrupted : timedOut;
   }
 

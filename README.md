@@ -159,6 +159,9 @@ A verb is ordinary Dart — testable, typed, debuggable:
 ```dart
 Future<int> regen(VerbContext context) async {
   context.log('regenerating ${context.args.length} files');
+  // context.member   which member of `each:` this run is for, or null
+  // context.run(...)  a program, started the way a `run:` body is —
+  //                   PATH, PATHEXT, the batch rule, the exit codes
   // context.args     `args:` with `$all` expanded, then anything
   //                  the command line passed after `--`
   // context.env      this machine's environment, with `env:` winning a clash

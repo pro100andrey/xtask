@@ -99,14 +99,32 @@ List<PlanEdge>? routeTo(
   required String from,
   required String to,
 }) {
+  // The path being walked, so a cycle does not hang it.
   final seen = <String>{};
+  // **And what has already been proven not to reach [to].** `seen` had to
+  // become a path rather than a visited set — kept across branches, a dead
+  // branch marked everything it touched unreachable and a route down a later
+  // edge was answered "nothing reaches it". But a path set alone re-walks
+  // every shared subtree once per path, and `--why` asks this once per gate
+  // member per gate. A no is worth remembering; a yes returns immediately.
+  final hopeless = <String>{};
+  // **And nothing is remembered once a ring has been met.** A branch cut short
+  // by the path guard says nothing about that task in general — entered from
+  // somewhere else, the edge it turned back on would be walked. Cycles are
+  // §8's to refuse, so this costs the fast bound only on files that are
+  // already being reported as broken.
+  var metARing = false;
 
   List<PlanEdge>? walk(String at) {
     if (at == to) {
       return const [];
     }
+    if (hopeless.contains(at)) {
+      return null;
+    }
     // A cycle is `--validate`'s to report; here it must only not hang.
     if (!seen.add(at)) {
+      metARing = true;
       return null;
     }
     // **Removed again on the way out.** Kept, it marked every task a dead
@@ -114,7 +132,13 @@ List<PlanEdge>? routeTo(
     // that existed down a later edge was answered "nothing reaches it" — the
     // one answer §8 says this question exists to prevent. Cheap here and
     // wrong-shaped everywhere: `seen` is the path, not the visited set.
-    void done() => seen.remove(at);
+    void done({required bool reached}) {
+      seen.remove(at);
+      if (!reached && !metARing) {
+        hopeless.add(at);
+      }
+    }
+
     final task = file.tasks[at];
     if (task == null) {
       return null;
@@ -125,11 +149,11 @@ List<PlanEdge>? routeTo(
     ]) {
       final rest = walk(next);
       if (rest != null) {
-        done();
+        done(reached: true);
         return [PlanEdge(at, kind, next), ...rest];
       }
     }
-    done();
+    done(reached: false);
     return null;
   }
 
