@@ -192,13 +192,6 @@ final class Executor {
           break;
         }
         final step = waiting[at];
-        if (_exclusive.busy(step.task.exclusive)) {
-          // Left where it is rather than admitted and blocked: an admitted
-          // task holds one of `-j`'s places whether or not it is doing
-          // anything, so three tasks sharing a browser at `-j 3` kept every
-          // independent task out of the run.
-          continue;
-        }
         final blocker = _blockedBy(step, {...failed.keys, ...skipped.keys});
         if (blocker != null) {
           // Named, not dropped. A task that silently did not happen is
@@ -220,6 +213,13 @@ final class Executor {
         if (!step.task.needs.every(finished.contains) ||
             (step.continuationOf != null &&
                 !finished.contains(step.continuationOf))) {
+          continue;
+        }
+        if (!_exclusive.tryHold(step.task.exclusive)) {
+          // Left where it is rather than admitted and blocked: an admitted
+          // task holds one of `-j`'s places whether or not it is doing
+          // anything, so three tasks sharing a browser at `-j 3` kept every
+          // independent task out of the run.
           continue;
         }
         waiting.removeAt(at--);
@@ -308,12 +308,9 @@ final class Executor {
     await slots.take();
     slots.give();
 
-    // Acquired before the section opens, so a task waiting on a token does not
-    // leave an empty fold sitting there — and before the clock starts, for the
-    // reason above: waiting for somebody else's browser is not this task's
-    // work, and billing it made the second holder report its own duration plus
-    // the first one's.
-    await _exclusive.acquire(step.task.exclusive);
+    // The tokens are already held: the walk took them before admitting this,
+    // so waiting for somebody else's browser happens in the queue rather than
+    // here, where it would occupy a place and be billed as this task's work.
     final started = now();
     try {
       await _runTask(step.task, slots, lines?.add);
@@ -606,11 +603,19 @@ final class Executor {
       // "it hung". Recognised rather than proved: a program that genuinely
       // exits 124 while carrying a `timeout:` would be described wrongly, and
       // it would still be the right task on the right line.
-      if (code == SystemProcessStarter.interrupted && task.interruptible) {
+      if (code == SystemProcessStarter.interrupted &&
+          task.interruptible &&
+          _givenUp.isCompleted) {
         // **Not a failure.** It was not allowed to finish, and calling that a
         // failure would put a second red thing beside the one that actually
         // broke — which is the noise `--keep-going` exists to avoid, arriving
         // by the opposite route.
+        //
+        // Gated on the run having actually given up, and not on the number
+        // alone. 130 is what a shell reports for SIGINT and what plenty of
+        // programs exit with on their own; reading it as "stopped" wherever
+        // the key appeared turned a real failure into a green result nobody
+        // checked, which is the thing this tool is against.
         final at = member == null ? '' : ' at `$member`';
         (sink ?? log)(
           'task `${task.name}`$at was stopped: an earlier failure had already '
@@ -711,52 +716,31 @@ final class Executor {
 /// `:8080` or drive the one browser on the machine. The file names the thing
 /// they share; this makes the name mean something.
 final class _Exclusive {
-  final _held = <String, Future<void>>{};
+  final _held = <String>{};
 
-  /// Whether any of [tokens] is held right now.
+  /// Takes every name in [tokens], or none of them, and says which.
   ///
-  /// A hint for admission, not the guarantee: two tasks may both find a name
-  /// free in the same pass, and `acquire` is what actually keeps them apart.
-  /// Its worth is that a task blocked on a token does not sit in the walk's
-  /// admitted set holding one of `-j`'s places while it waits — three e2e
-  /// tasks sharing a browser at `-j 3` otherwise kept `format` and `analyze`
-  /// out of the run entirely.
-  bool busy(List<String> tokens) => tokens.any(_held.containsKey);
-
-  /// Holds every name in [tokens], in a fixed order.
+  /// **Synchronous, and that is the whole of it.** This was an `await`-ing
+  /// acquire called from inside the task's own future, so the walk's admission
+  /// pass — which is synchronous — always saw an empty set: three tasks
+  /// sharing a browser were all admitted, two of them blocked, and every
+  /// independent task stayed out of the run behind them. Deciding at admission
+  /// means a task that cannot have its tokens is simply not admitted, and its
+  /// place goes to something that can run.
   ///
-  /// Sorted, because acquiring two names in the order they were written is how
-  /// two tasks holding the same pair in opposite orders deadlock.
-  Future<void> acquire(List<String> tokens) async {
-    final done = Completer<void>();
-    _release[tokens] = done;
-    for (final name in tokens.toSet().toList()..sort()) {
-      // Re-checked after the wait: whoever we waited for removes its entry
-      // before completing, and another waiter may take it in between.
-      while (_held.containsKey(name)) {
-        await _held[name];
-      }
-      _held[name] = done.future;
+  /// All or nothing, which also settles the ordering question: two tasks each
+  /// holding half of the same pair is how a pair deadlocks, and neither can
+  /// hold half of one.
+  bool tryHold(List<String> tokens) {
+    if (tokens.any(_held.contains)) {
+      return false;
     }
+    _held.addAll(tokens);
+    return true;
   }
 
-  /// Lets go of everything `acquire` took for [tokens].
-  void release(List<String> tokens) {
-    final done = _release.remove(tokens);
-    if (done == null) {
-      return;
-    }
-    final names = tokens.toSet();
-    // `removeWhere`, not `remove`: the map's values are futures, so `remove`
-    // hands one back and dropping it is a discarded future.
-    //
-    // Removed before completing, so a waiter that wakes finds the name free
-    // rather than finding this same future still sitting there.
-    _held.removeWhere((name, _) => names.contains(name));
-    done.complete();
-  }
-
-  final _release = <List<String>, Completer<void>>{};
+  /// Lets go of everything [tryHold] took.
+  void release(List<String> tokens) => _held.removeAll(tokens);
 }
 
 /// The concurrency budget, held by whatever is actually running.
@@ -902,23 +886,25 @@ final class SystemProcessStarter implements ProcessStarter {
     // Whichever comes first: the process ending, its deadline, or the run
     // deciding it no longer needs this. The last two end the same way, because
     // a process being stopped does not care why.
-    var stoppedEarly = false;
+    // **Which branch won is read when it wins, not after the kill.** Setting a
+    // flag from inside the losing callback let a task that genuinely ran past
+    // its `timeout:` be relabelled a stop, if the run happened to give up
+    // during the grace period — and a relabelled stop is not reported at all.
     final ending = process.exitCode.then<int?>((code) => code);
-    final finished = await Future.any([
+    final outcome = await Future.any([
       if (timeout == null)
-        ending
+        ending.then((code) => (code: code, stopped: false))
       else
-        ending.timeout(timeout, onTimeout: () => null),
-      if (until != null)
-        until.then<int?>((_) {
-          stoppedEarly = true;
-          return null;
-        }),
+        ending
+            .timeout(timeout, onTimeout: () => null)
+            .then((code) => (code: code, stopped: false)),
+      if (until != null) until.then((_) => (code: null as int?, stopped: true)),
     ]);
-    if (finished != null) {
+    if (outcome.code != null) {
       await collecting;
-      return finished;
+      return outcome.code!;
     }
+    final stoppedEarly = outcome.stopped;
 
     process.kill();
     final stopped = await process.exitCode

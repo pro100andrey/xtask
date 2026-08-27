@@ -133,6 +133,9 @@ jobs:
         'dart run :xtask ci-analyze -j abc',
         'dart run :xtask ci-analyze -j',
         'dart run :xtask ci-analyze --keep-going=true',
+        // `-j=4` is neither spelling: `--jobs=4` carries its value after an
+        // `=`, `-j4` carries it joined, and the command line refuses this.
+        'dart run :xtask ci-analyze -j=4',
       ]) {
         workflow('ci.yml', '''
 jobs:

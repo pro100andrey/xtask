@@ -199,8 +199,13 @@ String? _gateOf(String command) {
       // **The value is checked, not skipped.** `check -j abc` and a trailing
       // `check -j` were vouched for here and refused by the command line, so
       // `--check-ci` reported a green job for a step that cannot run.
+      // `--jobs=4` carries its value after an `=`; `-j4` carries it joined,
+      // and `-j=4` is neither — the command line refuses that one, so
+      // vouching for it here reported a green job for a step that exits 2.
       final value = attached
-          ? word.substring(flag.length).replaceFirst('=', '')
+          ? (word.startsWith('--')
+                ? word.substring(flag.length + 1)
+                : word.substring(flag.length))
           : (i + 1 < after.length ? after[++i] : null);
       if (value == null ||
           (value != 'auto' && (int.tryParse(value) ?? 0) < 1)) {

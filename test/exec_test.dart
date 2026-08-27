@@ -1580,6 +1580,20 @@ void main() {
       expect(logged.join('\n'), isNot(contains('failed   slow')));
     });
 
+    test('a task exiting 130 on its own is a failure, not a stop', () async {
+      // 130 is what a shell reports for SIGINT and what plenty of programs
+      // exit with by themselves. Reading it as "stopped" wherever the key
+      // appeared turned a real failure into a green result nobody checked.
+      starter = FakeStarter({'ruff': SystemProcessStarter.interrupted});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, interruptible: true, run: [ruff]}\n',
+        'a',
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(logged.join('\n'), isNot(contains('was stopped')));
+    });
+
     test('a task that does not say so is left alone', () async {
       starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
       final running = runFile(
@@ -1659,6 +1673,38 @@ void main() {
       starter.holds['pytest']!.complete();
       await running;
     });
+
+    test(
+      "a token-blocked task does not occupy one of `-j`'s places",
+      () async {
+        // The check ran a microtask after admission, so the walk's synchronous
+        // pass always saw an empty set: three tasks sharing a browser were all
+        // admitted, two blocked, and every independent task stayed out behind
+        // them.
+        starter = FakeStarter()
+          ..holds['ruff'] = Completer<void>()
+          ..holds['mypy'] = Completer<void>();
+        final running = runFile(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, exclusive: [browser], run: [ruff]}\n'
+              '  b: {desc: y, exclusive: [browser], run: [pytest]}\n'
+              '  quick: {desc: z, run: [mypy]}\n'
+              '  all: {desc: w, needs: [a, b, quick]}\n',
+          'all',
+          concurrency: 2,
+        );
+        await pumpEventQueue();
+        expect(
+          starter.started.map((s) => p.basename(s.executable)),
+          ['ruff', 'mypy'],
+          reason: '`b` is blocked, so its place went to `quick`',
+        );
+        for (final hold in starter.holds.values) {
+          hold.complete();
+        }
+        await running;
+      },
+    );
 
     test('and two tasks sharing no token still run together', () async {
       starter = FakeStarter()
