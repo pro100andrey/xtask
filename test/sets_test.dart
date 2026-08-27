@@ -346,6 +346,15 @@ void main() {
       );
     });
 
+    test('a comma outside braces is an ordinary character', () {
+      // `,` starts an alternative only INSIDE a group. Outside one it is
+      // text, and reading it as a segment start invented `data/a,b` for
+      // `data/a,**/b` — a variant OR'd into the match and fed to a verb that
+      // deletes.
+      given(['data/a,b', 'data/a,deep/b']);
+      expect(expandGlob(['data/a,**/b']), ['data/a,deep/b']);
+    });
+
     test('an excluded directory is not descended into either', () {
       given(['x/test_data/deep/deeper/a.lake']);
       expect(

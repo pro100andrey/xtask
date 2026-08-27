@@ -63,7 +63,8 @@ tasks:
   clean:
     desc: drop build output
     do: remove
-    argv-from: build-outputs
+    all: build-outputs
+    args: [$all]
 
   check:
     desc: reproduce CI locally
@@ -103,13 +104,13 @@ tasks:
       expect(file.tasks['test']!.each, 'test-packages');
     });
 
-    test('reads env-required, needs, then, args, argv-from, gate', () {
+    test('reads env-required, needs, then, args, all, gate', () {
       expect(file.tasks['web-e2e']!.envRequired, ['CHROMEDRIVER']);
       expect(file.tasks['web-e2e']!.gate, ['ci-web']);
       expect(file.tasks['publish']!.needs, ['install']);
       expect(file.tasks['publish']!.then, ['scaffold-check']);
       expect(file.tasks['publish']!.args, ['--dry-run']);
-      expect(file.tasks['clean']!.argvFrom, 'build-outputs');
+      expect(file.tasks['clean']!.all, 'build-outputs');
     });
 
     test('reads env as strings', () {
@@ -726,6 +727,109 @@ tasks: {}
           'version: 1\ngates: []\ntasks:\n  a: {desc: x, run: [d]}\n',
         ),
         throwsA(isA<XtaskFormatException>()),
+      );
+    });
+  });
+
+  group('`all:` and its marker have to agree', () {
+    String refusalOf(String yaml) {
+      try {
+        parseXtaskFile(yaml);
+      } on XtaskFormatException catch (e) {
+        return e.message;
+      }
+      fail('expected a refusal, got none');
+    }
+
+    test('a set named and never used is refused', () {
+      // It does not fail. It succeeds at the wrong thing: the task checks
+      // whatever it would have checked with no arguments at all.
+      expect(
+        refusalOf(
+          'version: 1\nsets:\n  s: [a]\n'
+          'tasks:\n  a: {desc: x, all: s, run: [dart]}\n',
+        ),
+        contains('never writes'),
+      );
+    });
+
+    test('a marker with no set is refused', () {
+      expect(
+        refusalOf(
+          'version: 1\ntasks:\n'
+          r'  a: {desc: x, run: [dart, $all]}'
+          '\n',
+        ),
+        contains('no `all:`'),
+      );
+    });
+
+    test('a marker inside a larger argument is refused', () {
+      // `$all` stands for N arguments and there is nothing for N arguments to
+      // mean inside one — splitting a string is a shell's job, and there is
+      // no shell.
+      expect(
+        refusalOf(
+          'version: 1\nsets:\n  s: [a]\n'
+          'tasks:\n'
+          r'  a: {desc: x, all: s, run: [dart, --files=$all]}'
+          '\n',
+        ),
+        contains('whole argument'),
+      );
+    });
+
+    test('the marker as the program is refused, not read as a program', () {
+      // It counted as a marker while the resolver substituted only over the
+      // arguments, so the set passed every check and reached nothing — and
+      // the run then answered 3, blaming the machine for a missing tool.
+      expect(
+        refusalOf(
+          'version: 1\nsets:\n  s: [a]\n'
+          'tasks:\n'
+          r'  a: {desc: x, all: s, run: [$all]}'
+          '\n',
+        ),
+        contains('the first entry of `run:` is the program'),
+      );
+    });
+
+    test('a longer name that merely starts with it is text', () {
+      // `--allow=$allowlist` is a literal argument for a tool that does its
+      // own expansion. Refusing it took every other task in the file down too.
+      expect(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          r'  a: {desc: x, run: [echo, --allow=$allowlist]}'
+          '\n',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('the marker written twice is refused', () {
+      expect(
+        refusalOf(
+          'version: 1\nsets:\n  s: [a]\n'
+          'tasks:\n'
+          r'  a: {desc: x, all: s, run: [cp, $all, $all]}'
+          '\n',
+        ),
+        contains('2 times'),
+      );
+    });
+
+    test('`each:` and `all:` together are refused', () {
+      // The combination that used to be legal and meant nothing anybody
+      // wanted: every member of the `each:` set received the WHOLE `all:` set.
+      expect(
+        refusalOf(
+          'version: 1\nsets:\n  s: [a]\n  p: [b]\n'
+          'tasks:\n'
+          r'  a: {desc: x, each: p, all: s, run: [dart, $all]}'
+          '\n',
+        ),
+        contains('one or\nthe other'.replaceAll('\n', ' ')),
       );
     });
   });

@@ -113,7 +113,7 @@ void main() {
 
     test('and a verb is given the three sources in one list, in order', () {
       // Asked of the document by a reviewer and answerable only here: `args:`,
-      // then the expanded `argv-from`, then whatever the command line passed
+      // then the expanded `all:`, then whatever the command line passed
       // after `--`. A verb is reached by `--` exactly as a process is, and
       // nothing said so — `VerbContext.args` was documented as the first two.
       for (final member in ['pkg/a', 'pkg/b']) {
@@ -124,8 +124,8 @@ void main() {
                 'version: 1\n'
                     'sets:\n  packages:\n    include: [pkg/*]\n'
                     'tasks:\n'
-                    '  a: {desc: x, do: regen, args: [--first], '
-                    'argv-from: packages}\n',
+                    r'  a: {desc: x, do: regen, args: [--first, $all], '
+                    'all: packages}\n',
                 'a',
                 verbs: {'regen': (_) async => 0},
                 passed: ['--last'],
@@ -263,15 +263,15 @@ void main() {
   });
 
   group('what a command line adds', () {
-    test('lands after `args:` and the expanded `argv-from`', () {
+    test('lands after `args:` and the expanded `all:`', () {
       File(p.join(root.path, 'a.dart')).writeAsStringSync('');
       final body =
           resolve(
                 'version: 1\n'
                     'sets:\n  src:\n    include: ["*.dart"]\n'
                     'tasks:\n'
-                    '  a: {desc: x, run: [dart, format], args: [--fix],'
-                    ' argv-from: src}\n',
+                    r'  a: {desc: x, run: [dart, format], args: [--fix, $all],'
+                    ' all: src}\n',
                 'a',
                 passed: ['--line-length', '100'],
               ).single
@@ -307,6 +307,42 @@ void main() {
             .arguments,
         ['test', '-n', 'x'],
       );
+    });
+  });
+
+  group('`all:` puts its members where the marker stands', () {
+    test('in the middle of argv, which `argv-from:` could not do', () {
+      // The whole reason the key changed: a set could only ever be appended,
+      // so `cp <files> dest/` was unwritable.
+      for (final name in ['a.dart', 'b.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      final body = resolve(
+        'version: 1\n'
+            'sets:\n  src:\n    include: ["*.dart"]\n'
+            'tasks:\n'
+            r'  a: {desc: x, all: src, run: [cp, $all, dest/]}'
+            '\n',
+        'a',
+      ).single;
+      expect(
+        (body as ResolvedProcess).arguments,
+        ['a.dart', 'b.dart', 'dest/'],
+      );
+    });
+
+    test('and in `args:`, which is where a verb reads them', () {
+      File(p.join(root.path, 'a.dart')).writeAsStringSync('');
+      final body = resolve(
+        'version: 1\n'
+            'sets:\n  src:\n    include: ["*.dart"]\n'
+            'tasks:\n'
+            r'  a: {desc: x, do: v, all: src, args: [--in, $all]}'
+            '\n',
+        'a',
+        verbs: {'v': (_) async => 0},
+      ).single;
+      expect(body.arguments, ['--in', 'a.dart']);
     });
   });
 

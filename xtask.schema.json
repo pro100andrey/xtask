@@ -25,7 +25,7 @@
     },
     "sets": {
       "type": "object",
-      "description": "Named lists and globs, referenced by a task's `each:` or `argv-from:`. A set that expands to nothing is an error: a task given no files checked nothing.",
+      "description": "Named lists and globs, referenced by a task's `each:` or `all:`. A set that expands to nothing is an error: a task given no files checked nothing.",
       "additionalProperties": {
         "oneOf": [
           {
@@ -106,9 +106,9 @@
             },
             "description": "Extra arguments appended to the body."
           },
-          "argv-from": {
+          "all": {
             "type": "string",
-            "description": "A set whose members are appended as arguments, already expanded."
+            "description": "A set whose members replace the `$all` marker in `run:` or `args:`, in one invocation. The marker is a whole argument and appears once."
           },
           "each": {
             "type": "string",

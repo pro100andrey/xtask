@@ -30,5 +30,6 @@ tasks:
     desc: count the lines the sources add up to
     gate: [check]
     do: count-lines
-    argv-from: sources
+    all: sources
+    args: [$all]
 

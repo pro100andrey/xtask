@@ -20,7 +20,7 @@ const taskKeys = <String>{
   'run',
   'do',
   'args',
-  'argv-from',
+  'all',
   'each',
   'in',
   'env',
@@ -30,6 +30,16 @@ const taskKeys = <String>{
   'gate',
   'timeout',
 };
+
+/// The one word that stands for every member of an `all:` set.
+///
+/// **Here, beside the keys, because two modules answer for it.** The parser
+/// decides which files are legal and the resolver decides what a legal one
+/// expands to; they had a private copy each, which is the contract and its
+/// enforcement free to drift. They did: one counted the marker in the
+/// executable slot and the other never substituted there, so a set could be
+/// declared, pass every check, and reach nothing.
+const allMarker = r'$all';
 
 /// Every key the document may carry at the top level (§4.1).
 const topLevelKeys = <String>{'version', 'gates', 'sets', 'tasks'};
@@ -160,7 +170,7 @@ final class Task with Located {
     this.span,
     this.body,
     this.args = const [],
-    this.argvFrom,
+    this.all,
     this.each,
     this.workingDirectory,
     this.env = const {},
@@ -187,8 +197,14 @@ final class Task with Located {
   /// Extra arguments appended to the body.
   final List<String> args;
 
-  /// A set whose members are appended as arguments.
-  final String? argvFrom;
+  /// A set whose members replace the `$all` marker, in one invocation.
+  ///
+  /// **The marker is where they go, and that is the whole difference from the
+  /// key this replaces.** `argv-from:` appended its set to the end of argv and
+  /// nowhere else, so `cp <files> dest/` could not be written at all; and
+  /// beside an `each:`, it handed the WHOLE set to every member, which nothing
+  /// refused and nobody meant.
+  final String? all;
 
   /// A set whose members the body runs once per, sequentially (§5.2).
   final String? each;

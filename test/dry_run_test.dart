@@ -97,13 +97,13 @@ void main() {
       },
     );
 
-    test('`argv-from` is on the command line, already expanded', () async {
+    test('`all` is on the command line, already expanded', () async {
       given(['lib/a.dart', 'lib/b.dart']);
       await dry(
         'version: 1\n'
             'sets:\n  src:\n    include: [lib/*.dart]\n'
             'tasks:\n'
-            '  a: {desc: x, run: [dart, format], argv-from: src}\n',
+            '  a: {desc: x, run: [dart, format, \$all], all: src}\n',
         'a',
       );
       expect(output(), contains('run  /bin/dart format lib/a.dart lib/b.dart'));

@@ -216,14 +216,14 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
 
   final body = _body(map, name);
 
-  return Task(
+  final task = Task(
     name: name,
     span: keySpan,
     desc: _description(desc, name),
     body: body,
     timeout: _timeout(map, name, body),
     args: List.unmodifiable(_optionalStringList(map, 'args', name)),
-    argvFrom: _optionalString(map, 'argv-from', name),
+    all: _optionalString(map, 'all', name),
     each: _optionalString(map, 'each', name),
     workingDirectory: _optionalString(map, 'in', name),
     env: Map.unmodifiable(_env(map, name)),
@@ -234,6 +234,95 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     then: _names(map, 'then', name),
     gate: _names(map, 'gate', name),
   );
+  _checkAllMarker(name, task, keySpan);
+  return task;
+}
+
+/// `all:` and its marker have to agree, and the marker has to be a whole
+/// argument.
+///
+/// **Refused here rather than left to make a strange run.** A set named and
+/// never used is a task that quietly does not check what its author thought;
+/// a marker with no set is a program handed the literal text `$all`. Neither
+/// fails — both succeed at the wrong thing, which is what §1 is about.
+///
+/// A marker inside a larger string is refused too, and that is the line R1
+/// draws: `$all` stands for N arguments, and there is nothing for N arguments
+/// to mean inside one. Splitting a string is a shell's job and this has no
+/// shell.
+/// `\$all` as a word of its own, rather than the start of a longer name.
+final _bareMarker = RegExp(r'\$all(?![A-Za-z0-9_])');
+
+void _checkAllMarker(String name, Task task, SourceSpan keySpan) {
+  final argv = switch (task.body) {
+    RunBody(:final argv) => argv,
+    _ => const <String>[],
+  };
+
+  // **The program is not an argument.** `run:` names an executable first, and
+  // §5.4 resolves it on PATH before anything is substituted — so `$all` there
+  // is not a set expanded into position, it is a program by that name. It
+  // counted as a marker here while the resolver substituted only over the
+  // arguments, which let a file declare a set, satisfy every check below and
+  // reach the command line with nothing: the run then answered 3, saying the
+  // machine lacked a tool, about a file that was wrong.
+  if (argv.isNotEmpty && argv.first.contains(allMarker)) {
+    throw XtaskFormatException(
+      'task `$name` runs `${argv.first}`. `\$all` stands for arguments, and '
+      'the first entry of `run:` is the program — there is nothing for a set '
+      'to expand into there',
+      keySpan,
+    );
+  }
+
+  final written = [...argv.skip(1), ...task.args];
+  final markers = written.where((word) => word == allMarker).length;
+  // A delimited token, so that `--allow=\$allowlist` — a literal argument for
+  // a tool that does its own expansion — is text and not a mistake.
+  final embedded = written.where(
+    (word) => word != allMarker && _bareMarker.hasMatch(word),
+  );
+
+  if (embedded.isNotEmpty) {
+    throw XtaskFormatException(
+      'task `$name` writes `${embedded.first}`. `\$all` stands for every '
+      'member of a set, so it is a whole argument or nothing — there is no '
+      'meaning for several arguments inside one, and no shell here to split '
+      'them',
+      keySpan,
+    );
+  }
+  if (task.all != null && markers == 0) {
+    throw XtaskFormatException(
+      'task `$name` has `all: ${task.all}` and never writes `\$all`, so the '
+      r'set reaches nothing. Put `$all` where its members belong',
+      keySpan,
+    );
+  }
+  if (task.all == null && markers > 0) {
+    throw XtaskFormatException(
+      'task `$name` writes `\$all` and has no `all:` to say which set it '
+      'stands for',
+      keySpan,
+    );
+  }
+  if (markers > 1) {
+    throw XtaskFormatException(
+      'task `$name` writes `\$all` $markers times. One set expanded twice into '
+      'one command line is two answers to what the task is about',
+      keySpan,
+    );
+  }
+  if (task.all != null && task.each != null) {
+    // The combination that used to be legal and meant nothing anybody wanted:
+    // every member of the `each:` set received the WHOLE `all:` set.
+    throw XtaskFormatException(
+      'task `$name` has both `each:` and `all:`. One runs the body once per '
+      'member and the other runs it once for all of them; a task is one or '
+      'the other',
+      keySpan,
+    );
+  }
 }
 
 /// `timeout:` in seconds, refused where it cannot be honoured.

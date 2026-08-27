@@ -159,7 +159,7 @@ A verb is ordinary Dart — testable, typed, debuggable:
 ```dart
 Future<int> regen(VerbContext context) async {
   context.log('regenerating ${context.args.length} files');
-  // context.args     `args:`, then the expanded `argv-from`, then anything
+  // context.args     `args:` with `$all` expanded, then anything
   //                  the command line passed after `--`
   // context.env      this machine's environment, with `env:` winning a clash
   // context.workingDirectory
@@ -201,7 +201,7 @@ command works from a subdirectory and every path inside the file stays relative
 to the repository root.
 
 Everything after `--` reaches the body of the **named** task, after its `args:`
-and its expanded `argv-from`, and nothing else in the plan sees it — so
+and its expanded `all:`, and nothing else in the plan sees it — so
 `xtask test -- -n "one test"` narrows the tests without also handing `-n` to
 the formatter. A task with no body of its own is refused rather than
 swallowing them.
@@ -431,7 +431,7 @@ registry will not accept that version again.
 | `run` | an external program as **argv** — the program, then its arguments, each its own entry. Never a command line; nothing splits a string and no shell sees it |
 | `do` | a verb: `remove`, or one this project registered |
 | `args` | extra arguments appended to the body |
-| `argv-from` | a set whose members are appended as arguments, already expanded |
+| `all` | a set whose members replace the `$all` marker, in one invocation — a whole argument, written once |
 | `each` | a set whose members the body runs once per, sequentially |
 | `in` | where the body runs, relative to the root — or the literal `$each` |
 | `env` | environment for this task only |
@@ -479,7 +479,8 @@ tasks:
   announce:
     desc: post the release note
     do: notify
-    argv-from: packages
+    all: packages
+    args: [$all]
 ```
 
 `each:` runs the body once per member, sequentially, with `in: $each` putting
@@ -490,7 +491,7 @@ and `announce` failing is a third ending and not a failure to publish.
 `env-required:` is checked before that task's body runs — not at the start of
 the run — so a missing token is a sentence rather than a broken upload. `do:`
 names a verb the project wrote in Dart and handed to `runXtask`, and
-`argv-from:` hands it the expanded set as arguments.
+`all:` hands it the expanded set, wherever `$all` is written.
 
 A set is a list of members or a glob with exclusions, expanded by the engine
 rather than by a shell, in a deterministic order:

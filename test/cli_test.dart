@@ -485,7 +485,7 @@ tasks:
       test('and counts one thing as one, not as "1 sets"', () async {
         writeFile(
           'version: 1\nsets:\n  s: [a]\n'
-          'tasks:\n  a: {desc: x, argv-from: s, run: [dart]}\n',
+          'tasks:\n  a: {desc: x, all: s, run: [dart, \$all]}\n',
         );
         await run(['--validate']);
         expect(printed(), contains('1 task,'));

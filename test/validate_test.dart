@@ -117,7 +117,7 @@ void main() {
 
     test('`argv-from:` naming a missing set', () {
       final report = check(
-        'version: 1\ntasks:\n  a: {desc: x, argv-from: ghost, run: [dart]}\n',
+        'version: 1\ntasks:\n  a: {desc: x, all: ghost, run: [dart, \$all]}\n',
       );
       expect(report.toString(), contains('there is no set called `ghost`'));
     });
@@ -218,6 +218,18 @@ void main() {
       expect(report.toString(), contains('both a gate set and a task'));
     });
 
+    test('`needs:` naming a gate set says so once, and accurately', () {
+      // It used to say `there is no task called \`check\`` first — false,
+      // the file declares that name — and the accurate sentence second.
+      final report = check(
+        'version: 1\ngates: [check]\ntasks:\n'
+        '  a: {desc: x, gate: [check], run: [dart]}\n'
+        '  b: {desc: y, needs: [check], run: [dart]}\n',
+      );
+      expect(report.problems, hasLength(1), reason: report.toString());
+      expect(report.toString(), isNot(contains('there is no task')));
+    });
+
     test('`needs:` may not name a gate set', () {
       // An edge runs between tasks. A gate set is a list, not a step, and
       // letting one be a node would give the run order two authors.
@@ -245,7 +257,7 @@ void main() {
       final report = check(
         'version: 1\n'
         "sets:\n  srcs: {include: ['**/*.lake']}\n"
-        'tasks:\n  a: {desc: x, argv-from: srcs, run: [dart]}\n',
+        'tasks:\n  a: {desc: x, all: srcs, run: [dart, \$all]}\n',
         withFilesystem: true,
       );
       expect(report.toString(), contains('is empty'));
@@ -256,7 +268,7 @@ void main() {
       final report = check(
         'version: 1\n'
         "sets:\n  srcs: {include: ['**/*.lake']}\n"
-        'tasks:\n  a: {desc: x, argv-from: srcs, run: [dart]}\n',
+        'tasks:\n  a: {desc: x, all: srcs, run: [dart, \$all]}\n',
         withFilesystem: true,
       );
       expect(report.ok, isTrue, reason: report.toString());
@@ -268,7 +280,7 @@ void main() {
       final report = check(
         'version: 1\n'
         "sets:\n  srcs: {include: ['**/*.lake']}\n"
-        'tasks:\n  a: {desc: x, argv-from: srcs, run: [dart]}\n',
+        'tasks:\n  a: {desc: x, all: srcs, run: [dart, \$all]}\n',
       );
       expect(report.ok, isTrue);
     });
@@ -286,7 +298,7 @@ void main() {
           'version: 1\ngates: [nobody]\ntasks:\n'
           '  idle: {desc: does nothing}\n'
           '  ghost-verb: {desc: y, do: nope}\n'
-          '  ghost-set: {desc: z, argv-from: nowhere, run: [dart]}\n'
+          '  ghost-set: {desc: z, all: nowhere, run: [dart, \$all]}\n'
           '  orphan: {desc: w, gate: [nobody, missing], run: [dart]}\n'
           '  ring-a: {desc: v, needs: [ring-b]}\n'
           '  ring-b: {desc: u, needs: [ring-a]}\n',

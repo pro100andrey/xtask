@@ -28,6 +28,29 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### `argv-from:` becomes `all:`, and the set goes where you write it
+
+`argv-from:` appended its set to the end of argv and nowhere else, so
+`cp <files> dest/` could not be written at all. `all:` names the set and the
+marker `$all` says where its members go:
+
+```yaml
+lake-format:
+  all: lake-sources
+  run: [lake, format, --set-exit-if-changed, $all]
+```
+
+The marker is a whole argument and is written exactly once. A set named and
+never used, a marker with no set, a marker inside a larger argument, and the
+same marker twice are all refused when the file is read — none of them fails
+at run time, they all succeed at the wrong thing.
+
+`each:` and `all:` together are refused too. That pairing was legal and handed
+the **whole** `all:` set to **every** member of the `each:` set, which nothing
+reported and nobody meant.
+
+**Breaking:** `argv-from: s` becomes `all: s` plus a `$all` in `run:`/`args:`.
+
 ### Three failures a committed file could reach with nothing said about it
 
 - **The repository boundary is one check, and it reads both notations.** A

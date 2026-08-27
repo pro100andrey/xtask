@@ -210,9 +210,16 @@ final class BodyResolver {
   Resolved _resolve(Task task, Body body, String? member) {
     final where = _workingDirectory(task, member);
     final passed = passedThrough;
+    // **Expanded once, wherever the marker stands.** `$all` is replaced by
+    // every member of the set, in place, so the argument list a task writes is
+    // the argument list it gets — `cp $all dest/` was unwritable while a set
+    // could only be appended at the end.
+    final members = task.all == null
+        ? const <String>[]
+        : _expand(task, task.all!);
     final args = List<String>.unmodifiable([
-      ...task.args,
-      if (task.argvFrom != null) ..._expand(task, task.argvFrom!),
+      for (final argument in task.args)
+        if (argument == allMarker) ...members else argument,
       if (passed != null && passed.task == task.name) ...passed.arguments,
     ]);
     final env = Map<String, String>.unmodifiable({
@@ -249,7 +256,11 @@ final class BodyResolver {
             'task `${task.name}`: ${resolver.missingToolMessage(argv.first)}',
           );
         }
-        final arguments = List<String>.unmodifiable([...argv.skip(1), ...args]);
+        final arguments = List<String>.unmodifiable([
+          for (final argument in argv.skip(1))
+            if (argument == allMarker) ...members else argument,
+          ...args,
+        ]);
         final runInShell = resolver.needsShell(executable);
         if (runInShell) {
           _refuseShellMetacharacters(task, executable, arguments);

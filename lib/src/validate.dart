@@ -129,7 +129,7 @@ void _checkSetReferences(
 ) {
   for (final (key, name) in [
     ('each', task.each),
-    ('argv-from', task.argvFrom),
+    ('all', task.all),
   ]) {
     if (name == null || file.sets.containsKey(name)) {
       continue;
@@ -221,16 +221,16 @@ void _checkDeclaredGates(XtaskFile file, List<XtaskFormatException> problems) {
   }
 }
 
-/// A gate set and a task may not share a name, and neither may an edge name a
-/// gate set.
+/// A gate set and a task may not share a name.
 ///
 /// **Because a person types one name.** A gate set used to BE a task, so
 /// `xtask check` was unambiguous by construction. Now the two are different
 /// kinds of thing reached by one word, and a file where `check` is both leaves
 /// the command line with a question nothing in the file answers. `needs:` is
 /// the same problem from the other side: it is an edge between tasks, and a
-/// gate set is not a node — letting it name one would give the run order two
-/// authors, which is what `collects:` was rewritten away to avoid.
+/// An edge naming a gate set is the same problem from the other side, and the
+/// planner says so where it walks the edges — one sentence, from the place
+/// that has the route.
 void _checkNoNameCollision(
   XtaskFile file,
   List<XtaskFormatException> problems,
@@ -247,22 +247,6 @@ void _checkNoNameCollision(
         file.tasks[gate]!.span,
       ),
     );
-  }
-
-  for (final task in file.tasks.values) {
-    for (final named in [...task.needs, ...task.then]) {
-      if (!file.gates.containsKey(named)) {
-        continue;
-      }
-      problems.add(
-        XtaskFormatException(
-          'task `${task.name}` names the gate set `$named` in `needs:` or '
-          '`then:`, and those are edges between tasks. A gate set is a list, '
-          'not a step: name the tasks, or put this one in the set',
-          task.span,
-        ),
-      );
-    }
   }
 }
 

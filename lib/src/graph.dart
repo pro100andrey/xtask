@@ -199,10 +199,23 @@ final class _Planner {
 
     final task = file.tasks[name];
     if (task == null) {
+      // **A declared gate set is not "no such task".** Said that way it was
+      // false — the file declares the name — and `--validate` printed it
+      // ahead of the accurate sentence, so the first diagnostic a reader met
+      // was the wrong one. An edge runs between tasks; a gate set is a list.
+      final isGate = file.gates.containsKey(name);
       throw XtaskFormatException(
-        from == null
-            ? 'there is no task called `$name`'
-            : 'task `${from.name}` names `$name`, and there is no such task',
+        switch ((from, isGate)) {
+          (null, true) =>
+            '`$name` is a gate set, not a task — run it by naming it',
+          (null, false) => 'there is no task called `$name`',
+          (final from?, true) =>
+            'task `${from.name}` names the gate set `$name` in `needs:` or '
+                '`then:`, and those are edges between tasks. A gate set is a '
+                'list, not a step: name the tasks, or put this one in the set',
+          (final from?, false) =>
+            'task `${from.name}` names `$name`, and there is no such task',
+        },
         from?.span,
       );
     }

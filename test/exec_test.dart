@@ -194,13 +194,13 @@ void main() {
       ]);
     });
 
-    test('`argv-from` appends the resolved members', () async {
+    test('`all` puts the resolved members where the marker is', () async {
       given(['a.lake', 'b.lake']);
       await runFile(
         'version: 1\n'
             "sets:\n  srcs: {include: ['**/*.lake']}\n"
             'tasks:\n'
-            '  a: {desc: x, run: [fmt], argv-from: srcs}\n',
+            '  a: {desc: x, run: [fmt, \$all], all: srcs}\n',
         'a',
       );
       expect(starter.started.single.arguments, ['a.lake', 'b.lake']);
@@ -313,11 +313,11 @@ void main() {
       expect(starter.started, isEmpty);
     });
 
-    test('the same for `argv-from`, which fails one step later', () async {
+    test('the same for `all:`, which fails one step later', () async {
       final code = await runFile(
         'version: 1\n'
             'sets:\n  src:\n    include: [lib/*.dart]\n'
-            'tasks:\n  a: {desc: x, argv-from: src, run: [dart, format]}\n',
+            'tasks:\n  a: {desc: x, all: src, run: [dart, format, \$all]}\n',
         'a',
       );
       expect(code, ExitCode.invalidFile);
@@ -451,7 +451,7 @@ void main() {
   });
 
   group('arguments from the command line land last', () {
-    test('after `args:` and after the expanded `argv-from`', () async {
+    test('after `args:` and after the expanded `all:`', () async {
       // Where a command line belongs: able to add to what the file already
       // said, rather than buried in front of it.
       given(['lib/a.dart']);
@@ -459,8 +459,8 @@ void main() {
         'version: 1\n'
             'sets:\n  src:\n    include: [lib/*.dart]\n'
             'tasks:\n'
-            '  a: {desc: x, run: [dart, format], args: [--fix],'
-            ' argv-from: src}\n',
+            r'  a: {desc: x, run: [dart, format], args: [--fix, $all],'
+            ' all: src}\n',
         'a',
         passed: ['--line-length', '100'],
       );
@@ -1175,14 +1175,14 @@ void main() {
   });
 
   group("a `do:` body is the project's own Dart", () {
-    test('the verb is called, with args and argv-from resolved', () async {
+    test('the verb is called, with args and `all:` resolved', () async {
       given(['x.lake']);
       late VerbContext seen;
       final code = await runFile(
         'version: 1\n'
             "sets:\n  srcs: {include: ['**/*.lake']}\n"
             'tasks:\n'
-            '  a: {desc: x, do: fmt, args: [--write], argv-from: srcs}\n',
+            '  a: {desc: x, do: fmt, args: [--write, \$all], all: srcs}\n',
         'a',
         verbs: {
           'fmt': (context) async {

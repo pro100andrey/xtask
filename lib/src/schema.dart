@@ -83,9 +83,9 @@ Map<String, Map<String, Object?>> get _topLevel => {
   'sets': {
     'type': 'object',
     'description':
-        "Named lists and globs, referenced by a task's `each:` or "
-        '`argv-from:`. A set that expands to nothing is an error: a task given '
-        'no files checked nothing.',
+        "Named lists and globs, referenced by a task's `each:` or `all:`. A "
+        'set that expands to nothing is an error: a task given no files '
+        'checked nothing.',
     'additionalProperties': _set,
   },
   'tasks': {
@@ -162,10 +162,11 @@ const _taskKeys = <String, Map<String, Object?>>{
     ..._strings,
     'description': 'Extra arguments appended to the body.',
   },
-  'argv-from': {
+  'all': {
     'type': 'string',
     'description':
-        'A set whose members are appended as arguments, already expanded.',
+        r'A set whose members replace the `$all` marker in `run:` or `args:`, '
+        'in one invocation. The marker is a whole argument and appears once.',
   },
   'desc': {
     'type': 'string',
