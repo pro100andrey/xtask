@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:glob/glob.dart';
 import 'package:path/path.dart' as p;
 
+import 'boundary.dart';
 import 'errors.dart';
 import 'model.dart';
 
@@ -30,6 +31,12 @@ final class SetExpander {
   /// wrong thing. Invisible for globs, which is most of the suite.
   List<String> expand(String name, NamedSet set) {
     final members = switch (set) {
+      // Checked one by one, and this is not decoration: a written member met
+      // no boundary at all until it did, so `['/etc', '../..']` expanded to
+      // real paths and reached a working directory and a verb that deletes.
+      // The glob arm has been refusing the same thing since it was written;
+      // the two arms disagreeing was the hole.
+      //
       // **Written order, not sorted.** §4.2 promises a deterministic order so
       // that an argument list does not depend on the filesystem — it does not
       // ask for an author's list to be rearranged. `each: test-packages` runs
@@ -39,7 +46,9 @@ final class SetExpander {
       // Members are literal. Globs among them — §12's `build-outputs` has
       // three — are `remove`'s to expand under §6's rule that a missing path
       // is not an error, which is why `clean` may run twice.
-      ListSet(:final members) => members,
+      ListSet(:final members) => [
+        for (final member in members) _refuseUnrooted(name, set, member),
+      ],
       GlobSet() => _matches(name, set),
     };
     _refuseEmpty(name, set, members);
@@ -114,7 +123,7 @@ final class SetExpander {
         _glob(name, set, variant),
   ];
 
-  /// [pattern] unchanged, or a refusal if it names anything outside [root].
+  /// [written] unchanged, or a refusal if it names anything outside [root].
   ///
   /// **`root` is a boundary, not a default.** An absolute pattern or one
   /// climbing through `..` used to walk wherever it liked — `include:
@@ -122,18 +131,20 @@ final class SetExpander {
   /// `remove`, which deletes recursively and treats a missing path as fine, is
   /// deletion outside the repository with no diagnostic and nothing
   /// `--validate` could see.
-  String _refuseUnrooted(String name, NamedSet set, String pattern) {
-    final absolute =
-        pattern.startsWith('/') || RegExp('^[A-Za-z]:').hasMatch(pattern);
-    final climbs = p.posix.split(pattern).contains('..');
-    if (!absolute && !climbs) {
-      return pattern;
+  ///
+  /// Applied to a written member as well as to a pattern, because what a set
+  /// hands on is the same string either way. The test itself lives in
+  /// [leavesRoot], so that the fence has one gate rather than a copy per
+  /// caller.
+  String _refuseUnrooted(String name, NamedSet set, String written) {
+    if (!leavesRoot(written)) {
+      return written;
     }
     throw XtaskFormatException(
-      'set `$name` reaches outside the repository with `$pattern`. Patterns '
-      'are relative to the root and stay there: a set is fed to verbs that '
-      "delete, and a path the repository does not own is not this file's to "
-      'name',
+      'set `$name` reaches outside the repository with `$written`. What a set '
+      'names is relative to the root and stays there: a set is fed to verbs '
+      "that delete, and a path the repository does not own is not this file's "
+      'to name',
       set.span,
     );
   }

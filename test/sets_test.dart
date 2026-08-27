@@ -53,6 +53,33 @@ void main() {
       expect(members, ['b', 'a', 'c']);
     });
 
+    test('refuses a written member that leaves the repository', () {
+      // The glob arm had refused this since it was written; the list arm never
+      // met the check at all, so these reached a working directory and a verb
+      // that deletes with nothing said about them.
+      //
+      // Windows spellings included, because a fence read only as POSIX is not
+      // a fence on the machine that writes `..\..` — and every caller joins
+      // what comes back with the platform's own `p.join`.
+      const escapes = [
+        '/etc',
+        '../..',
+        r'C:\Windows',
+        'C:relative',
+        r'..\..',
+        r'\foo',
+        r'\\server\share',
+        r'a\..\b',
+      ];
+      for (final member in escapes) {
+        expect(
+          refusalOf(() => expander().expand('s', ListSet([member]))),
+          contains('reaches outside the repository'),
+          reason: member,
+        );
+      }
+    });
+
     test('is NOT sorted — somebody chose that order', () {
       // §4.2 asks for a deterministic order so an argument list does not
       // depend on the filesystem. It does not ask for an author's list to be

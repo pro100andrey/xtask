@@ -1,6 +1,7 @@
 /// `--validate` — the first gate any project should adopt.
 library;
 
+import 'boundary.dart';
 import 'errors.dart';
 import 'gates.dart';
 import 'graph.dart';
@@ -51,6 +52,7 @@ ValidationReport validateFile(
     _checkDoesSomething(task, problems);
     _checkVerb(task, knownVerbs, problems);
     _checkSetReferences(task, file, problems);
+    _checkWorkingDirectory(task, problems);
   }
 
   _checkGraph(file, problems);
@@ -73,6 +75,30 @@ void _checkDoesSomething(Task task, List<XtaskFormatException> problems) {
       'task `${task.name}` has no body, no `needs:` and no `collects:`, so '
       'running it does nothing. A composite gathers something; a task that '
       'gathers nothing is a name with a description attached',
+      task.span,
+    ),
+  );
+}
+
+/// An `in:` that leaves the repository (§8).
+///
+/// The other half of this fence — a set's members and patterns — is reached
+/// from here through `_checkSetsExpand`, so leaving `in:` to be caught at
+/// resolve time made one boundary answer at two different moments: a file
+/// `--validate` called clean was refused by `--dry-run`. §8's claim is that
+/// this class is found without running anything, and `in:` is a written
+/// string, checkable the moment the file is read.
+void _checkWorkingDirectory(Task task, List<XtaskFormatException> problems) {
+  final written = task.workingDirectory;
+  if (written == null || !leavesRoot(written)) {
+    return;
+  }
+  problems.add(
+    XtaskFormatException(
+      'task `${task.name}` says `in: $written`, which reaches outside the '
+      'repository. A working directory is relative to the root and stays '
+      'there — a task that runs somewhere the repository does not own is not '
+      'something this file can vouch for',
       task.span,
     ),
   );

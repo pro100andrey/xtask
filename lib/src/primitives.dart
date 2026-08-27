@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:glob/glob.dart';
 import 'package:path/path.dart' as p;
 
+import 'boundary.dart';
 import 'context.dart';
 import 'exit_codes.dart';
 
@@ -69,10 +70,7 @@ Future<int> removeVerb(VerbContext context, {required String root}) async {
 /// recursive delete outside the repository, and §6's "a missing path is not an
 /// error" means it would do so without a word.
 String? _outsideRoot(String argument) {
-  final absolute =
-      argument.startsWith('/') || RegExp('^[A-Za-z]:').hasMatch(argument);
-  final climbs = p.posix.split(argument).contains('..');
-  if (!absolute && !climbs) {
+  if (!leavesRoot(argument)) {
     return null;
   }
   return '`remove` refuses `$argument`: it names a path outside the '

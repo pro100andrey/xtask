@@ -30,6 +30,27 @@ void main() {
     sets: withFilesystem ? SetExpander(root: root.path) : null,
   );
 
+  group('an `in:` that leaves the repository', () {
+    test('is a problem --validate reports, not one only a run finds', () {
+      // The set half of this fence was already reachable from here through
+      // `_checkSetsExpand`, so leaving `in:` to resolve time made one boundary
+      // answer at two moments: `--validate` said nothing wrong and `--dry-run`
+      // refused the same file.
+      for (final where in ['../..', '/etc', r'..\..', r'\\server\share']) {
+        final report = check(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, in: "${where.replaceAll(r'\', r'\\')}", '
+          'run: [dart]}\n',
+        );
+        expect(
+          report.problems.map((p) => p.toString()).join('\n'),
+          contains('reaches outside the repository'),
+          reason: where,
+        );
+      }
+    });
+  });
+
   group('a file with nothing wrong', () {
     test('reports nothing', () {
       final report = check(

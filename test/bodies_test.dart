@@ -187,6 +187,22 @@ void main() {
       );
     });
 
+    test('`in:` that leaves the repository', () {
+      // Nothing checked this until now: `in: ../..` started a body two levels
+      // above the root and the run answered 0.
+      for (final where in ['../..', '/etc']) {
+        expect(
+          () => resolve(
+            'version: 1\ntasks:\n'
+                '  a: {desc: x, in: "$where", run: [dart]}\n',
+            'a',
+          ),
+          refused(ExitCode.invalidFile, contains('reaches outside')),
+          reason: where,
+        );
+      }
+    });
+
     test(r'`in: $each` with no `each:`', () {
       expect(
         () => resolve(
