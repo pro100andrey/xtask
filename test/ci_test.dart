@@ -148,6 +148,47 @@ jobs:
       }
     });
 
+    test(
+      'arguments after `--` have nothing to reach, so are not vouched for',
+      () {
+        // A gate set has no body, so `xtask check -- --name x` exits 2 the
+        // moment it runs. The checker knows because the parser hands back a
+        // `RunTask` carrying them, not because it looks for `--` itself.
+        workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze -- --name x
+''');
+        expect(check().problems, isNotEmpty);
+      },
+    );
+
+    test('the checker and the command line accept the same spellings', () {
+      // The point of parsing rather than re-reading: every spelling the
+      // command line takes is one a workflow may be written in, without this
+      // file learning any of them.
+      for (final written in [
+        'ci-analyze --keep-going -j 4',
+        'ci-analyze -j4',
+        'ci-analyze --jobs=8',
+        '--keep-going ci-analyze',
+        '-j auto ci-analyze',
+      ]) {
+        workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask $written
+''');
+        expect(
+          check().invocations.map((i) => i.gate),
+          ['ci-analyze'],
+          reason: written,
+        );
+      }
+    });
+
     test('a lone dash is a diagnostic, not a crash', () {
       // Reaching for a second character raised a `RangeError` out of
       // `--check-ci` rather than reporting anything.

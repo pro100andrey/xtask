@@ -19,9 +19,9 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import 'errors.dart';
-import 'flags.dart';
 import 'gates.dart';
 import 'model.dart';
+import 'request.dart';
 
 /// Where a workflow lives, relative to the repository root.
 const workflowDirectory = '.github/workflows';
@@ -146,77 +146,51 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   );
 }
 
+/// Whether [word] is how this project reaches xtask.
+///
+/// Deliberately loose about HOW — `dart run :xtask check`, `dart run
+/// bin/xtask.dart check`, a compiled `./xtask check` — because §9 leaves the
+/// entry point to the project and a checker that only recognised one spelling
+/// would report a working workflow as broken.
+bool _namesXtask(String word) =>
+    word == 'xtask' ||
+    word.endsWith(':xtask') ||
+    word.endsWith('xtask.dart') ||
+    word.endsWith('/xtask');
+
 /// The gate set [command] invokes, or null if it is not an invocation at all.
 ///
-/// Deliberately loose about HOW xtask is reached — `dart run :xtask check`,
-/// `dart run bin/xtask.dart check`, a compiled `./xtask check` — because §9
-/// leaves the entry point to the project and a checker that only recognised
-/// one spelling would report a working workflow as broken.
+/// **Decided by parsing it, not by reading it a second way.** This used to walk
+/// the words itself — attached values against separate ones, `--jobs=` against
+/// `-j4`, a lone `-`, a second operand — which is the command line's grammar
+/// written twice, in a checker whose whole job is that one thing is not written
+/// twice. Both copies had already been wrong: `-j4` swallowed the gate set
+/// after it, and a lone `-` raised a `RangeError` out of `--check-ci`.
+///
+/// So the words go to the parser the command line uses, and what comes back is
+/// asked a question. A mode names a gate set without running it; anything the
+/// command line refuses is a step that exits before it does anything; and
+/// arguments after `--` have nothing to reach, because a gate set has no body.
+/// Each of those is a [Request] that is not a bare [RunTask], and none of them
+/// is spelled out here.
 String? _gateOf(String command) {
   final words = command.split(RegExp(r'\s+'));
-  final at = words.indexWhere(
-    (word) =>
-        word == 'xtask' ||
-        word.endsWith(':xtask') ||
-        word.endsWith('xtask.dart') ||
-        word.endsWith('/xtask'),
-  );
+  final at = words.indexWhere(_namesXtask);
   if (at == -1) {
     return null;
   }
 
-  // **Flags are allowed after the name; a second operand is not.** This asked
-  // for exactly one word after the token and refused anything starting with
-  // `-`, which made `xtask check -j 4` — and `--keep-going`, and every other
-  // modifier — impossible to write in a workflow. §7.1 sends all parallelism
-  // to CI and this forbade the one construct that provides it. What must
-  // stay refused is a step doing two THINGS, which is a second operand.
-  final after = words.skip(at + 1).toList();
-  final operands = <String>[];
-  for (var i = 0; i < after.length; i++) {
-    final word = after[i];
-    if (!word.startsWith('-')) {
-      operands.add(word);
-      continue;
-    }
-
-    // **Named, not guessed.** Skipping a following word whenever a flag had
-    // no `=` swallowed the gate set after `-j4` — the attached spelling this
-    // very change advertises — and reported a valid workflow as a step doing
-    // something other than running a gate.
-    // A lone `-` is a legitimate shell token and has no second character;
-    // reaching for one raised a `RangeError` out of `--check-ci` instead of a
-    // diagnostic.
-    final flag = word.startsWith('--')
-        ? (word.contains('=') ? word.substring(0, word.indexOf('=')) : word)
-        : (word.length >= 2 ? word.substring(0, 2) : word);
-    if (!runModifiers.contains(flag)) {
-      // A mode rather than a modifier — `--dry-run check` names a gate set
-      // and does not run it, which is not what a job is being vouched for.
-      return null;
-    }
-    final attached = word.length > flag.length;
-    if (takesAValue.contains(flag)) {
-      // **The value is checked, not skipped.** `check -j abc` and a trailing
-      // `check -j` were vouched for here and refused by the command line, so
-      // `--check-ci` reported a green job for a step that cannot run.
-      // `--jobs=4` carries its value after an `=`; `-j4` carries it joined,
-      // and `-j=4` is neither — the command line refuses that one, so
-      // vouching for it here reported a green job for a step that exits 2.
-      final value = attached
-          ? (word.startsWith('--')
-                ? word.substring(flag.length + 1)
-                : word.substring(flag.length))
-          : (i + 1 < after.length ? after[++i] : null);
-      if (value == null || !isAJobCount(value)) {
-        return null;
-      }
-    } else if (attached) {
-      // `--keep-going=true` takes no value and the command line refuses it.
-      return null;
-    }
-  }
-  return operands.length == 1 ? operands.single : null;
+  final request = parseArguments(
+    words.skip(at + 1).toList(),
+    // The number is discarded — only whether it PARSES is being asked — and a
+    // check that read this machine's width would vouch differently for one
+    // workflow on two runners.
+    processors: () => 1,
+  );
+  return switch (request) {
+    RunTask(:final task, arguments: []) => task,
+    _ => null,
+  };
 }
 
 Iterable<CiStep> _shellSteps(File workflow, String name) sync* {

@@ -9,6 +9,7 @@ import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/primitives.dart';
+import 'package:xtask/src/request.dart';
 import 'package:xtask/src/schema.dart';
 import 'package:xtask/src/sets.dart';
 import 'package:xtask/src/validate.dart';

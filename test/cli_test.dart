@@ -6,6 +6,7 @@ import 'package:xtask/src/cli.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
+import 'package:xtask/src/request.dart';
 import 'package:xtask/src/schema.dart';
 import 'package:xtask/src/version.dart';
 
@@ -228,10 +229,28 @@ void main() {
       });
 
       test('`auto` is capped, because a job here is a whole toolchain', () {
+        // The width is a parameter, so the cap can be PROVED rather than
+        // asserted to be somewhere below itself: on a machine narrower than
+        // the cap the old form of this test passed whether the cap fired or
+        // not, and the machines this is written on are narrower than 32.
+        int asked(int processors) =>
+            (parseArguments([
+                      'check',
+                      '-j',
+                      'auto',
+                    ], processors: () => processors)
+                    as RunTask)
+                .concurrency;
+        expect(asked(32), autoJobsCap);
+        expect(asked(2), 2);
+        expect(asked(autoJobsCap), autoJobsCap);
+      });
+
+      test('and reading the host is the default, not the mechanism', () {
         final asked =
             (parseArguments(['check', '-j', 'auto']) as RunTask).concurrency;
         expect(asked, greaterThan(0));
-        expect(asked, lessThanOrEqualTo(8));
+        expect(asked, lessThanOrEqualTo(autoJobsCap));
       });
 
       test('bare, it is refused rather than given a number of its own', () {
