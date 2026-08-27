@@ -28,6 +28,28 @@ between tasks, and a list is not a step.
 **Breaking:** a file that uses gate sets must declare them, and `collects:` is
 no longer a key — delete the composite and run the gate set by name.
 
+### `-j` reaches the members of an `each:`
+
+The budget used to decide which **tasks** were admitted, so `-j 4` over one
+fanned-out task admitted the one task and then ran its forty members in turn —
+the flag doing nothing at all on the commonest shape it exists for.
+
+A slot is now held by a **unit**: one member, or one body with no members. A
+task's members share the budget with whatever else is running, and the task
+gate stays where it was, because at one task in flight a failure is observed
+before the next is admitted — which is what "a failure stops what has not
+started" rests on.
+
+Which member the run answers for is the earliest in the set, not the first to
+finish: a `do:` verb's code is a deliberate decision, and an answer that
+depends on scheduling is not an answer.
+
+Members are still not plan steps, and must not be: a plan step is what
+`needs:`, `then:` and one `::group::` are about, and a member is none of
+those. Two members writing at once are buffered and flushed as each ends,
+one level down from how tasks are; one member in flight keeps live output
+exactly as it was.
+
 ### `--parallel` becomes `-j <n>`, and CI can finally write it
 
 `--parallel` read as a boolean and behaved as a number: bare it meant "as

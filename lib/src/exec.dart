@@ -1,6 +1,7 @@
 /// Running the bodies a plan resolved to.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -99,7 +100,15 @@ final class Executor {
     // for `-j` above 1 on a single task would otherwise cost §5.2's live
     // output and buy nothing at all. It is also what the announcement is
     // about, so computing it twice would be two answers to one question.
-    final concurrent = concurrency > 1 && plan.steps.length > 1;
+    // **A fanned-out task is two things in flight too.** This asked only
+    // whether the PLAN had two steps, so `xtask fmt -j 4` over one `each:`
+    // task buffered every member and printed nothing at all until the first
+    // ended — with no announcement, because the announcement asked the same
+    // question. `each:` is a key, so this needs no filesystem to see it.
+    final concurrent =
+        concurrency > 1 &&
+        (plan.steps.length > 1 ||
+            plan.steps.any((step) => step.task.each != null));
 
     // Before the walk, so it is the first thing on the stream rather than the
     // first thing after a wait it was meant to explain.
@@ -149,6 +158,7 @@ final class Executor {
     final waiting = [...plan.steps];
     final running = <String, Future<void>>{};
     final finished = <String>{};
+    final slots = _Slots(concurrency);
 
     // **Buffering is the price of running two at once, so it is paid only
     // then.** At one task in flight §5.2 holds unchanged: the lines go
@@ -159,6 +169,13 @@ final class Executor {
     while (waiting.isNotEmpty || running.isNotEmpty) {
       var began = false;
       for (var at = 0; at < waiting.length; at++) {
+        // **Still a gate, and still the same number.** It is what keeps a
+        // sequential run sequential: at one task in flight a failure is
+        // observed before the next is admitted, which is what "a failure stops
+        // what has not started" rests on. What changed is one level down —
+        // the budget it names is now spent by UNITS, so `-j 4` over a single
+        // fanned-out task admits the one task and lets its members have all
+        // four, where before they took turns and the flag did nothing.
         if (running.length >= concurrency) {
           break;
         }
@@ -189,17 +206,24 @@ final class Executor {
         waiting.removeAt(at--);
         began = true;
         final name = step.task.name;
-        running[name] = _runOne(step, took, failed, buffered: concurrent).then((
-          code,
-        ) {
-          // `removeWhere`, not `remove`: the map's values are futures, so
-          // `remove` hands one back and dropping it is a discarded future.
-          running.removeWhere((running, _) => running == name);
-          finished.add(name);
-          if (code != null) {
-            answer ??= code;
-          }
-        });
+        running[name] =
+            _runOne(
+              step,
+              took,
+              failed,
+              slots,
+              buffered: concurrent,
+            ).then((
+              code,
+            ) {
+              // `removeWhere`, not `remove`: the map's values are futures, so
+              // `remove` hands one back and dropping it is a discarded future.
+              running.removeWhere((running, _) => running == name);
+              finished.add(name);
+              if (code != null) {
+                answer ??= code;
+              }
+            });
       }
 
       if (running.isEmpty && !began) {
@@ -236,14 +260,27 @@ final class Executor {
   Future<int?> _runOne(
     PlanStep step,
     Map<String, Duration> took,
-    Map<String, int> failed, {
+    Map<String, int> failed,
+    _Slots slots, {
     required bool buffered,
   }) async {
     final lines = buffered ? <String>[] : null;
     final say = lines == null ? log : lines.add;
+
+    // **Waited for, not held.** A task admitted by the walk could still be
+    // queued behind another task's members, and that wait was billed to it: a
+    // one-second process reported two seconds, and the total — documented as
+    // how much WORK there was — double-counted idling. So the clock starts
+    // when there is capacity to start.
+    //
+    // Taken and given straight back rather than carried into the body: a task
+    // holding a slot for its whole life while its own later members queue for
+    // one is a deadlock, and two two-member tasks at `-j 2` found it.
+    await slots.take();
+    slots.give();
     final started = now();
     try {
-      await _runTask(step.task, lines?.add);
+      await _runTask(step.task, slots, lines?.add);
       return null;
     } on Object catch (thrown, stack) {
       // **One clause, because there is one ending.** `on RunFailure` alone
@@ -331,7 +368,11 @@ final class Executor {
         : null;
   }
 
-  Future<void> _runTask(Task task, [void Function(String line)? sink]) async {
+  Future<void> _runTask(
+    Task task,
+    _Slots slots, [
+    void Function(String line)? sink,
+  ]) async {
     // **A section per task, opened before anything that can fail inside it.**
     // §7.1 rests on this: a CI job is one invocation, and what keeps that no
     // worse than a step per task is that each task folds and the failing one
@@ -341,11 +382,15 @@ final class Executor {
     //
     final say = sink ?? log;
     markers.open(task.name).forEach(say);
-    await _runTaskBody(task, sink);
+    await _runTaskBody(task, slots, sink);
     markers.close().forEach(say);
   }
 
-  Future<void> _runTaskBody(Task task, void Function(String line)? sink) async {
+  Future<void> _runTaskBody(
+    Task task,
+    _Slots slots,
+    void Function(String line)? sink,
+  ) async {
     // Every way this task could turn out to be unrunnable is answered by one
     // call, and answered the same way `--dry-run` is answered — because it is
     // the same call.
@@ -363,13 +408,43 @@ final class Executor {
     // per run and a person fixed, reran, fixed, reran — the exact loop
     // `--keep-going` exists to end. And a member that never ran read exactly
     // like one that passed, which is the failure this whole tool is about.
-    RunFailure? first;
-    final failedMembers = <String>[];
-    for (var at = 0; at < bodies.length; at++) {
+    //
+    // **A member holds a slot, which is what makes `-j` mean anything here.**
+    // The budget used to gate which TASKS were admitted, so `-j 4` over one
+    // fanned-out task admitted the task and then ran its forty members in
+    // turn — the flag doing nothing on the shape it exists for.
+    // Keyed by index, so which failure the run answers with does not depend
+    // on which member happened to finish first. `first` used to mean
+    // first-by-completion the moment members ran together, and a `do:` verb's
+    // code is a deliberate decision — two members answering 2 and 1 made the
+    // same command line answer differently run to run.
+    final failures = <int, RunFailure>{};
+    var attempted = 0;
+    var stop = false;
+
+    // Buffering is the price of two things writing at once, and it is paid
+    // only then: one member in flight keeps §5.2's live output exactly.
+    final together = slots.total > 1 && bodies.length > 1;
+
+    Future<void> member(int at) async {
+      if (stop) {
+        return;
+      }
+      await slots.take();
+      if (stop) {
+        slots.give();
+        return;
+      }
+      final lines = together ? <String>[] : null;
+      attempted++;
       try {
-        await _runBody(bodies[at], sink);
+        await _runBody(bodies[at], lines == null ? sink : lines.add);
       } on Object catch (thrown) {
         if (thrown is XtaskFormatException) {
+          // Stopped as well as raised: `Future.wait` propagates only after
+          // every other member has finished, so without this the siblings of
+          // a member that raised ran on to the end.
+          stop = true;
           rethrow;
         }
         // **Anything, not only a `RunFailure`.** A verb is arbitrary project
@@ -377,24 +452,39 @@ final class Executor {
         // `StateError` from member 2 left through the loop and discarded what
         // member 1 had already told us and the fact that member 3 never ran —
         // the silence this whole change was written to end.
-        final failure = thrown is RunFailure ? thrown : _threw(task, thrown);
-        first ??= failure;
-        failedMembers.add(bodies[at].member ?? task.name);
+        failures[at] = thrown is RunFailure ? thrown : _threw(task, thrown);
         if (!keepGoing) {
-          throw RunFailure(
-            failure.code,
-            _tally(failure, bodies.length, failedMembers, at + 1),
-          );
+          stop = true;
         }
+      } finally {
+        slots.give();
+        lines?.forEach(sink ?? log);
       }
     }
-    if (first != null) {
+
+    if (together) {
+      await Future.wait([
+        for (var at = 0; at < bodies.length; at++) member(at),
+      ]);
+    } else {
+      for (var at = 0; at < bodies.length; at++) {
+        await member(at);
+      }
+    }
+
+    if (failures.isNotEmpty) {
+      final order = failures.keys.toList()..sort();
+      final failedMembers = [
+        for (final at in order) bodies[at].member ?? task.name,
+      ];
+      final failure = failures[order.first]!;
       throw RunFailure(
-        // **The FIRST failing member's code**, as with tasks: a run with three
-        // failures cannot honestly claim to be about all of them, and the
-        // summary is where the others are.
-        first.code,
-        _tally(first, bodies.length, failedMembers, bodies.length),
+        // **The EARLIEST failing member's code**, by the set's order rather
+        // than by which finished first: a run with three failures cannot
+        // honestly claim to be about all of them, and an answer that depends
+        // on scheduling is not an answer.
+        failure.code,
+        _tally(failure, bodies.length, failedMembers, attempted),
       );
     }
   }
@@ -560,6 +650,46 @@ final class Executor {
           output: sink,
         );
     }
+  }
+}
+
+/// The concurrency budget, held by whatever is actually running.
+///
+/// **A unit, not a task, is what occupies a slot.** The limit used to gate
+/// which TASKS were admitted, so `-j 4` over one fanned-out task admitted the
+/// one task and ran its forty members one after another: the flag did nothing
+/// on the shape it exists for. Counting units instead lets a task's members
+/// share the budget with other tasks, without the members becoming plan steps
+/// — which they must not, because a plan step is what `needs:`, `then:` and a
+/// `::group::` are about, and a member is none of those.
+///
+/// First come, first served, so the plan's cheap-before-slow order survives as
+/// the order things are ASKED for.
+final class _Slots {
+  _Slots(this.total);
+
+  final int total;
+  var _taken = 0;
+  final _waiting = <Completer<void>>[];
+
+  Future<void> take() {
+    if (_taken < total) {
+      _taken++;
+      return Future.value();
+    }
+    final wait = Completer<void>();
+    _waiting.add(wait);
+    return wait.future;
+  }
+
+  void give() {
+    if (_waiting.isEmpty) {
+      _taken--;
+      return;
+    }
+    // Handed straight on rather than released and re-taken: releasing first
+    // would let a newcomer overtake whoever has been waiting longest.
+    _waiting.removeAt(0).complete();
   }
 }
 

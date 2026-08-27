@@ -126,6 +126,18 @@ jobs:
       expect(report.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
     });
 
+    test('a lone dash is a diagnostic, not a crash', () {
+      // Reaching for a second character raised a `RangeError` out of
+      // `--check-ci` rather than reporting anything.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze -
+''');
+      expect(check, returnsNormally);
+    });
+
     test('a mode is not a modifier — naming a gate is not running it', () {
       workflow('ci.yml', '''
 jobs:

@@ -117,13 +117,18 @@ List<String> summary(Map<String, int> failed, Map<String, Skipped> skipped) {
 /// "is it stuck", and the answer is the count, the width, and the reason the
 /// silence is expected.
 List<String> starting(int tasks, int concurrency) {
-  final noun = tasks == 1 ? 'task' : 'tasks';
   // Built here rather than inside the list: two string parts side by side in
   // a list literal read as a missing comma, and the lint that says so is
   // right about every other case.
-  final line =
-      'running $tasks $noun, up to $concurrency at once — '
-      "each task's output arrives when that task ends";
+  //
+  // **One task is not one thing to wait for.** A fanned-out task is as many
+  // as it has members, and saying "running 1 task" beside a four-way budget
+  // reads as an announcement about nothing — which is how `xtask fmt -j 4`
+  // came to print that line and then go silent with no reason given.
+  final line = tasks == 1
+      ? 'running up to $concurrency at once — output arrives as each ends'
+      : 'running $tasks tasks, up to $concurrency at once — '
+            "each task's output arrives when that task ends";
   return [line, ''];
 }
 

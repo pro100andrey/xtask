@@ -1425,6 +1425,119 @@ void main() {
     });
   });
 
+  group('`-j` reaches the members of an `each:`', () {
+    test('which is the shape the flag exists for', () async {
+      // The budget used to gate which TASKS were admitted, so `-j 4` over one
+      // fanned-out task admitted the task and ran its members in turn: the
+      // flag did nothing at all on its commonest case.
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        concurrency: 3,
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(3), reason: 'all three at once');
+      starter.holds['ruff']!.complete();
+      await running;
+    });
+
+    test('and the budget is a budget, not a promise', () async {
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        concurrency: 2,
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(2), reason: 'the third is waiting');
+      starter.holds['ruff']!.complete();
+      await running;
+      expect(starter.started, hasLength(3));
+    });
+
+    test('and one member at a time is still one member at a time', () async {
+      // §5.2 unchanged where it was never in question.
+      given(['pkg/a/x', 'pkg/b/x']);
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(1));
+      starter.holds['ruff']!.complete();
+      await running;
+    });
+  });
+
+  group('a run that is about to go quiet says so first', () {
+    test('including when the two things at once are members', () async {
+      // This asked only whether the PLAN had two steps, so `xtask fmt -j 4`
+      // over one `each:` task buffered every member and printed nothing at
+      // all until the first ended — with no announcement, because the
+      // announcement asked the same question.
+      given(['pkg/a/x', 'pkg/b/x']);
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        concurrency: 2,
+      );
+      expect(logged.first, contains('up to 2 at once'));
+    });
+
+    test('and says nothing when there is nothing to wait through', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [ruff]}\n',
+        'a',
+        concurrency: 2,
+      );
+      expect(logged.first, isNot(contains('at once')));
+    });
+  });
+
+  group('which member the run answers for does not depend on scheduling', () {
+    test('it is the earliest in the set, not the first to finish', () async {
+      // A `do:` verb's code is a deliberate decision, so two members
+      // answering 2 and 1 made the same command line answer differently run
+      // to run once members could overlap.
+      given(['pkg/a/x', 'pkg/b/x']);
+      final code = await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, do: pick}'
+            '\n',
+        'a',
+        concurrency: 2,
+        keepGoing: true,
+        verbs: {
+          'pick': (context) async =>
+              context.workingDirectory.endsWith('a') ? 2 : 1,
+        },
+      );
+      expect(code, 2, reason: '`pkg/a` is first in the set');
+    });
+  });
+
   group('a failing member does not silence the rest', () {
     Future<int> overThree({required bool keepGoing}) {
       given(['pkg/one/x', 'pkg/two/x', 'pkg/three/x']);

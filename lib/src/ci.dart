@@ -183,9 +183,12 @@ String? _gateOf(String command) {
     // no `=` swallowed the gate set after `-j4` — the attached spelling this
     // very change advertises — and reported a valid workflow as a step doing
     // something other than running a gate.
+    // A lone `-` is a legitimate shell token and has no second character;
+    // reaching for one raised a `RangeError` out of `--check-ci` instead of a
+    // diagnostic.
     final flag = word.startsWith('--')
         ? (word.contains('=') ? word.substring(0, word.indexOf('=')) : word)
-        : word.substring(0, 2);
+        : (word.length >= 2 ? word.substring(0, 2) : word);
     if (!_runModifiers.contains(flag)) {
       // A mode rather than a modifier — `--dry-run check` names a gate set
       // and does not run it, which is not what a job is being vouched for.

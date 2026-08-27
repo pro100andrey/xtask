@@ -209,7 +209,8 @@ const _taskKeys = <String, Map<String, Object?>>{
         'A set whose members the body runs once per, sequentially, with '
         r'`$each` standing for the member — a whole argument, or the end of '
         r'one: `packages/$each`. Nothing may follow it. A failure names the '
-        'member; without `--keep-going` it also stops the rest.',
+        'member; without `--keep-going` no further member is STARTED, so at '
+        '`-j 1` it stops the rest and above that it stops what had not begun.',
   },
   'env': {
     'type': 'object',

@@ -354,7 +354,8 @@ because a task that silently did not happen reads exactly like one that passed.
 It is off by default, because a pipeline wants the earliest possible red
 rather than a broken run read to the end.
 
-`-j <n>` runs tasks that do not depend on each other at once, up to the
+`-j <n>` runs tasks that do not depend on each other at once — and the
+members of one `each:` at once — up to the
 number of processors, `-j auto` or `-j N`. It is **not** the default, and the
 reason is a real cost rather than caution: normally a task's output passes
 through as it arrives and each task is a section that folds, and two tasks
