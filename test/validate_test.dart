@@ -6,6 +6,8 @@ import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/sets.dart';
 import 'package:xtask/src/validate.dart';
 
+import 'helpers.dart';
+
 void main() {
   group('a task that does nothing', () {
     test('is one with no body, no `needs:` and no `then:`', () {
@@ -39,8 +41,7 @@ void main() {
 
   late Directory root;
 
-  setUp(() => root = Directory.systemTemp.createTempSync('xtask_validate_'));
-  tearDown(() => root.deleteSync(recursive: true));
+  setUp(() => root = tempRepo('validate'));
 
   void given(List<String> paths) {
     for (final path in paths) {

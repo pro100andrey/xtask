@@ -9,15 +9,7 @@ import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/sets.dart';
 
-/// The message of the [XtaskFormatException] [body] throws.
-String refusalOf(void Function() body) {
-  try {
-    body();
-  } on XtaskFormatException catch (e) {
-    return e.toString();
-  }
-  fail('expected a refusal, got none');
-}
+import 'helpers.dart';
 
 void main() {
   group('a brace does not switch pruning off by itself', () {
@@ -26,8 +18,7 @@ void main() {
       // arithmetic holds. Reading every brace as unprunable made an ordinary
       // monorepo shape read all of `node_modules` and `.git` — 250ms against
       // 10ms for the same set written without it.
-      final root = Directory.systemTemp.createTempSync('xtask_brace_');
-      addTearDown(() => root.deleteSync(recursive: true));
+      final root = tempRepo('brace');
       for (final path in [
         'packages/a/lib/one.dart',
         'packages/b/lib/two.dart',
@@ -50,8 +41,7 @@ void main() {
       // `{a,b/c}/**` makes the segment COUNT depend on which alternative is
       // taken, so a pattern with four apparent segments may still reach five
       // deep. That one has to keep going.
-      final root = Directory.systemTemp.createTempSync('xtask_brace2_');
-      addTearDown(() => root.deleteSync(recursive: true));
+      final root = tempRepo('brace2');
       for (final path in ['a/deep/one.dart', 'b/c/deep/two.dart']) {
         File(p.join(root.path, p.joinAll(p.posix.split(path))))
           ..parent.createSync(recursive: true)
@@ -72,8 +62,7 @@ void main() {
     // every reading becomes a glob matched against every entry of the walk:
     // eight globstars is 256 globs per file, ten is over a thousand. One line
     // of the file, unbounded work.
-    final root = Directory.systemTemp.createTempSync('xtask_many_');
-    addTearDown(() => root.deleteSync(recursive: true));
+    final root = tempRepo('many');
     final wild = '${'**/x/' * 8}*.dart';
     expect(
       () => SetExpander(root: root.path).expand(
@@ -143,10 +132,8 @@ void main() {
     // A real filesystem rather than a fake one, deliberately: the property
     // under test is that a directory listing's order does not reach a task's
     // argument list, and a fake would have to be given an order to have one.
-    root = Directory.systemTemp.createTempSync('xtask_sets_');
+    root = tempRepo('sets');
   });
-
-  tearDown(() => root.deleteSync(recursive: true));
 
   group('a list set', () {
     test('is the members, as written', () {

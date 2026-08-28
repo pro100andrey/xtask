@@ -4,6 +4,8 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/executables.dart';
 
+import 'helpers.dart';
+
 /// A resolver over a made-up filesystem.
 ///
 /// The whole point of the seam: every case below runs identically on macOS,
@@ -309,8 +311,7 @@ void main() {
     // answer. These walk a real PATH, so the wiring is actually exercised.
     late Directory dir;
 
-    setUp(() => dir = Directory.systemTemp.createTempSync('xtask_resolve_'));
-    tearDown(() => dir.deleteSync(recursive: true));
+    setUp(() => dir = tempRepo('resolve'));
 
     void write(String name, {required bool executable}) {
       final file = File(p.join(dir.path, name))

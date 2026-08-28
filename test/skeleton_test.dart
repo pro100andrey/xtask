@@ -4,6 +4,8 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/xtask.dart';
 
+import 'helpers.dart';
+
 void main() {
   group('dart run :xtask', () {
     // The claim this proves, and the reason it is a subprocess rather than a
@@ -186,8 +188,7 @@ void main() {
     // own, as a separate process, and it finds the file there.
     late Directory root;
 
-    setUp(() => root = Directory.systemTemp.createTempSync('xtask_public_'));
-    tearDown(() => root.deleteSync(recursive: true));
+    setUp(() => root = tempRepo('public'));
 
     test(
       'a project with no verbs still gets the built-ins and the file',

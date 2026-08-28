@@ -15,6 +15,8 @@ import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/primitives.dart';
 import 'package:xtask/src/process.dart';
 
+import 'helpers.dart';
+
 /// A clock that advances by [step] every time it is read.
 ///
 /// Every task reads it twice — once before and once after — so each takes
@@ -144,12 +146,10 @@ void main() {
   late List<String> logged;
 
   setUp(() {
-    root = Directory.systemTemp.createTempSync('xtask_exec_');
+    root = tempRepo('exec');
     starter = FakeStarter();
     logged = [];
   });
-
-  tearDown(() => root.deleteSync(recursive: true));
 
   void given(List<String> paths) {
     for (final path in paths) {

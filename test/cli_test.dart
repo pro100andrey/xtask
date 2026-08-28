@@ -10,6 +10,8 @@ import 'package:xtask/src/request.dart';
 import 'package:xtask/src/schema.dart';
 import 'package:xtask/src/version.dart';
 
+import 'helpers.dart';
+
 /// One process the CLI asked for.
 final class Started {
   Started(this.executable, this.arguments, this.workingDirectory);
@@ -346,13 +348,11 @@ void main() {
     late FakeStarter starter;
 
     setUp(() {
-      root = Directory.systemTemp.createTempSync('xtask_cli_');
+      root = tempRepo('cli');
       out = [];
       err = [];
       starter = FakeStarter();
     });
-
-    tearDown(() => root.deleteSync(recursive: true));
 
     void writeFile(String yaml) =>
         File(p.join(root.path, xtaskFileName)).writeAsStringSync(yaml);

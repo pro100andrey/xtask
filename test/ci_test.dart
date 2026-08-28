@@ -7,11 +7,12 @@ import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/report.dart';
 
+import 'helpers.dart';
+
 void main() {
   late Directory root;
 
-  setUp(() => root = Directory.systemTemp.createTempSync('xtask_ci_'));
-  tearDown(() => root.deleteSync(recursive: true));
+  setUp(() => root = tempRepo('ci'));
 
   void workflow(String name, String yaml) {
     File(p.join(root.path, '.github', 'workflows', name))

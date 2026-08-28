@@ -7,19 +7,15 @@ import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/primitives.dart';
 
+import 'helpers.dart';
+
 void main() {
   late Directory root;
   late List<String> logged;
 
   setUp(() {
-    root = Directory.systemTemp.createTempSync('xtask_remove_');
+    root = tempRepo('remove');
     logged = [];
-  });
-
-  tearDown(() {
-    if (root.existsSync()) {
-      root.deleteSync(recursive: true);
-    }
   });
 
   void given(List<String> paths) {
@@ -200,8 +196,7 @@ void main() {
     // deletes recursively, and §6's "a missing path is not an error" means a
     // path taken on trust would be followed without a word.
     test('an absolute path', () async {
-      final outside = Directory.systemTemp.createTempSync('xtask_outside_');
-      addTearDown(() => outside.deleteSync(recursive: true));
+      final outside = tempRepo('outside');
       expect(await remove([outside.path]), ExitCode.invalidFile);
       expect(outside.existsSync(), isTrue);
       expect(logged.join('\n'), contains('outside the repository'));

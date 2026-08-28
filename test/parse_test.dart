@@ -4,15 +4,7 @@ import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:yaml/yaml.dart';
 
-/// The message of the [XtaskFormatException] [body] throws.
-String refusal(void Function() body) {
-  try {
-    body();
-  } on XtaskFormatException catch (e) {
-    return e.toString();
-  }
-  fail('expected a refusal, got none');
-}
+import 'helpers.dart';
 
 void main() {
   group('a file that fits the types', () {
@@ -168,7 +160,7 @@ tasks: {}
     // raw text: by the time an XtaskFile exists, package:yaml has expanded
     // every alias into a copy and there is nothing left to detect.
     test('an anchor is refused', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile(
           'version: 1\ntasks:\n  base: &b {desc: shared}\n',
         ),
@@ -179,7 +171,7 @@ tasks: {}
 
     test('an alias is refused', () {
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile(
             'version: 1\ntasks:\n  a: {desc: x}\n  third: *b\n',
           ),
@@ -198,7 +190,7 @@ tasks: {}
     });
 
     test('a merge key is refused as itself, not as an unknown key', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile(
           'version: 1\ntasks:\n  b:\n    <<: {desc: y}\n',
         ),
@@ -230,7 +222,7 @@ tasks: {}
     });
 
     test('a non-breaking space is named, at the character itself', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile('version: 1\ntasks:\n\u00a0 a: {desc: x}\n'),
       );
       expect(message, contains('U+00A0'));
@@ -240,7 +232,7 @@ tasks: {}
 
     test('a stray byte-order mark is caught too', () {
       expect(
-        refusal(() => parseXtaskFile('version: 1\n\ufefftasks: {}\n')),
+        refusalOf(() => parseXtaskFile('version: 1\n\ufefftasks: {}\n')),
         contains('U+FEFF'),
       );
     });
@@ -259,11 +251,11 @@ tasks: {}
       final long =
           'tasks:\n'
           '${List.generate(20, (i) => '  t$i: {desc: x}').join('\n')}\n';
-      expect(quotedLines(refusal(() => parseXtaskFile(long))), 1);
+      expect(quotedLines(refusalOf(() => parseXtaskFile(long))), 1);
     });
 
     test('a missing `desc:` points at the task, not at its body', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile(
           'version: 1\ntasks:\n  first: {desc: fine}\n  broken:\n'
           '    run: [dart, analyze]\n    gate: [check]\n    needs: [first]\n',
@@ -275,7 +267,7 @@ tasks: {}
 
     test('a set that is not a list or a glob points at its name', () {
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile('version: 1\nsets:\n  s: 3\ntasks: {}\n'),
         ),
         contains('line 3'),
@@ -308,20 +300,22 @@ tasks: {}
   group('version', () {
     test('is required', () {
       expect(
-        refusal(() => parseXtaskFile('tasks: {}\n')),
+        refusalOf(() => parseXtaskFile('tasks: {}\n')),
         contains('`version:` is required'),
       );
     });
 
     test('must be an integer', () {
       expect(
-        refusal(() => parseXtaskFile('version: "1"\ntasks: {}\n')),
+        refusalOf(() => parseXtaskFile('version: "1"\ntasks: {}\n')),
         contains('must be an integer'),
       );
     });
 
     test('an unknown one is refused, not read as best it can be', () {
-      final message = refusal(() => parseXtaskFile('version: 2\ntasks: {}\n'));
+      final message = refusalOf(
+        () => parseXtaskFile('version: 2\ntasks: {}\n'),
+      );
       expect(message, contains('unknown `version: 2`'));
       expect(message, contains('reads version 1'));
     });
@@ -330,7 +324,7 @@ tasks: {}
       // Order, not cosmetics. `variables:` may well be an ordinary key of
       // whatever version 2 turns out to be, so complaining about it first
       // would answer in the terms of a dialect nobody claimed to write.
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile('version: 2\nvariables: {}\n'),
       );
       expect(message, contains('unknown `version: 2`'));
@@ -340,7 +334,7 @@ tasks: {}
 
   group('unknown keys', () {
     test('at the top level', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile('version: 1\nvariables: {}\n'),
       );
       expect(message, contains('unknown top-level key: `variables`'));
@@ -348,7 +342,7 @@ tasks: {}
     });
 
     test('in a task, listing what would have been known', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile('''
 version: 1
 tasks:
@@ -363,7 +357,7 @@ tasks:
     });
 
     test('are reported at the line they were written on', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile('''
 version: 1
 tasks:
@@ -379,13 +373,13 @@ tasks:
   group('a task', () {
     test('must say what it is for', () {
       expect(
-        refusal(() => parseXtaskFile('version: 1\ntasks:\n  a: {}\n')),
+        refusalOf(() => parseXtaskFile('version: 1\ntasks:\n  a: {}\n')),
         contains('has no `desc:`'),
       );
     });
 
     test('may not declare two bodies', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile('''
 version: 1
 tasks:
@@ -402,7 +396,7 @@ tasks:
 
     test('may not have an empty `run:` — there is nothing to start', () {
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile('''
 version: 1
 tasks:
@@ -417,7 +411,7 @@ tasks:
 
     test('may not write a list where a string belongs', () {
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile('''
 version: 1
 tasks:
@@ -432,7 +426,7 @@ tasks:
 
   group('env is text, and is not coerced into it', () {
     test('an unquoted number is refused rather than stringified', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile('''
 version: 1
 tasks:
@@ -470,7 +464,7 @@ tasks:
   group('sets', () {
     test('a glob set needs `include:`', () {
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile('''
 version: 1
 sets:
@@ -485,14 +479,16 @@ tasks: {}
 
     test('a set is a list, a glob or values, and nothing else', () {
       expect(
-        refusal(() => parseXtaskFile('version: 1\nsets:\n  s: 3\ntasks: {}\n')),
+        refusalOf(
+          () => parseXtaskFile('version: 1\nsets:\n  s: 3\ntasks: {}\n'),
+        ),
         contains('must be a list of paths, a mapping'),
       );
     });
 
     test('an unknown key in a glob set is refused', () {
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile('''
 version: 1
 sets:
@@ -514,7 +510,7 @@ tasks: {}
     // file and §5.3 has a code for that.
     test('an empty `desc:` is refused', () {
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile('version: 1\ntasks:\n  a: {desc: ""}\n'),
         ),
         contains('is empty'),
@@ -523,7 +519,7 @@ tasks: {}
 
     test('a `desc:` running to more than one line is refused', () {
       // §4.3 calls it one line, and `--list` prints it beside the task name.
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile(
           'version: 1\ntasks:\n  a:\n    desc: |\n      first\n      second\n',
         ),
@@ -533,7 +529,7 @@ tasks: {}
 
     test('an empty `do:` is refused', () {
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile('version: 1\ntasks:\n  a: {desc: x, do: ""}\n'),
         ),
         contains('a verb name is empty'),
@@ -542,7 +538,7 @@ tasks: {}
 
     test('an empty executable is refused', () {
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile(
             'version: 1\ntasks:\n  a: {desc: x, run: ["", analyze]}\n',
           ),
@@ -562,7 +558,7 @@ tasks: {}
 
     test('an empty name in `needs:` is refused', () {
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile(
             'version: 1\ntasks:\n  a: {desc: x, needs: [""]}\n',
           ),
@@ -577,7 +573,7 @@ tasks: {}
     // whatever the file said, while the caret pointed at whichever was written
     // second — a message and a pointer disagreeing about the same defect.
     test('`do:` before `run:` is reported in that order', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile(
           'version: 1\ntasks:\n  a:\n    desc: x\n    do: regen\n'
           '    run: [dart]\n',
@@ -588,7 +584,7 @@ tasks: {}
     });
 
     test('`run:` before `do:` is reported in that order', () {
-      final message = refusal(
+      final message = refusalOf(
         () => parseXtaskFile(
           'version: 1\ntasks:\n  a:\n    desc: x\n    run: [dart]\n'
           '    do: regen\n',
@@ -640,19 +636,22 @@ tasks: {}
 
   group('the document itself', () {
     test('an empty file says so, rather than parsing to nothing', () {
-      expect(refusal(() => parseXtaskFile('')), contains('the file is empty'));
+      expect(
+        refusalOf(() => parseXtaskFile('')),
+        contains('the file is empty'),
+      );
     });
 
     test('a file that is not a mapping is refused', () {
       expect(
-        refusal(() => parseXtaskFile('- a\n- b\n')),
+        refusalOf(() => parseXtaskFile('- a\n- b\n')),
         contains('the file must be a mapping'),
       );
     });
 
     test("malformed YAML keeps the parser's own complaint", () {
       expect(
-        refusal(() => parseXtaskFile('version: 1\n  bad indent\n')),
+        refusalOf(() => parseXtaskFile('version: 1\n  bad indent\n')),
         isNotEmpty,
       );
     });
@@ -1042,7 +1041,7 @@ tasks: {}
       // `timeout:` with no body is a limit on nothing and was refused, and
       // this read as a guarantee that was being made and was not.
       expect(
-        refusal(
+        refusalOf(
           () => parseXtaskFile(
             'version: 1\ntasks:\n'
             '  a: {desc: x, run: [echo, hi]}\n'

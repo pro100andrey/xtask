@@ -11,16 +11,16 @@ import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/primitives.dart';
 
+import 'helpers.dart';
+
 void main() {
   late Directory root;
   late List<String> logged;
 
   setUp(() {
-    root = Directory.systemTemp.createTempSync('xtask_dry_');
+    root = tempRepo('dry');
     logged = [];
   });
-
-  tearDown(() => root.deleteSync(recursive: true));
 
   void given(List<String> paths) {
     for (final path in paths) {

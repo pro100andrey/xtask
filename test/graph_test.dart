@@ -1,8 +1,9 @@
 import 'package:test/test.dart';
-import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/parse.dart';
+
+import 'helpers.dart';
 
 /// Parses a document whose tasks are written as `name: needs -> then`.
 ///
@@ -25,15 +26,6 @@ Plan planOf(String taskName, Map<String, String> tasks) {
     }
   });
   return planRun(parseXtaskFile(buffer.toString()), taskName);
-}
-
-String refusalOf(void Function() body) {
-  try {
-    body();
-  } on XtaskFormatException catch (e) {
-    return e.toString();
-  }
-  fail('expected a refusal, got none');
 }
 
 void main() {

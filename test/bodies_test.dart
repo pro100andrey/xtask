@@ -10,14 +10,15 @@ import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 
+import 'helpers.dart';
+
 void main() {
   group('a set is read again when its task is about to run', () {
     test('because a task before it may have made the files', () {
       // The whole reason there is no cache by default. A run that answered
       // from memory would hand the second task what the tree looked like
       // before the first one touched it.
-      final root = Directory.systemTemp.createTempSync('xtask_reread_');
-      addTearDown(() => root.deleteSync(recursive: true));
+      final root = tempRepo('reread');
       final resolver = BodyResolver(
         root: root.path,
         resolver: ExecutableResolver(
@@ -51,8 +52,7 @@ void main() {
     });
 
     test('and only a dry run, which runs nothing, may remember it', () {
-      final root = Directory.systemTemp.createTempSync('xtask_cached_');
-      addTearDown(() => root.deleteSync(recursive: true));
+      final root = tempRepo('cached');
       final resolver = BodyResolver(
         root: root.path,
         resolver: ExecutableResolver(
@@ -89,8 +89,7 @@ void main() {
 
   late Directory root;
 
-  setUp(() => root = Directory.systemTemp.createTempSync('xtask_resolution_'));
-  tearDown(() => root.deleteSync(recursive: true));
+  setUp(() => root = tempRepo('resolution'));
 
   ExecutableResolver posix() => ExecutableResolver(
     environment: const {'PATH': '/bin'},
