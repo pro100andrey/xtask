@@ -189,6 +189,23 @@ jobs:
       }
     });
 
+    test("and it is refused in the command line's own words", () {
+      // "What runs belongs in the task file" is the wrong sentence about a
+      // step that names a gate set correctly and would still exit before
+      // doing anything: it sends the reader to move a task that is already
+      // where it should be. The parser has the exact sentence, so it is
+      // quoted rather than guessed at.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze -j abc
+''');
+      final problem = check().problems.single;
+      expect(problem, contains('is not a number of jobs'));
+      expect(problem, isNot(contains('belongs in the task file')));
+    });
+
     test('a lone dash is a diagnostic, not a crash', () {
       // Reaching for a second character raised a `RangeError` out of
       // `--check-ci` rather than reporting anything.

@@ -105,14 +105,24 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   final problems = <String>[];
 
   for (final step in steps) {
-    final gate = _gateOf(step.command);
+    final read = _readStep(step.command);
+    final gate = read.gate;
     if (gate == null) {
-      // The duplicate list growing back, and it grows exactly like this:
-      // somebody adds `- run: dart analyze` instead of a task to the file.
+      final refused = read.refused;
       problems.add(
-        '${step.workflow}: job `${step.job}` runs `${step.command}`. What runs '
-        'belongs in the task file as a task in a gate set; a job runs the '
-        'gate, so that the two cannot drift apart',
+        refused == null
+            // The duplicate list growing back, and it grows exactly like this:
+            // somebody adds `- run: dart analyze` instead of a task to the
+            // file.
+            ? '${step.workflow}: job `${step.job}` runs `${step.command}`. '
+                  'What runs belongs in the task file as a task in a gate set; '
+                  'a job runs the gate, so that the two cannot drift apart'
+            // **The command line's own sentence, not a guess at it.** This
+            // step names a gate set correctly and would still exit before
+            // doing anything, and saying "what runs belongs in the task file"
+            // about it sends the reader to move a task that is already there.
+            : '${step.workflow}: job `${step.job}` runs `${step.command}`, '
+                  'which xtask refuses: $refused',
       );
       continue;
     }
@@ -158,7 +168,7 @@ bool _namesXtask(String word) =>
     word.endsWith('xtask.dart') ||
     word.endsWith('/xtask');
 
-/// The gate set [command] invokes, or null if it is not an invocation at all.
+/// What shell step [command] turns out to be.
 ///
 /// **Decided by parsing it, not by reading it a second way.** This used to walk
 /// the words itself — attached values against separate ones, `--jobs=` against
@@ -173,11 +183,12 @@ bool _namesXtask(String word) =>
 /// arguments after `--` have nothing to reach, because a gate set has no body.
 /// Each of those is a [Request] that is not a bare [RunTask], and none of them
 /// is spelled out here.
-String? _gateOf(String command) {
+({String? gate, String? refused}) _readStep(String command) {
+  const notAnInvocation = (gate: null, refused: null);
   final words = command.split(RegExp(r'\s+'));
   final at = words.indexWhere(_namesXtask);
   if (at == -1) {
-    return null;
+    return notAnInvocation;
   }
 
   final request = parseArguments(
@@ -188,8 +199,21 @@ String? _gateOf(String command) {
     processors: () => 1,
   );
   return switch (request) {
-    RunTask(:final task, arguments: []) => task,
-    _ => null,
+    RunTask(:final task, arguments: []) => (gate: task, refused: null),
+    // A gate set has no body, so the arguments reach nothing and the step
+    // exits 2. The command line does not refuse this — only the file can say
+    // whether the name has a body — so the sentence is written here.
+    RunTask() => (
+      gate: null,
+      refused:
+          'a gate set gathers tasks and runs nothing of its own, so there is '
+          'nothing for the arguments after `--` to be arguments to',
+    ),
+    // Everything the command line itself would turn away, in its own words.
+    ShowUsage(problem: final problem?) => (gate: null, refused: problem),
+    // A mode names a gate set without running it, which is a step doing
+    // something other than running a gate rather than a broken one.
+    _ => notAnInvocation,
   };
 }
 

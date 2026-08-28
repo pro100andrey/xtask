@@ -6,6 +6,37 @@ import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/report.dart';
 
 void main() {
+  group('the total is how much work there was', () {
+    test('and a fanned-out task contributes its members, not its row', () {
+      // It summed the ROWS, and a fanned-out task's row is how long you
+      // waited: four members of a second each at `-j 4` is a one-second row
+      // and four seconds of work. A plan of two such tasks then reported two
+      // seconds spent against two taken, which reads as a run that gained
+      // nothing from `-j` when it had done eight seconds of work in two.
+      final lines = timing(
+        {'a': const Duration(seconds: 1), 'b': const Duration(seconds: 1)},
+        const Duration(seconds: 2),
+        {
+          'a': (spent: const Duration(seconds: 4), members: 4),
+          'b': (spent: const Duration(seconds: 4), members: 4),
+        },
+        concurrent: true,
+      );
+      expect(lines.last, contains('8.0s spent'));
+      expect(lines.last, contains('2.0s taken'));
+    });
+
+    test('and a task with one member is its row, said once', () {
+      final lines = timing(
+        {'a': const Duration(seconds: 1), 'b': const Duration(seconds: 3)},
+        const Duration(seconds: 4),
+        const {},
+        concurrent: false,
+      );
+      expect(lines.last, 'total  4.0s');
+    });
+  });
+
   group('how long each task took', () {
     // A whole `Executor`, a temporary directory, a YAML parse, a plan, a fake
     // resolver and a fake process starter used to stand between this suite and

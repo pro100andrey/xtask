@@ -155,9 +155,27 @@ List<String> timing(
   // gets none — and then the column must not be widened for a word that is
   // not going to be printed.
   final sums = took.length > 1;
+
+  /// How much work [name] was, which is not how long it took when its members
+  /// ran together.
+  ///
+  /// **The total said it was how much work there was, and was not.** It summed
+  /// the task ROWS, and a fanned-out task's row is how long you waited — four
+  /// members of a second each at `-j 4` is a one-second row and four seconds
+  /// of work. So a plan of four such tasks reported four seconds spent against
+  /// four taken, which reads as a run that gained nothing from `-j` when it
+  /// had in fact done sixteen seconds of work in four.
+  ///
+  /// Where there was one member the row IS the work, which is the same
+  /// condition the per-row `over` line is printed under.
+  Duration workOf(String name) {
+    final done = work[name];
+    return done == null || done.members < 2 ? took[name]! : done.spent;
+  }
+
   final numbers = [
     ...took.values.map(asTime),
-    if (sums) asTime(took.values.reduce((a, b) => a + b)),
+    if (sums) asTime(took.keys.map(workOf).reduce((a, b) => a + b)),
   ];
   final width = _widest([...took.keys, if (sums) total]);
   final column = _widest(numbers);
