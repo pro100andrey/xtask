@@ -7,6 +7,8 @@
 /// which is the defect §1 exists to remove.
 library;
 
+import 'package:source_span/source_span.dart';
+
 import 'errors.dart';
 import 'gates.dart';
 import 'model.dart';
@@ -216,11 +218,7 @@ Plan planFor(XtaskFile file, String name) {
     // §8 reports this too, but a run must not quietly pick one of them: the
     // composite this replaced could not be ambiguous, and silently preferring
     // the gate set would run a plan the reader did not ask for.
-    throw XtaskFormatException(
-      '`$name` is both a gate set and a task, so there is no telling which '
-      'one this asks for. Rename one of them',
-      file.gates[name],
-    );
+    throw bothAGateSetAndATask(name, file.gates[name]);
   }
   final plan = planGate(file, name);
   if (plan.steps.isEmpty) {
@@ -276,6 +274,47 @@ Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
     }
   }
   return routes;
+}
+
+/// The refusal for a name the file gives to a gate set and to a task.
+///
+/// **One sentence, because a person types one name.** It was written out at
+/// three sites — the planner, the validator and the command line — in three
+/// wordings, and the third had drifted into being wrong: `--why check` on a
+/// colliding name answered "`check` is a gate set, not a task", which is false
+/// about a file that declares both.
+XtaskFormatException bothAGateSetAndATask(String name, SourceSpan? span) =>
+    XtaskFormatException(
+      '`$name` is both a gate set and a task, and a person types one name. '
+      'Rename one of them: a gate set is run by being named, so there is '
+      'nothing left for a task of the same name to be',
+      span,
+    );
+
+/// Refuses [name] unless it is a task `--why` can answer about.
+///
+/// **The same table the planner walks, asked from the other side.** The
+/// command line asked `gates.containsKey` first and had no arm for a name that
+/// is both, so a colliding name was reported as a gate set and not a task —
+/// about a file where it is also a task, and where every other mode says so.
+void refuseUnlessATask(XtaskFile file, String name) {
+  final isGate = file.gates.containsKey(name);
+  final isTask = file.tasks.containsKey(name);
+  if (isGate && isTask) {
+    throw bothAGateSetAndATask(name, file.gates[name]);
+  }
+  if (isGate) {
+    // Answerable, but not this question. What puts a gate set in a plan is
+    // that somebody typed it; what is IN it is `--gate-members`.
+    throw XtaskFormatException(
+      '`$name` is a gate set, not a task — a run reaches it because somebody '
+      'typed it. For what it runs, `--gate-members $name`',
+      file.gates[name],
+    );
+  }
+  if (!isTask) {
+    throw XtaskFormatException('there is no task called `$name`');
+  }
 }
 
 final class _Planner {

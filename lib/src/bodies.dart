@@ -14,8 +14,6 @@
 /// nothing on `PATH` answers to, an argument `cmd.exe` would reinterpret.
 library;
 
-import 'package:path/path.dart' as p;
-
 import 'boundary.dart';
 import 'context.dart';
 import 'errors.dart';
@@ -262,9 +260,11 @@ final class BodyResolver {
         if (implementation == null) {
           throw RunFailure(
             ExitCode.invalidFile,
-            'task `${task.name}` names the verb `$verb`, which this project '
-            'has not registered. The engine ships no project verbs: a '
-            'verb is a Dart function the project hands to `runXtask`',
+            unknownVerb(
+              task: task.name,
+              verb: verb,
+              known: verbs.keys.toSet(),
+            ),
           );
         }
         return ResolvedVerb(
@@ -428,9 +428,9 @@ final class BodyResolver {
           'there is no member for it to stand for',
         );
       }
-      return p.join(root, _withMember(written, member));
+      return underRoot(root, _withMember(written, member));
     }
-    return p.join(root, written);
+    return underRoot(root, written);
   }
 
   /// The members of set [name], as a failure of [task] when there are none.
@@ -494,7 +494,11 @@ final class BodyResolver {
     if (set == null) {
       throw RunFailure(
         ExitCode.invalidFile,
-        'task `${task.name}` names the set `$name`, which does not exist',
+        noSuchSet(
+          task: task.name,
+          key: task.each == name ? 'each' : 'all',
+          name: name,
+        ),
       );
     }
     return set;

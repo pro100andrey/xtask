@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/context.dart';
+import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/primitives.dart';
 
@@ -300,6 +301,34 @@ void main() {
       removeWouldDelete(['build'], root: root.path);
       expect(exists('build/out/a.o'), isTrue);
     });
+  });
+
+  group('a delete that could not happen', () {
+    test('is a sentence about the path, not about the verb', () async {
+      // Unguarded, a permission error came out through the general handler as
+      // "the project's own verb threw PathAccessException", which sends the
+      // reader to look at a verb the engine ships.
+      given(['build/inner/f.txt']);
+      final build = Directory(p.join(root.path, 'build'));
+      Process.runSync('chmod', ['500', build.path]);
+      addTearDown(() => Process.runSync('chmod', ['755', build.path]));
+
+      await expectLater(
+        remove(['build']),
+        throwsA(
+          isA<RunFailure>().having(
+            (f) => f.message,
+            'message',
+            allOf(contains('could not delete'), contains('build')),
+          ),
+        ),
+      );
+      expect(
+        logged.join('\n'),
+        isNot(contains('removed')),
+        reason: 'it announced a deletion that did not happen',
+      );
+    }, testOn: '!windows');
   });
 
   group('the closed list §6 promises', () {

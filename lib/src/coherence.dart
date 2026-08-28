@@ -26,6 +26,15 @@ final _bareMarker = RegExp(r'\$all(?![A-Za-z0-9_])');
 /// `$each` as a word of its own, rather than the start of a longer name.
 final _bareEach = RegExp(r'\$each(?![A-Za-z0-9_])');
 
+/// A `run:` body's argv, or nothing where the body is a verb or absent.
+///
+/// Both rules below open by asking this, and asked it in the same six lines
+/// each — one expression, twice, in one file.
+List<String> _argv(Task task) => switch (task.body) {
+  RunBody(:final argv) => argv,
+  _ => const <String>[],
+};
+
 /// Every way [task]'s own keys contradict each other, in the order found.
 ///
 /// Empty when they do not. Needs no filesystem, no graph and no other task —
@@ -33,7 +42,37 @@ final _bareEach = RegExp(r'\$each(?![A-Za-z0-9_])');
 List<XtaskFormatException> incoherences(Task task) => [
   ..._allMarker(task),
   ..._eachMarker(task),
+  ..._markerInExclusive(task),
 ];
+
+/// A marker written in `exclusive:`, where nothing can substitute it.
+///
+/// **Neither refused nor expanded, which is the one combination that says
+/// nothing.** Every other place a marker may be written is either substituted
+/// by the resolver or refused here; `exclusive:` was in neither list, so
+/// `exclusive: [lock-$each]` validated clean and reached the run as the
+/// literal text `lock-$each` for every member — a key that reads as a
+/// guarantee two things are kept apart while both hold the same token.
+///
+/// It cannot be substituted, either: a token is taken when the walk ADMITS a
+/// task, which is before its set has been read, so there is no member yet for
+/// one to stand for.
+Iterable<XtaskFormatException> _markerInExclusive(Task task) sync* {
+  final written = task.exclusive.where(
+    (token) => _bareMarker.hasMatch(token) || _bareEach.hasMatch(token),
+  );
+  if (written.isEmpty) {
+    return;
+  }
+  yield XtaskFormatException(
+    'task `${task.name}` writes `${written.first}` in `exclusive:`. A token is '
+    'held from the moment the task is admitted, which is before its set has '
+    'been read, so there is no member for a marker to stand for — and left as '
+    'text it makes every member hold the same token, which keeps nothing '
+    'apart. Name the thing they actually share',
+    task.span,
+  );
+}
 
 /// `each:` and its marker have to agree, and the marker has to END what it is
 /// written in.
@@ -46,10 +85,7 @@ List<XtaskFormatException> incoherences(Task task) => [
 /// and R1 exists to say this file is not one. Deriving a path is a verb's job.
 Iterable<XtaskFormatException> _eachMarker(Task task) sync* {
   final name = task.name;
-  final argv = switch (task.body) {
-    RunBody(:final argv) => argv,
-    _ => const <String>[],
-  };
+  final argv = _argv(task);
 
   if (argv.isNotEmpty && _bareEach.hasMatch(argv.first)) {
     yield XtaskFormatException(
@@ -132,10 +168,7 @@ Iterable<XtaskFormatException> _eachMarker(Task task) sync* {
 /// shell.
 Iterable<XtaskFormatException> _allMarker(Task task) sync* {
   final name = task.name;
-  final argv = switch (task.body) {
-    RunBody(:final argv) => argv,
-    _ => const <String>[],
-  };
+  final argv = _argv(task);
 
   // **The program is not an argument.** `run:` names an executable first, and
   // §5.4 resolves it on PATH before anything is substituted — so `$all` there

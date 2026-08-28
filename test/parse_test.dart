@@ -741,6 +741,19 @@ tasks: {}
       fail('expected a refusal, got none');
     }
 
+    test('and a marker in `exclusive:` is one of them', () {
+      // Neither refused nor expanded, which is the one combination that says
+      // nothing: it validated clean and reached the run as literal text, so
+      // every member held the same token and nothing was kept apart.
+      final message = refusalOf(
+        'version: 1\nsets:\n  pkgs: [a, b]\ntasks:\n'
+        r'  u: {desc: u, each: pkgs, in: $each, exclusive: [lock-$each],'
+        ' run: [echo, hi]}\n',
+      );
+      expect(message, contains('exclusive:'));
+      expect(message, contains('no member for a marker to stand for'));
+    });
+
     test('is refused with every contradiction at once', () {
       // **Three mistakes used to cost three rounds.** The first `throw` hid
       // the rest, so a person fixed one, reran, fixed the next, reran — the

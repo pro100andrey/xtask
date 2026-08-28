@@ -249,7 +249,12 @@ void main() {
         'version: 1\ntasks:\n  a: {desc: x, do: ghost}\n',
         verbs: {'remove', 'regen'},
       );
-      expect(report.toString(), contains('neither built in nor registered'));
+      // One sentence for the rule, wherever it is reported. The validator and
+      // the resolver had one each: this half — the list of known verbs — was
+      // the validator's, and the half saying what a verb IS was the
+      // resolver's. Each had learnt something the other had not.
+      expect(report.toString(), contains('has not registered'));
+      expect(report.toString(), contains('a Dart function'));
       expect(report.toString(), contains('regen, remove'));
     });
 

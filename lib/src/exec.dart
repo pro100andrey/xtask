@@ -313,19 +313,6 @@ final class Executor {
     return answer ?? ExitCode.success;
   }
 
-  /// What an exception that is not a [RunFailure] comes to.
-  ///
-  /// Named rather than swallowed: the type and the message are the whole of
-  /// the bug report, and which task was running is the half that says where to
-  /// look. Answers 1, because a body that threw is a body that did not do its
-  /// job — and code 3 stays reserved for §5.4 having proved a tool absent.
-  RunFailure _threw(Task task, Object thrown) => RunFailure(
-    ExitCode.taskFailed,
-    'task `${task.name}` threw ${thrown.runtimeType}: $thrown. A body that '
-    "raises rather than answering is either the project's own verb or a "
-    'fault in this engine; either way it is this task that stopped',
-  );
-
   /// One task, timed, and reported where the mode says to report it.
   Future<int?> _runOne(
     PlanStep step,
@@ -376,7 +363,9 @@ final class Executor {
         markers.close().forEach(say);
         rethrow;
       }
-      final failure = thrown is RunFailure ? thrown : _threw(step.task, thrown);
+      final failure = thrown is RunFailure
+          ? thrown
+          : bodyThrew(step.task, thrown);
       if (thrown is! RunFailure) {
         // **Into the section, not into the annotation.** A trace is the only
         // thing that locates a fault in this engine, and dropping it left the
@@ -484,7 +473,7 @@ final class Executor {
     if (resolved.isEmpty) {
       // A pure composite. Its `needs:` have already run; there is nothing of
       // its own to do, and saying so is more useful than silence.
-      (sink ?? log)('${task.name}: nothing of its own to run');
+      (sink ?? log)(nothingToRun(task.name));
       return;
     }
 

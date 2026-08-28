@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import 'boundary.dart';
 import 'context.dart';
+import 'errors.dart';
 import 'exit_codes.dart';
 import 'globs.dart';
 
@@ -79,7 +80,7 @@ Future<int> removeVerb(VerbContext context, {required String root}) async {
       return ExitCode.invalidFile;
     }
     for (final path in paths) {
-      await _delete(p.join(root, p.joinAll(p.posix.split(path))), context);
+      await _delete(underRoot(root, path), context);
     }
   }
   return ExitCode.success;
@@ -125,6 +126,10 @@ List<String> pathsMatching(String argument, {required String root}) {
     for (final variant in zeroOrMoreDirectories(argument))
       Glob(variant, context: p.posix),
   ];
+  // Built once. Asked with `[argument]`, this allocated a single-element list
+  // per directory and re-derived the pattern's shape inside every call.
+  final reach = Reach([argument]);
+
   final found = <String>[];
   void walk(Directory directory) {
     final List<FileSystemEntity> entries;
@@ -141,9 +146,7 @@ List<String> pathsMatching(String argument, {required String root}) {
       return;
     }
     for (final entry in entries) {
-      final relative = p.posix.joinAll(
-        p.split(p.relative(entry.path, from: root)),
-      );
+      final relative = relativePosix(entry.path, root: root);
       if (globs.any((glob) => glob.matches(relative))) {
         found.add(relative);
         // Not descended into: it is about to be deleted whole, and listing
@@ -156,7 +159,7 @@ List<String> pathsMatching(String argument, {required String root}) {
       // construction — 0.19s against 0.01s on eighteen thousand files, and a
       // repository is bigger than that. `sets` was taught this and this was
       // not, which is one rule living in two walkers.
-      if (entry is Directory && couldReachInto(relative, [argument])) {
+      if (entry is Directory && reach.into(relative)) {
         walk(entry);
       }
     }
@@ -186,17 +189,38 @@ Future<void> _delete(String path, VerbContext context) async {
       // indistinguishable from a `clean` that did nothing because its pattern
       // was wrong.
       return;
+    // **Said after it happened, and only if it did.** The line went out first,
+    // so a directory this process may not write reported `removed …` and then
+    // failed — a true-looking sentence about a file that is still there.
     case FileSystemEntityType.link:
+      await _deleting(path, () => Link(path).delete());
       context.log('removed link $path');
-      await Link(path).delete();
     case FileSystemEntityType.directory:
+      await _deleting(path, () => Directory(path).delete(recursive: true));
       context.log('removed $path/');
-      await Directory(path).delete(recursive: true);
     case FileSystemEntityType.file:
     case FileSystemEntityType.pipe:
     case FileSystemEntityType.unixDomainSock:
+      await _deleting(path, () => File(path).delete());
       context.log('removed $path');
-      await File(path).delete();
+  }
+}
+
+/// Runs [delete], turning a filesystem refusal into one this table has.
+///
+/// Unguarded, a permission error or a path another member removed first came
+/// out through the general handler as "the project's own verb threw
+/// PathAccessException", which sends the reader to look at a verb the engine
+/// ships. A path that is simply gone is already answered above.
+Future<void> _deleting(String path, Future<void> Function() delete) async {
+  try {
+    await delete();
+  } on FileSystemException catch (problem) {
+    throw RunFailure(
+      ExitCode.taskFailed,
+      '`remove` could not delete `$path`: '
+      '${problem.osError?.message ?? problem.message}',
+    );
   }
 }
 
@@ -229,7 +253,7 @@ List<String> removeWouldDelete(
       return const [];
     }
     for (final path in matched) {
-      final at = p.join(root, p.joinAll(p.posix.split(path)));
+      final at = underRoot(root, path);
       // §6 says a missing path is not an error, so a literal that is not there
       // is not something this would delete — and saying it would be a promise
       // about a file that does not exist.

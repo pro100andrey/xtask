@@ -63,7 +63,7 @@ Future<int> dryRun({
     }
 
     if (resolved.isEmpty) {
-      log('${step.task.name}: nothing of its own to run');
+      log(nothingToRun(step.task.name));
       continue;
     }
     for (final body in resolved) {

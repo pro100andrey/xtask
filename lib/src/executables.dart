@@ -58,6 +58,14 @@ final class ExecutableResolver {
 
   final p.Context _paths;
 
+  /// What each written name resolved to, this run.
+  ///
+  /// **The answer cannot change while a run is happening**, and finding it
+  /// costs a `stat` per directory on `PATH` — nineteen of them on an ordinary
+  /// machine, about 39µs. It was paid once per `run:` body, which under
+  /// `each:` is once per member, and again for every program a verb starts.
+  final _resolved = <String, String?>{};
+
   /// The default `PATHEXT`, used when the machine does not set a usable one.
   static const defaultPathExt = '.COM;.EXE;.BAT;.CMD';
 
@@ -83,7 +91,10 @@ final class ExecutableResolver {
   /// `dart.BAT`. NTFS does not care and the path starts either way, but
   /// `--dry-run` prints this string (§7), so it is behaviour rather than an
   /// implementation detail, and a test pins it.
-  String? resolve(String executable) {
+  String? resolve(String executable) =>
+      _resolved.putIfAbsent(executable, () => _find(executable));
+
+  String? _find(String executable) {
     if (executable.isEmpty) {
       return null;
     }

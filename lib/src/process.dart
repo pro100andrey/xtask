@@ -57,6 +57,16 @@ final class SystemProcessStarter implements ProcessStarter {
       await stdout.flush();
     }
 
+    // **Held, not dropped.** The two subscriptions below outlive the process:
+    // a grandchild that inherited the pipes keeps them open, so nothing closes
+    // them and the isolate stays alive with `main` already returned and the
+    // exit code already set. A run that killed a task reported its whole
+    // summary and then hung, and the shell saw nothing until something else
+    // killed IT.
+    //
+    // Bounding the wait was half the fix and is not enough: waiting less does
+    // not let go. These are cancelled on every path out.
+    final reading = <StreamSubscription<void>>[];
     Future<void>? collecting;
     final process = await Process.start(
       executable,
@@ -84,21 +94,40 @@ final class SystemProcessStarter implements ProcessStarter {
       // Both streams into one buffer, in arrival order, because that is what
       // a terminal would have shown. Kept as futures so the collecting is not
       // waited on before the process is.
+      //
+      // **Malformed bytes are passed through, not raised.** The strict decoder
+      // throws from inside the stream's data handler, which reaches the root
+      // zone as an UNCAUGHT error rather than as something the fan-out could
+      // catch: one Latin-1 byte from any task under `-j` ended the process at
+      // 255 with the section still open. These bytes are for a person to read,
+      // not for this engine to validate.
+      for (final stream in [process.stdout, process.stderr]) {
+        reading.add(
+          stream
+              .transform(const Utf8Decoder(allowMalformed: true))
+              .transform(const LineSplitter())
+              .listen(output),
+        );
+      }
       collecting = Future.wait([
-        process.stdout
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .forEach(output),
-        process.stderr
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .forEach(output),
+        for (final subscription in reading) subscription.asFuture<void>(),
       ]);
+    }
+
+    Future<void> stopReading() async {
+      for (final subscription in reading) {
+        await subscription.cancel();
+      }
     }
 
     if (timeout == null && until == null) {
       final code = await process.exitCode;
-      await collecting;
+      // **Bounded here too.** A task that backgrounds something keeps the
+      // pipes open for as long as the grandchild lives, and this waited for
+      // that with no limit — `sh -c 'sleep 20 &'` was billed twenty seconds
+      // under `-j 2` and none at all sequentially.
+      await collecting?.timeout(grace, onTimeout: () => const <void>[]);
+      await stopReading();
       return code;
     }
 
@@ -135,7 +164,8 @@ final class SystemProcessStarter implements ProcessStarter {
       if (until != null) until.then((_) => (code: null as int?, stopped: true)),
     ]);
     if (outcome.code != null) {
-      await collecting;
+      await collecting?.timeout(grace, onTimeout: () => const <void>[]);
+      await stopReading();
       return outcome.code!;
     }
     // **A process that has already finished was not stopped.** The two futures
@@ -143,7 +173,8 @@ final class SystemProcessStarter implements ProcessStarter {
     // threw away a real exit code and called a dead process killed.
     final finishedAnyway = alreadyFinished;
     if (finishedAnyway != null) {
-      await collecting;
+      await collecting?.timeout(grace, onTimeout: () => const <void>[]);
+      await stopReading();
       return finishedAnyway;
     }
     final stoppedEarly = outcome.stopped;
@@ -163,6 +194,7 @@ final class SystemProcessStarter implements ProcessStarter {
     // billing the wait as the task's own work. The same grace as the kill: a
     // moment for what was already written, and no longer.
     await collecting?.timeout(grace, onTimeout: () => const <void>[]);
+    await stopReading();
     return stoppedEarly ? interrupted : timedOut;
   }
 

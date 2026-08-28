@@ -2,6 +2,7 @@
 library;
 
 import 'boundary.dart';
+import 'context.dart';
 import 'errors.dart';
 import 'gates.dart';
 import 'graph.dart';
@@ -147,10 +148,7 @@ void _checkVerb(
   }
   problems.add(
     XtaskFormatException(
-      'task `${task.name}` names the verb `${body.verb}`, which is neither '
-      'built in nor registered by this project. The engine ships no project '
-      'verbs${knownVerbs.isEmpty ? '' : ' — known: '
-                '${(knownVerbs.toList()..sort()).join(', ')}'}',
+      unknownVerb(task: task.name, verb: body.verb, known: knownVerbs),
       task.span,
     ),
   );
@@ -170,8 +168,7 @@ void _checkSetReferences(
     }
     problems.add(
       XtaskFormatException(
-        'task `${task.name}` has `$key: $name`, and there is no set called '
-        '`$name`',
+        noSuchSet(task: task.name, key: key, name: name),
         task.span,
       ),
     );
@@ -273,14 +270,8 @@ void _checkNoNameCollision(
     if (!file.tasks.containsKey(gate)) {
       continue;
     }
-    problems.add(
-      XtaskFormatException(
-        '`$gate` is both a gate set and a task, and a person types one name. '
-        'Rename one of them: a gate set is run by being named, so there is '
-        'nothing left for a task of the same name to be',
-        file.tasks[gate]!.span,
-      ),
-    );
+    // The planner's sentence, not a third wording of it.
+    problems.add(bothAGateSetAndATask(gate, file.tasks[gate]!.span));
   }
 }
 

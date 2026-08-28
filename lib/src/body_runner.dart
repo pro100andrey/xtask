@@ -18,9 +18,8 @@ library;
 import 'dart:async';
 import 'dart:io' show ProcessException;
 
-import 'package:path/path.dart' as p;
-
 import 'bodies.dart';
+import 'boundary.dart';
 import 'budget.dart';
 import 'context.dart';
 import 'errors.dart';
@@ -258,7 +257,7 @@ final class BodyRunner {
               // which is a supported way to run xtask.
               workingDirectory == null
                   ? body.workingDirectory
-                  : p.join(bodies.root, workingDirectory),
+                  : underRoot(bodies.root, workingDirectory),
               sink,
             ),
           ),
@@ -275,7 +274,7 @@ final class BodyRunner {
         final member = body.member;
         say(
           '${body.task.name}${member == null ? '' : ' [$member]'}: '
-          '${[executable, ...body.arguments].join(' ')}',
+          '${commandLine(executable, body.arguments)}',
         );
         return starter.start(
           executable,

@@ -8,6 +8,16 @@ import 'errors.dart';
 import 'globs.dart';
 import 'model.dart';
 
+/// Why task [task]'s `[key]: [name]` names a set the file has not got.
+///
+/// One sentence for a rule two readers report: `--validate` when the file is
+/// read, the resolver when a run reaches the task.
+String noSuchSet({
+  required String task,
+  required String key,
+  required String name,
+}) => 'task `$task` has `$key: $name`, and there is no set called `$name`';
+
 /// Turning a named set into the strings a task is given.
 ///
 /// Sets exist so a task can iterate without a loop and pass file arguments
@@ -83,6 +93,8 @@ final class SetExpander {
         if (pattern.endsWith('/**')) pattern.substring(0, pattern.length - 3),
     ]);
 
+    final reach = Reach(set.include);
+
     final found = <String>[];
     void walk(Directory directory) {
       // Sorted here as well as at the end: a directory listing is in whatever
@@ -93,6 +105,14 @@ final class SetExpander {
         entries = directory.listSync(followLinks: false).toList()
           ..sort((a, b) => a.path.compareTo(b.path));
       } on FileSystemException catch (problem) {
+        // **Unless it simply went away.** A directory removed while this walk
+        // is inside it — by a `do: remove` running beside this task, or by
+        // anything else on the machine — has nothing left to be short of, and
+        // calling that "the file was refused" answers a machine race with a
+        // code documented as never being the code's fault.
+        if (!directory.existsSync()) {
+          return;
+        }
         // **Refused, not skipped.** A directory this process cannot read may
         // hold members, so passing over it makes the set quietly smaller than
         // the file says — a gate that examined fewer files and went green,
@@ -135,7 +155,7 @@ final class SetExpander {
         // `include: ['src/**/*.ts']` walked all of `node_modules` and all of
         // `.git` — once per set, per task, per run — to find nothing there by
         // construction.
-        if (entry is Directory && couldReachInto(relative, set.include)) {
+        if (entry is Directory && reach.into(relative)) {
           walk(entry);
         }
       }
@@ -221,8 +241,7 @@ final class SetExpander {
   /// string becomes a process argument, and an argument list that differs
   /// between platforms is a portability claim with a hole in it. Windows
   /// accepts `/` in paths; the tools this passes them to accept it too.
-  String _relative(String path) =>
-      p.posix.joinAll(p.split(p.relative(path, from: root)));
+  String _relative(String path) => relativePosix(path, root: root);
 
   /// An expansion that found nothing is an error, and there is no key to
   /// soften it (§4.2).

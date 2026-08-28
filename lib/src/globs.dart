@@ -110,60 +110,106 @@ bool _startsSegment(String pattern, int index, int open) {
   return open + _depthOf(pattern, index) > 0;
 }
 
-/// Whether anything under [directory] could match one of [patterns].
+/// What a set of include patterns can still reach, compiled once.
 ///
-/// Answered from a pattern's own shape, at the depth reached so far, so that a
-/// walk can stop descending instead of reading a subtree that cannot contain a
-/// match by construction.
+/// **Once per walk, not once per directory.** The predicate used to take a
+/// `List<String>` and re-derive everything from it on every directory it was
+/// asked about: split the pattern into segments, slice it, join the slice, and
+/// **compile a fresh `Glob`** — which costs more than matching with one. A
+/// pattern with no `**` compiles at every directory at every depth, so
+/// `packages/*/coverage` paid for a compile per directory in the tree.
 ///
-/// **Here, because both walkers need it and only one had it.** Include
-/// patterns were used to match and never to prune, so `include:
-/// ['src/**/*.ts']` read all of `node_modules` and all of `.git` — once per
-/// set, per task, per run — to find nothing there. `sets` was taught to prune;
-/// `do: remove` was not, and walked the whole tree for `build/**` on every
-/// invocation. On eighteen thousand files that is 0.19s against 0.01s, and a
-/// repository is bigger than that.
+/// Held as a value, each pattern's shape is worked out when the walk starts
+/// and the prefix globs are kept per depth.
+final class Reach {
+  Reach(List<String> patterns)
+    : _shapes = [for (final pattern in patterns) _Shape(pattern)];
+
+  final List<_Shape> _shapes;
+
+  /// Whether anything under [directory] could match one of the patterns.
+  ///
+  /// Answered from a pattern's own shape, at the depth reached so far, so that
+  /// a walk can stop descending instead of reading a subtree that cannot
+  /// contain a match by construction.
+  ///
+  /// **Both walkers need this and only one had it.** Include patterns were
+  /// used to match and never to prune, so `include: ['src/**/*.ts']` read all
+  /// of `node_modules` and all of `.git` — once per set, per task, per run —
+  /// to find nothing there. `sets` was taught to prune; `do: remove` was not,
+  /// and walked the whole tree for `build/**` on every invocation.
+  bool into(String directory) {
+    final depth = _depthOfPath(directory);
+    for (final shape in _shapes) {
+      if (shape.reaches(directory, depth)) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
+/// How many segments [path] has, without splitting it into a list.
 ///
-/// Three shapes say "keep going", and the walk is never narrower than the
-/// patterns are: a `**` at or before that depth, which can match any number of
-/// directories below; a brace, which does not split reliably by path segment;
-/// and a prefix that will not compile on its own, which tells us nothing and
-/// so must not be read as "no".
-///
-/// **`**` is not a whole segment.** `package:glob` lets it cross `/` wherever
-/// it appears, and `lib/**.dart` — the shape this repository's own example
-/// ships — is exactly that. Asking whether a segment IS `**` pruned `lib/src`
-/// out of it and lost every nested match, silently: the set stays non-empty,
-/// nothing is refused, and the gate checks fewer files and goes green. Ask
-/// whether a segment CONTAINS it.
-bool couldReachInto(String directory, List<String> patterns) {
-  final depth = p.posix.split(directory).length;
-  for (final pattern in patterns) {
-    if (pattern.contains('{')) {
-      return true;
-    }
-    final segments = p.posix.split(pattern);
-    if (segments.take(depth).any((segment) => segment.contains('**'))) {
-      return true;
-    }
-    if (segments.length <= depth) {
-      // The pattern names fewer segments than this directory has, so nothing
-      // inside it can match — the pattern ran out above here.
-      continue;
-    }
-    final prefix = segments.take(depth).join('/');
-    final Glob compiled;
-    try {
-      compiled = Glob(prefix, context: p.posix);
-    } on FormatException {
-      // A pattern valid as a whole whose prefix is not — an escape split
-      // across the slice. Unreadable here, so it is not read as "no": the
-      // alternative is a scanner exception out of a walk, past the exit codes.
-      return true;
-    }
-    if (compiled.matches(directory)) {
-      return true;
+/// A relative path out of `p.relative` is normalised, so counting separators
+/// is what splitting would have counted.
+int _depthOfPath(String path) {
+  var depth = 1;
+  for (var at = 0; at < path.length; at++) {
+    if (path.codeUnitAt(at) == 0x2F) {
+      depth++;
     }
   }
-  return false;
+  return depth;
+}
+
+/// One include pattern, with everything a prune decision needs worked out.
+final class _Shape {
+  _Shape(String pattern)
+    : // A brace does not split reliably by path segment, so it says "keep
+      // going" at every depth and nothing else needs computing.
+      _anywhere = pattern.contains('{'),
+      _segments = p.posix.split(pattern);
+
+  final bool _anywhere;
+  final List<String> _segments;
+
+  /// Prefix globs by depth. A null value is a prefix that would not compile on
+  /// its own — an escape split across the slice — which tells us nothing and
+  /// so must not be read as "no".
+  final _prefixes = <int, Glob?>{};
+
+  /// The first segment carrying a `**`, or -1.
+  ///
+  /// **`**` is not a whole segment.** `package:glob` lets it cross `/`
+  /// wherever it appears, and `lib/**.dart` — the shape this repository's own
+  /// example ships — is exactly that. Asking whether a segment IS `**` pruned
+  /// `lib/src` out of it and lost every nested match, silently: the set stays
+  /// non-empty, nothing is refused, and the gate checks fewer files and goes
+  /// green.
+  late final int _globstarAt = _segments.indexWhere((s) => s.contains('**'));
+
+  bool reaches(String directory, int depth) {
+    if (_anywhere) {
+      return true;
+    }
+    // A `**` at or before this depth can match any number of directories
+    // below, so everything under here is still in reach.
+    if (_globstarAt >= 0 && _globstarAt < depth) {
+      return true;
+    }
+    if (_segments.length <= depth) {
+      // The pattern names fewer segments than this directory has, so nothing
+      // inside it can match — the pattern ran out above here.
+      return false;
+    }
+    final compiled = _prefixes.putIfAbsent(depth, () {
+      try {
+        return Glob(_segments.take(depth).join('/'), context: p.posix);
+      } on FormatException {
+        return null;
+      }
+    });
+    return compiled == null || compiled.matches(directory);
+  }
 }

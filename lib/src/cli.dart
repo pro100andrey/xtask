@@ -207,18 +207,7 @@ Future<int> runCli(
         return ExitCode.success;
 
       case WhyTask(:final task):
-        if (file.gates.containsKey(task)) {
-          // Answerable, but not this question. What puts a gate set in a plan
-          // is that somebody typed it; what is IN it is `--gate-members`.
-          throw XtaskFormatException(
-            '`$task` is a gate set, not a task — a run reaches it because '
-            'somebody typed it. For what it runs, `--gate-members $task`',
-            file.gates[task],
-          );
-        }
-        if (!file.tasks.containsKey(task)) {
-          throw XtaskFormatException('there is no task called `$task`');
-        }
+        refuseUnlessATask(file, task);
         report.why(task, routesTo(file, task)).forEach(out);
         return ExitCode.success;
 

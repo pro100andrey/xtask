@@ -11,8 +11,13 @@
 ///
 /// **It is a projection of `model.dart`, checked against it.** The names of
 /// the keys are not written here — they are read from [taskKeys],
-/// [topLevelKeys], [globSetKeys] and [bodyKeys], which §4 makes the only list
-/// of them. What IS written here is one shape and one sentence per key, and
+/// [topLevelKeys], [globSetKeys], [valueSetKeys] and [bodyKeys], which §4
+/// makes the only list of them. The two set tables were named in this sentence
+/// and never actually read: they went out unguarded, and the emitted order
+/// proved it — `include, produced, exclude`, which is this file's table order
+/// rather than the model's.
+///
+/// What IS written here is one shape and one sentence per key, and
 /// [checkedProperties] refuses to emit anything if that table has drifted
 /// from the set it describes. So there are not two lists: there is one list,
 /// and a projection that cannot survive disagreeing with it.
@@ -99,7 +104,7 @@ Map<String, Map<String, Object?>> get _topLevel => {
 
 /// A named set, §4.2: a list of paths, a glob with exclusions, or values
 /// that are not paths at all.
-const _set = <String, Object?>{
+Map<String, Object?> get _set => {
   'oneOf': [
     {
       'type': 'array',
@@ -111,7 +116,7 @@ const _set = <String, Object?>{
       'type': 'object',
       'additionalProperties': false,
       'required': ['include'],
-      'properties': _globSet,
+      'properties': checkedProperties(globSetKeys, _globSet, 'glob set key'),
       'description':
           'Globs, expanded by the engine rather than by a shell, in a '
           'deterministic order.',
@@ -120,7 +125,7 @@ const _set = <String, Object?>{
       'type': 'object',
       'additionalProperties': false,
       'required': ['values'],
-      'properties': _valueSet,
+      'properties': checkedProperties(valueSetKeys, _valueSet, 'value set key'),
       'description':
           'Members that are not paths — flavours, platforms, SDK versions. '
           'Not checked against the repository root and never matched on disk.',

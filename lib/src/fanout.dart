@@ -88,7 +88,16 @@ final class Fanout {
   /// every change to `-j` had to keep in step by hand, and which `serial:`
   /// duly caught out.
   static bool couldOverlap(Task task, int concurrency) =>
-      concurrency > 1 && task.each != null && !task.serial;
+      concurrency > 1 &&
+      task.each != null &&
+      !task.serial &&
+      // **A token is held by the task, so its members cannot overlap either.**
+      // `Exclusive` is taken once, when the walk admits the task, and this did
+      // not consult it — so `exclusive: [browser]` kept every OTHER task away
+      // from the browser and then drove it from four members at once, which is
+      // the failure the key's own doc comment describes. Holding a token makes
+      // a task serial in its members, which is what the key promises.
+      task.exclusive.isEmpty;
 
   /// Runs every body of [task], and answers with what that came to.
   ///

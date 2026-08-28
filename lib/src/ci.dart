@@ -18,6 +18,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
+import 'boundary.dart';
 import 'errors.dart';
 import 'gates.dart';
 import 'model.dart';
@@ -73,16 +74,7 @@ final class CiReport {
 /// repository this question has an answer for — and answering 0 would let a
 /// gate that asks it pass after somebody deleted the CI file.
 CiReport checkCi(XtaskFile file, {required String root}) {
-  final directory = Directory(
-    p.join(
-      root,
-      p.joinAll(
-        p.posix.split(
-          workflowDirectory,
-        ),
-      ),
-    ),
-  );
+  final directory = Directory(underRoot(root, workflowDirectory));
   if (!directory.existsSync()) {
     throw XtaskFormatException(
       'there is no `$workflowDirectory` under `$root`, so there is nothing to '
@@ -92,8 +84,22 @@ CiReport checkCi(XtaskFile file, {required String root}) {
 
   final declared = file.gates.keys.toSet();
 
+  final List<FileSystemEntity> present;
+  try {
+    present = directory.listSync();
+  } on FileSystemException catch (problem) {
+    // Unguarded, this ended `--check-ci` on a stack trace and exit 255 — from
+    // the gate the README tells every project to run in CI, about the very
+    // directory it was pointed at. `existsSync` above is also a window: it can
+    // be true and this still fail.
+    throw XtaskFormatException(
+      'cannot read `$workflowDirectory` under `$root`: '
+      '${problem.osError?.message ?? problem.message}',
+    );
+  }
+
   final steps = <CiStep>[];
-  for (final workflow in directory.listSync().whereType<File>()) {
+  for (final workflow in present.whereType<File>()) {
     final name = p.basename(workflow.path);
     if (!name.endsWith('.yml') && !name.endsWith('.yaml')) {
       continue;
@@ -218,9 +224,20 @@ bool _namesXtask(String word) =>
 }
 
 Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
+  final String source;
+  try {
+    source = workflow.readAsStringSync();
+  } on FileSystemException catch (problem) {
+    // A workflow that is not UTF-8, or that this process may not open. Only
+    // `YamlException` was caught, so either ended the run at 255.
+    throw XtaskFormatException(
+      '$name: ${problem.osError?.message ?? problem.message}',
+    );
+  }
+
   final YamlNode document;
   try {
-    document = loadYamlNode(workflow.readAsStringSync());
+    document = loadYamlNode(source);
   } on YamlException catch (e) {
     throw XtaskFormatException('$name: ${e.message}');
   }

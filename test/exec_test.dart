@@ -236,6 +236,19 @@ void main() {
   });
 
   group('a `run:` body becomes one process, as argv', () {
+    test('and the echo renders it the way a failure will', () async {
+      // One run said `ls no such dir` while the failure two lines under it
+      // said `ls 'no such dir' ''` — the same three arguments, rendered as
+      // four and as three. `--dry-run` agrees with the second, so the plan and
+      // the transcript of one task contradicted each other.
+      await runFile(
+        'version: 1\ntasks:\n'
+            "  a: {desc: x, run: [dart, test, 'a b', '']}\n",
+        'a',
+      );
+      expect(logged.join('\n'), contains("test 'a b' ''"));
+    });
+
     test('argv is not a string anybody splits', () async {
       final code = await runFile(
         'version: 1\ntasks:\n'
@@ -2053,6 +2066,56 @@ void main() {
   });
 
   group('the real starter, against a real process', () {
+    test('a byte that is not UTF-8 is passed through, not raised', () async {
+      // The strict decoder throws from inside the stream's data handler, which
+      // reaches the root zone as an UNCAUGHT error rather than as something
+      // the fan-out could catch: one Latin-1 byte from any task under `-j`
+      // ended the process at 255 with the section still open. These bytes are
+      // for a person to read, not for this engine to validate.
+      final lines = <String>[];
+      final code = await const SystemProcessStarter().start(
+        '/bin/sh',
+        ['-c', r"printf 'na\xefve\n'"],
+        workingDirectory: Directory.current.path,
+        environment: const {},
+        runInShell: false,
+        output: lines.add,
+      );
+      expect(code, ExitCode.success);
+      expect(lines.single, contains('na'));
+      expect(lines.single, contains('ve'));
+    }, testOn: '!windows');
+
+    test(
+      'and a grandchild holding the pipes does not outlive the run',
+      () async {
+        // The two subscriptions were never held and never cancelled, so they
+        // kept the socket after the report had printed and the exit code was
+        // set: `main` had returned and the isolate stayed alive until the
+        // grandchild let go. Bounding the wait was half the fix — waiting less
+        // does not let go.
+        final began = DateTime.now();
+        final code =
+            await const SystemProcessStarter(
+              grace: Duration(milliseconds: 200),
+            ).start(
+              '/bin/sh',
+              ['-c', 'sleep 30 & echo started'],
+              workingDirectory: Directory.current.path,
+              environment: const {},
+              runInShell: false,
+              output: (_) {},
+            );
+        expect(code, ExitCode.success);
+        expect(
+          DateTime.now().difference(began),
+          lessThan(const Duration(seconds: 5)),
+          reason: 'it waited for the grandchild rather than for the child',
+        );
+      },
+      testOn: '!windows',
+    );
+
     // The one thing the fake cannot answer. Everything else above is about
     // which processes would start; this is about a process actually starting.
     test('runs it and reports its code', () async {

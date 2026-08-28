@@ -9,6 +9,25 @@ library;
 /// testable, typed, debuggable — and free to do whatever it needs.
 typedef Verb = Future<int> Function(VerbContext context);
 
+/// Why `do: [verb]` on task [task] is refused.
+///
+/// **Here rather than at either caller, for `boundary.dart`'s reason.** The
+/// resolver refuses this when a run reaches the task and `--validate` refuses
+/// it when the file is read, and the two had a sentence each — one of which
+/// had learnt to list the known verbs while the other had learnt to say what a
+/// verb IS. Each knew something the other did not, which is drift already
+/// under way.
+String unknownVerb({
+  required String task,
+  required String verb,
+  required Set<String> known,
+}) =>
+    'task `$task` names the verb `$verb`, which this project has not '
+    'registered. The engine ships no project verbs: a verb is a Dart function '
+    'the project hands to `runXtask`'
+    '${known.isEmpty ? '' : ' — known: '
+              '${(known.toList()..sort()).join(', ')}'}';
+
 /// Everything a verb is given (§9).
 final class VerbContext {
   const VerbContext({

@@ -93,6 +93,20 @@ void main() {
       expect(Fanout.couldOverlap(fannedOut(serial: true), 4), isFalse);
     });
 
+    test('`exclusive:` says the task holds something alone', () {
+      // A token is taken once, when the walk admits the task, so members
+      // running together drive the one browser four at a time — the failure
+      // the key's own doc comment describes. Holding a token makes a task
+      // serial in its members, which is what the key promises.
+      const holds = Task(
+        name: 'e2e',
+        desc: 'x',
+        each: 'pkgs',
+        exclusive: ['browser'],
+      );
+      expect(Fanout.couldOverlap(holds, 4), isFalse);
+    });
+
     test('and otherwise they can', () {
       expect(Fanout.couldOverlap(fannedOut(), 4), isTrue);
     });

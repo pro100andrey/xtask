@@ -58,3 +58,34 @@ String workingDirectoryLeavesRoot({
     'A working directory is relative to the root and stays there — a task '
     'that runs somewhere the repository does not own is not something this '
     'file can vouch for';
+
+/// [posixPath], written the way this machine writes paths, under [root].
+///
+/// **The file speaks POSIX and the machine may not.** Every path in
+/// `xtask.yaml` is written with `/`, because the file is committed and read on
+/// three platforms. Joining one onto a native root without re-splitting leaves
+/// a mixed separator — `C:\repo\packages/a` — which Windows accepts and
+/// `--dry-run` then prints back at a reader as the plan.
+///
+/// `remove` and `--check-ci` re-split; `in:` and a verb's own working
+/// directory did not, for no reason anybody wrote down. One function, so the
+/// platform question stops being restated.
+String underRoot(String root, String posixPath) => posixPath.isEmpty
+    ? root
+    : p.join(root, p.joinAll(p.posix.split(posixPath)));
+
+/// [path] relative to [root], written with `/` on every platform.
+///
+/// The other direction, and normalised for the same reason: this string
+/// becomes a process argument and a set member, and an argument list that
+/// differs between platforms is a portability claim with a hole in it.
+String relativePosix(String path, {required String root}) {
+  final relative = p.relative(path, from: root);
+  // **Split and rejoined only where that changes something.** On a POSIX host
+  // `p.relative` has already produced the answer, and reproducing its input
+  // exactly costs a list, a substring per segment and a second string — once
+  // per entry of every walk, which is tens of thousands on a real repository.
+  return p.style == p.Style.posix
+      ? relative
+      : p.posix.joinAll(p.split(relative));
+}

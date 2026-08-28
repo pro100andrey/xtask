@@ -301,6 +301,37 @@ tasks:
     });
   });
 
+  group('a workflow this process cannot read is a sentence, not a crash', () {
+    test('one that is not UTF-8', () {
+      // Only `YamlException` was caught, so a workflow with a stray byte ended
+      // `--check-ci` on a stack trace and exit 255 — from the gate the README
+      // tells every project to run in CI, about the very file it was pointed
+      // at.
+      File(p.join(root.path, '.github', 'workflows', 'bad.yml'))
+        ..parent.createSync(recursive: true)
+        ..writeAsBytesSync([
+          ...'jobs:\n  a:\n    steps:\n      - run: echo '.codeUnits,
+          0xFF,
+          0xFE,
+          0x0A,
+        ]);
+      expect(check, throwsA(isA<XtaskFormatException>()));
+    });
+
+    test('and a directory that cannot be listed', () {
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+''');
+      final directory = Directory(p.join(root.path, '.github', 'workflows'));
+      Process.runSync('chmod', ['000', directory.path]);
+      addTearDown(() => Process.runSync('chmod', ['755', directory.path]));
+      expect(check, throwsA(isA<XtaskFormatException>()));
+    }, testOn: '!windows');
+  });
+
   group('a question with no answer is refused, not answered 0', () {
     // Both of these would otherwise let a gate task asking this pass after
     // somebody deleted the CI file.

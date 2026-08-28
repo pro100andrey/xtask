@@ -340,6 +340,14 @@ int _widest(Iterable<String> of) =>
 
 String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
 
+/// What a task with no body of its own says.
+///
+/// A pure composite: its `needs:` have already run and there is nothing left
+/// to do, which is more useful said than left as silence. Written out in the
+/// executor and in the dry run, two modules, while this one is the declared
+/// home of what the tool says to a person.
+String nothingToRun(String task) => '$task: nothing of its own to run';
+
 /// How a [Resolved] body is written down: what runs, where, and with what.
 ///
 /// Two callers need it: `--dry-run` prints it, and a failure prints it so that
@@ -362,12 +370,12 @@ List<String> describe(Resolved body, {bool header = true}) {
       if (member == null) body.task.name else '${body.task.name}  [$member]',
     switch (body) {
       ResolvedProcess(:final executable, :final arguments) =>
-        '  run  ${_command(executable, arguments)}',
+        '  run  ${commandLine(executable, arguments)}',
       // The name written in the file, not the Dart function it found: a verb
       // is the project's, and `Closure: (VerbContext) => Future<int>` tells
       // the reader nothing they can check.
       ResolvedVerb(:final verb, :final arguments) =>
-        '  do   ${_command(verb, arguments)}',
+        '  do   ${commandLine(verb, arguments)}',
     },
     '  in   ${body.workingDirectory}',
     // **The task's own `env:`, not the environment the body will see.** The
@@ -384,7 +392,14 @@ List<String> describe(Resolved body, {bool header = true}) {
   ];
 }
 
-String _command(String head, List<String> arguments) =>
+/// [head] and [arguments], written so a person can check them.
+///
+/// **Public, because a run echoes the same line it later reports.** The echo
+/// built its own — a bare `join(' ')` — so one run said `ls no such dir` while
+/// the failure under it said `ls 'no such dir' ''`: the same three arguments,
+/// rendered as four and as three, two lines apart. `--dry-run` agrees with the
+/// second, so the plan and the transcript of one task contradicted each other.
+String commandLine(String head, List<String> arguments) =>
     [head, ...arguments].map(_quoted).join(' ');
 
 /// [word] written so that its edges are visible.
