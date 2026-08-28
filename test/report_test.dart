@@ -205,7 +205,7 @@ tasks:
   group('--check-ci', () {
     CiReport report({
       List<({CiStep step, String gate})> invocations = const [],
-      List<String> problems = const [],
+      List<CiProblem> problems = const [],
       List<String> unrun = const [],
     }) => CiReport(
       invocations: invocations,
@@ -245,9 +245,62 @@ tasks:
       // The problems are the answer then; a note about who runs what would
       // bury them.
       expect(
-        workflow(report(problems: const ['a job runs a command'])),
+        workflow(
+          report(
+            problems: const [
+              RunsACommand(CiStep('ci.yml', 'analyze', 'dart analyze')),
+            ],
+          ),
+        ),
         isEmpty,
       );
+    });
+  });
+
+  group('why a step is not a job running a gate set', () {
+    const step = CiStep('ci.yml', 'analyze', 'dart run :xtask check -j abc');
+
+    test('a command in the workflow is the duplicate list growing back', () {
+      final lines = refusals(
+        const CiReport(
+          invocations: [],
+          problems: [RunsACommand(step)],
+          unrun: [],
+        ),
+      );
+      expect(lines.single, startsWith('ci.yml: job `analyze` runs `dart run'));
+      expect(lines.single, contains('belongs in the task file'));
+    });
+
+    test('and one the command line refuses is quoted, not guessed at', () {
+      // "What runs belongs in the task file" is the wrong sentence about a
+      // step that names a gate set correctly and would still exit before doing
+      // anything: it sends the reader to move a task that is already there.
+      final lines = refusals(
+        const CiReport(
+          invocations: [],
+          problems: [
+            RunsSomethingRefused(step, '`-j abc` is not a number of jobs'),
+          ],
+          unrun: [],
+        ),
+      );
+      expect(lines.single, contains('which xtask refuses'));
+      expect(lines.single, contains('is not a number of jobs'));
+    });
+
+    test('and an undeclared gate set names the ones that are', () {
+      final lines = refusals(
+        const CiReport(
+          invocations: [],
+          problems: [
+            RunsAnUndeclaredGate(step, 'chekc', {'release', 'check'}),
+          ],
+          unrun: [],
+        ),
+      );
+      expect(lines.single, contains('`chekc`'));
+      expect(lines.single, contains('Declared: check, release'));
     });
   });
 

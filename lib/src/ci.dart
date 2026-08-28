@@ -40,6 +40,50 @@ final class CiStep {
   final String command;
 }
 
+/// Why a shell step is not a job running a gate set.
+///
+/// **A value, not a sentence.** This module computed the prose as well as the
+/// finding, while `report.dart` is the declared home of everything the tool
+/// says to a person — and built the same `workflow: job … runs` prefix a
+/// fourth time for the one case that is not a problem. A reason that carries
+/// its own facts cannot be put into the wrong sentence.
+sealed class CiProblem {
+  const CiProblem(this.step);
+
+  /// The step it is about.
+  final CiStep step;
+}
+
+/// A step that names a command rather than a gate set.
+///
+/// The duplicate list growing back, and it grows exactly like this: somebody
+/// adds `- run: dart analyze` instead of a task to the file.
+final class RunsACommand extends CiProblem {
+  const RunsACommand(super.step);
+}
+
+/// A step the command line itself would turn away.
+///
+/// It may name a gate set correctly and still exit before doing anything —
+/// `-j abc`, a trailing `-j`, arguments after `--` for a gate set that has no
+/// body. [refusal] is the command line's own sentence about it.
+final class RunsSomethingRefused extends CiProblem {
+  const RunsSomethingRefused(super.step, this.refusal);
+
+  final String refusal;
+}
+
+/// A step naming a gate set this file does not declare — so the job runs
+/// nothing.
+final class RunsAnUndeclaredGate extends CiProblem {
+  const RunsAnUndeclaredGate(super.step, this.gate, this.declared);
+
+  final String gate;
+
+  /// The gate sets the file does declare, for the message to name.
+  final Set<String> declared;
+}
+
 /// What `--check-ci` found.
 final class CiReport {
   const CiReport({
@@ -52,7 +96,7 @@ final class CiReport {
   final List<({CiStep step, String gate})> invocations;
 
   /// Steps that are not one, and gates named by one that is not declared.
-  final List<String> problems;
+  final List<CiProblem> problems;
 
   /// Gate sets no job runs.
   ///
@@ -108,7 +152,7 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   }
 
   final invocations = <({CiStep step, String gate})>[];
-  final problems = <String>[];
+  final problems = <CiProblem>[];
 
   for (final step in steps) {
     final read = _readStep(step.command);
@@ -117,28 +161,13 @@ CiReport checkCi(XtaskFile file, {required String root}) {
       final refused = read.refused;
       problems.add(
         refused == null
-            // The duplicate list growing back, and it grows exactly like this:
-            // somebody adds `- run: dart analyze` instead of a task to the
-            // file.
-            ? '${step.workflow}: job `${step.job}` runs `${step.command}`. '
-                  'What runs belongs in the task file as a task in a gate set; '
-                  'a job runs the gate, so that the two cannot drift apart'
-            // **The command line's own sentence, not a guess at it.** This
-            // step names a gate set correctly and would still exit before
-            // doing anything, and saying "what runs belongs in the task file"
-            // about it sends the reader to move a task that is already there.
-            : '${step.workflow}: job `${step.job}` runs `${step.command}`, '
-                  'which xtask refuses: $refused',
+            ? RunsACommand(step)
+            : RunsSomethingRefused(step, refused),
       );
       continue;
     }
     if (!declared.contains(gate)) {
-      problems.add(
-        '${step.workflow}: job `${step.job}` runs the gate set `$gate`, which '
-        'this file does not declare — so the job runs nothing'
-        '${declared.isEmpty ? '' : '. Declared: '
-                  '${(declared.toList()..sort()).join(', ')}'}',
-      );
+      problems.add(RunsAnUndeclaredGate(step, gate, declared));
       continue;
     }
     invocations.add((step: step, gate: gate));

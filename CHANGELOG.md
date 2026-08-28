@@ -2,6 +2,115 @@
 
 ## Unreleased
 
+### The command line is parsed in one place
+
+`--check-ci` exists so that a workflow and the task file cannot hold two lists
+of what runs, and it did that job while keeping a second copy of the command
+line's own grammar: which flags take a value, how one is joined to it, what a
+second operand means. Both copies had already been wrong — `-j4` swallowed the
+gate set after it, and a lone `-` raised a `RangeError` out of `--check-ci`.
+
+A workflow step is now checked by being handed to the parser the command line
+uses, and the answer is asked one question. Every spelling `xtask` accepts is
+one a workflow may be written in, without the checker learning any of them; a
+step the command line would refuse is reported in the command line's own words,
+rather than as "what runs belongs in the task file" — which is the wrong
+sentence about a step that names a gate set correctly and would still exit
+before doing anything.
+
+### Endings the exit code table does not have
+
+Six paths could end the process at `255`, which is not a code §5.3 defines:
+a directory a set's patterns reach that cannot be listed, a workflow that is
+not UTF-8, a `.github/workflows` that cannot be listed, a task printing a byte
+that is not UTF-8 while its output is piped, a pattern `do: remove` could not
+compile, and a `remove` that could not delete. Each is now a sentence and a
+code the table has.
+
+A run that killed a task could also fail to end at all: the two subscriptions
+collecting its output were never cancelled, so the process stayed alive after
+the summary had printed and the exit code was set — until a grandchild let the
+pipes go, which for a backgrounded server is never.
+
+### `exclusive:` keeps a task's own members apart
+
+A token is held from the moment a task is admitted, and the fan-out did not
+consult it, so `exclusive: [chromedriver]` kept every other task away from the
+browser and then drove it from four members at once. A task holding a token now
+runs its own `each:` members one at a time.
+
+**Behaviour change:** such a task is slower under `-j` than it was, and was
+previously not keeping the promise the key makes.
+
+### `--dry-run` says what `remove` would delete
+
+Every other body is fully worked out by the time a plan describes it — a `run:`
+shows the argv the child will be handed. The one verb this engine ships is the
+one that deletes recursively, and its block showed the pattern. It now lists
+what is on disk under the block, without running the verb, and says so out loud
+when there is nothing there.
+
+### Every contradiction in a task, in one refusal
+
+`each:` without `$each`, `$all` inside a larger word, `all:` beside `each:` —
+the rules that ask whether a task's keys agree with each other are their own
+module now, and they answer with a list. A file with four such mistakes cost
+four rounds of fix-and-rerun; it is one refusal naming all four. A marker
+written in `exclusive:` is one of them, which was previously neither refused
+nor substituted.
+
+### `--validate` accepts a file the run accepts
+
+A task whose whole content is `then:` is reached, runs nothing of its own, and
+then runs what follows — which is something. The validator called it a name
+with a description attached, so a file that ran green failed the gate the
+README tells every project to adopt.
+
+### Faster
+
+Measured on a synthetic repository of 15,000 files and a task file of 4,000:
+
+- `--validate` on a deep graph: **55s → 0.11s**. It plans every task, and the
+  planner's open-task stack was a list whose membership test is a scan, so one
+  plan of depth *d* cost *d*², and *n* of them cost *n*³. A plan that succeeded
+  also covers everything it reached, so those are not planned again.
+- `--dry-run` of a gate whose tasks share a glob set: **6× faster.** Nothing
+  runs between two steps of a dry run, so the tree cannot have changed; a real
+  run still re-reads, because a task before this one may have made the files.
+- A set written `packages/{a,b}/**`: **4× faster.** Any brace switched pruning
+  off entirely, so an ordinary monorepo shape read all of `node_modules` and
+  `.git`. Only a brace group spanning a `/` does that now.
+- `do: remove` with four patterns: **2× faster** — one walk of the tree rather
+  than one per pattern.
+- Glob sets generally: **14%**, from compiling each pattern's prune shape once
+  per walk instead of once per directory, and from carrying each entry's
+  relative path down the walk rather than deriving it from the absolute one.
+- `do: remove` with a glob was not pruned at all and read the whole tree on
+  every invocation.
+
+### Also
+
+- The engine answers `--why` about a name the file gives to both a gate set and
+  a task by saying so, instead of "`x` is a gate set, not a task" — which was
+  false about that file, and contradicted by every other mode.
+- An unknown verb and a set that does not exist are reported in one sentence
+  each, wherever they are found. The two copies had each learnt something the
+  other had not.
+- The timing total says how much work there was, which for a fanned-out task is
+  its members and not its row.
+- An empty set feeding `remove` is told what shape it wants: a list of literal
+  patterns, which is never empty, rather than a glob that matches the build
+  output once and nothing afterwards.
+- A `run:` body's echo and the failure under it render argv the same way. One
+  run said `ls no such dir` and then `ls 'no such dir' ''`.
+- `interruptible:` is refused on a task with no body, as `timeout:` already was.
+- `xtask --keep-going` with no task named says so, instead of ending a sentence
+  mid-way.
+- `--emit-schema` applies its own drift guard to the keys of a set, which it
+  documented and did not do.
+- `CONTEXT.md` and `docs/adr/` record the glossary and the eight decisions that
+  were written only in code comments.
+
 ### Gate sets are declared
 
 `gates: [check, release]` at the top of the file, names only. A gate set used

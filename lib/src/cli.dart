@@ -197,7 +197,7 @@ Future<int> runCli(
         final found = checkCi(file, root: root);
         report.workflow(found).forEach(out);
         if (!found.ok) {
-          found.problems.forEach(err);
+          report.refusals(found).forEach(err);
           return ExitCode.invalidFile;
         }
         return ExitCode.success;

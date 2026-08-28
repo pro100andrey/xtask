@@ -322,6 +322,44 @@ List<String> workflow(CiReport report) {
 String _ran(String workflow, String job, String gate) =>
     '$workflow: job `$job` runs the gate set `$gate`';
 
+/// `--check-ci`: why each step is not a job running a gate set.
+///
+/// The prefix — which workflow, which job, what it runs — is written once
+/// here, for the three refusals and for the one line above that is not a
+/// refusal at all.
+List<String> refusals(CiReport report) => [
+  for (final problem in report.problems) _about(problem.step, _why(problem)),
+];
+
+String _about(CiStep step, String what) =>
+    '${step.workflow}: job `${step.job}` $what';
+
+String _why(CiProblem problem) => switch (problem) {
+  RunsACommand(:final step) =>
+    'runs `${step.command}`. What runs belongs in the task file as a task in '
+        'a gate set; a job runs the gate, so that the two cannot drift apart',
+  // **The command line's own sentence, not a guess at it.** Such a step may
+  // name a gate set correctly and still exit before doing anything, and
+  // "what runs belongs in the task file" about it sends the reader to move a
+  // task that is already where it should be.
+  RunsSomethingRefused(:final step, :final refusal) =>
+    'runs `${step.command}`, which xtask refuses: $refusal',
+  RunsAnUndeclaredGate(:final gate, :final declared) =>
+    'runs the gate set `$gate`, which this file does not declare — so the job '
+        'runs nothing'
+        '${declared.isEmpty ? '' : '. Declared: ${_names(declared)}'}',
+};
+
+/// [of], sorted and joined.
+///
+/// Not shared beyond this file on purpose. Three modules render a list of gate
+/// set names, and they are three different questions — a task naming an
+/// undeclared one, a workflow step naming one, `--gate-members` given one —
+/// so what they have in common is a one-line idiom rather than a rule. A
+/// formatter reaching into the type module to save that line would be putting
+/// message rendering where the shapes live.
+String _names(Iterable<String> of) => (of.toList()..sort()).join(', ');
+
 /// `--validate`, when there is nothing to say.
 ///
 /// Not silence. Silence is what a gate that never ran also prints, and naming

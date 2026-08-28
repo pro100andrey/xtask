@@ -5,6 +5,7 @@ import 'package:test/test.dart';
 import 'package:xtask/src/ci.dart';
 import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/parse.dart';
+import 'package:xtask/src/report.dart';
 
 void main() {
   late Directory root;
@@ -28,6 +29,13 @@ tasks:
 
   CiReport check([String yaml = lake]) =>
       checkCi(parseXtaskFile(yaml), root: root.path);
+
+  /// What a person is told about the steps that are not an invocation.
+  ///
+  /// The findings are values; the sentences are `report.dart`'s, which is the
+  /// declared home of everything the tool says. Asserting the rendered line is
+  /// asserting what somebody reads.
+  List<String> said([String yaml = lake]) => refusals(check(yaml));
 
   group('a job runs a gate set, and nothing else', () {
     test('an invocation is recognised and reported', () {
@@ -71,8 +79,8 @@ jobs:
 ''');
       final report = check();
       expect(report.ok, isFalse);
-      expect(report.problems.single, contains('dart analyze --fatal-infos'));
-      expect(report.problems.single, contains('job `analyze`'));
+      expect(said().single, contains('dart analyze --fatal-infos'));
+      expect(said().single, contains('job `analyze`'));
     });
 
     test('and so is a step that runs a gate and then something else', () {
@@ -88,7 +96,7 @@ jobs:
 ''');
       final report = check();
       expect(report.ok, isFalse);
-      expect(report.problems.single, contains('&&'));
+      expect(said().single, contains('&&'));
     });
 
     test('flags after the name are allowed; a second operand is not', () {
@@ -104,7 +112,7 @@ jobs:
       - run: dart run :xtask ci-web --keep-going
 ''');
       final report = check();
-      expect(report.problems, isEmpty, reason: report.problems.join('\n'));
+      expect(report.problems, isEmpty, reason: said().join('\n'));
       expect(report.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
     });
 
@@ -122,7 +130,7 @@ jobs:
       - run: dart run :xtask --jobs=2 ci-web
 ''');
       final report = check();
-      expect(report.problems, isEmpty, reason: report.problems.join('\n'));
+      expect(report.problems, isEmpty, reason: said().join('\n'));
       expect(report.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
     });
 
@@ -201,7 +209,7 @@ jobs:
     steps:
       - run: dart run :xtask ci-analyze -j abc
 ''');
-      final problem = check().problems.single;
+      final problem = said().single;
       expect(problem, contains('is not a number of jobs'));
       expect(problem, isNot(contains('belongs in the task file')));
     });
@@ -247,8 +255,8 @@ jobs:
 ''');
       final report = check();
       expect(report.ok, isFalse);
-      expect(report.problems.single, contains('ci-analize'));
-      expect(report.problems.single, contains('ci-analyze'));
+      expect(said().single, contains('ci-analize'));
+      expect(said().single, contains('ci-analyze'));
     });
 
     test("how xtask is reached is the project's business", () {

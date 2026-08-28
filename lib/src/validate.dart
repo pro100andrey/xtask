@@ -184,9 +184,22 @@ void _checkSetReferences(
 /// one entry point never would.
 void _checkGraph(XtaskFile file, List<XtaskFormatException> problems) {
   final seen = <String>{};
+  // **What a plan that succeeded has already walked.** Planning a task a
+  // successful plan reached walks a subgraph of what was just walked, so it
+  // can only succeed too — nothing is lost by skipping it, and the walk of an
+  // n-task chain stops being n walks of it. A four-thousand task file spent
+  // fifty-five seconds here.
+  //
+  // Still in declaration order, because [ValidationReport] promises problems
+  // in the order they were found and seeding from the entry points instead
+  // would report the same ones in a different one.
+  final covered = <String>{};
   for (final name in file.tasks.keys) {
+    if (covered.contains(name)) {
+      continue;
+    }
     try {
-      planRun(file, name);
+      covered.addAll(planRun(file, name).names);
     } on XtaskFormatException catch (problem) {
       // The same ring is reachable from every task on it, so it would
       // otherwise be reported once per member.

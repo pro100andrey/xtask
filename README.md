@@ -232,6 +232,25 @@ analyze
 ...
 ```
 
+A `do: remove` block goes further and says what it would delete. The one verb
+this engine ships is the one that deletes recursively, and a plan showing only
+the pattern told you least about the operation you most need to check. In a
+project whose file has a `clean` task built on the `remove` verb:
+
+```shell
+$ xtask --dry-run clean
+plan: clean
+clean
+  do   remove build coverage **/*.tmp
+  in   /home/you/that-project
+  del  build
+  del  coverage
+  del  src/a.tmp
+```
+
+Nothing is run to work that out — it is the reading the verb itself does — and
+a tree that is already clean says so rather than printing nothing.
+
 Because it resolves them, `--dry-run` answers `3` when a program is not
 installed yet, naming the one it could not find. That is the same answer a real
 run would give, one step earlier — which is worth knowing before you read it as
@@ -338,7 +357,10 @@ which is the whole of what that flag says.
 whose members must not overlap — six packages sharing one `~/.pub-cache`, or
 one git index, where `git add` fails outright rather than waiting.
 `exclusive: [chromedriver]` is the same fact between tasks: two suites the
-graph calls independent may still drive the one browser on the machine. Both
+graph calls independent may still drive the one browser on the machine — and
+because the token is held by the task, a task that holds one runs its own
+`each:` members one at a time as well. Naming a browser and then driving it
+from four members at once would be the guarantee said and not kept. Both
 can only ever make a run slower, never change its result, which is the right
 property for something every machine reads — and getting them wrong makes a
 run **flaky**, which is a different kind of wrong from making it slow. A number
@@ -468,7 +490,7 @@ registry will not accept that version again.
 | `then` | continuations, run **after** this task's body |
 | `gate` | the gate sets this task belongs to |
 | `serial` | this task's `each:` members must not overlap, whatever `-j` says |
-| `exclusive` | tokens this task holds alone while it runs |
+| `exclusive` | tokens this task holds alone while it runs — which makes its own `each:` members serial too |
 | `interruptible` | a failure elsewhere may stop this task where it stands |
 | `timeout` | seconds a `run:` body may take before it is killed — per member under `each:` |
 
@@ -545,6 +567,13 @@ sets:
   flavours:
     values: [dev, staging, prod]
 ```
+
+`**/` means **none or more** directories, as bash and git read it — so
+`packages/**/*.lake` finds `packages/x.lake` too. That is two readings of one
+pattern, and each `**/` doubles them, so a pattern carrying more than a handful
+is refused rather than matched: every reading becomes a glob compared against
+every file the walk touches, and eight of them is two hundred and fifty-six
+comparisons per file.
 
 `values:` is a declaration, not decoration. Every other kind of set holds
 paths, and the engine treats them as paths — it refuses one that reaches
