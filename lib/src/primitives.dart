@@ -127,7 +127,20 @@ List<String> pathsMatching(String argument, {required String root}) {
   ];
   final found = <String>[];
   void walk(Directory directory) {
-    for (final entry in directory.listSync(followLinks: false)) {
+    final List<FileSystemEntity> entries;
+    try {
+      entries = directory.listSync(followLinks: false);
+    } on FileSystemException {
+      // **Passed over, and this is the opposite call from `sets`.** A set that
+      // is quietly short is a gate that checked less than it says; a delete
+      // that is quietly short leaves a file behind, which §6 already permits —
+      // a missing path is not an error and `clean` may run twice. Raising here
+      // instead left `--dry-run` on a stack trace and exit 255, and a
+      // directory removed by another member while this one is walking is
+      // ordinary rather than exceptional.
+      return;
+    }
+    for (final entry in entries) {
       final relative = p.posix.joinAll(
         p.split(p.relative(entry.path, from: root)),
       );

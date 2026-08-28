@@ -66,17 +66,24 @@ ValidationReport validateFile(
   return ValidationReport(List.unmodifiable(problems));
 }
 
-/// A task with no body, nothing to depend on and no gate set to gather is a
+/// A task with no body, nothing to depend on and nothing to continue into is a
 /// task that does nothing (§8).
+///
+/// **`then:` counts, and it was left out.** A task whose whole content is a
+/// continuation is reached, runs nothing of its own, and then runs what
+/// follows it — which is something. `publish then verify`, `verify then
+/// notify` runs all three and answers 0, while this reported the middle one as
+/// a name with a description attached: a file the run accepts and the gate the
+/// README tells every project to adopt refuses.
 void _checkDoesSomething(Task task, List<XtaskFormatException> problems) {
-  if (task.body != null || task.needs.isNotEmpty) {
+  if (task.body != null || task.needs.isNotEmpty || task.then.isNotEmpty) {
     return;
   }
   problems.add(
     XtaskFormatException(
-      'task `${task.name}` has no body and no `needs:`, so running it does '
-      'nothing. A gate set gathers tasks; a task that gathers nothing is a '
-      'name with a description attached',
+      'task `${task.name}` has no body, no `needs:` and no `then:`, so running '
+      'it does nothing. A gate set gathers tasks; a task that gathers nothing '
+      'is a name with a description attached',
       task.span,
     ),
   );

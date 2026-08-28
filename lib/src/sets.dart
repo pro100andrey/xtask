@@ -88,8 +88,29 @@ final class SetExpander {
       // Sorted here as well as at the end: a directory listing is in whatever
       // order the filesystem felt like, and a walk that descends in that order
       // is a walk whose failure messages arrive in it too.
-      final entries = directory.listSync(followLinks: false).toList()
-        ..sort((a, b) => a.path.compareTo(b.path));
+      final List<FileSystemEntity> entries;
+      try {
+        entries = directory.listSync(followLinks: false).toList()
+          ..sort((a, b) => a.path.compareTo(b.path));
+      } on FileSystemException catch (problem) {
+        // **Refused, not skipped.** A directory this process cannot read may
+        // hold members, so passing over it makes the set quietly smaller than
+        // the file says — a gate that examined fewer files and went green,
+        // which is the failure this whole tool is against.
+        //
+        // Refused HERE, because unhandled it left `--validate` on a stack
+        // trace and exit 255, a number §5.3 does not have, from the one gate
+        // the README tells every project to put in CI.
+        throw XtaskFormatException(
+          'set `$name` cannot be read: `${_relative(directory.path)}` is not '
+          'listable — ${problem.osError?.message ?? problem.message}. This is '
+          'about this machine rather than the file, and it is refused rather '
+          'than passed over: a directory that cannot be read may hold members, '
+          'and a set that is quietly short is a gate that checked less than it '
+          'says',
+          set.span,
+        );
+      }
       for (final entry in entries) {
         // §6 says `remove` never follows a symlink. Listing takes the same
         // line, and for a second reason: a link into an ancestor is a loop.

@@ -114,6 +114,25 @@ void main() {
       expect(usage.problem, contains('--gate-members'));
     });
 
+    test('a run modifier with no task names what is missing', () {
+      // Zero operands fell into the "it was given" branch and interpolated an
+      // empty list, so the sentence stopped mid-way and told the reader
+      // nothing at all about what was wrong.
+      for (final written in [
+        ['--keep-going'],
+        ['-j', '2'],
+        ['--keep-going', '-j', '4'],
+      ]) {
+        final usage = parseArguments(written) as ShowUsage;
+        expect(
+          usage.problem,
+          contains('needs the name of one task'),
+          reason: '$written',
+        );
+        expect(usage.problem, isNot(endsWith('given ')), reason: '$written');
+      }
+    });
+
     test('two modes ask for different things', () {
       final usage = parseArguments(['--list', '--validate']) as ShowUsage;
       expect(usage.problem, contains('--list'));

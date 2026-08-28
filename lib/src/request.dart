@@ -409,6 +409,16 @@ Request parseArguments(
     );
   }
 
+  if (operands.isEmpty) {
+    // **Its own branch, because the other one has nothing to name.** Zero
+    // operands fell into "it was given" below and interpolated an empty list,
+    // so `xtask --keep-going` and `xtask -j 2` both printed a sentence that
+    // stopped mid-way and told the reader nothing about what was missing.
+    return const ShowUsage(
+      'a run needs the name of one task. `--keep-going` and `-j` say how a run '
+      'happens, not what it runs — `xtask --list` shows what there is',
+    );
+  }
   return operands.length == 1
       ? RunTask(
           operands.single,

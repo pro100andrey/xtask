@@ -39,8 +39,23 @@ void main() {
       expect(refusalOf('s: [packages/*/coverage, a&b]\n'), isNull);
     });
 
+    test('but a `#` inside a word is not a comment, and hides nothing', () {
+      // YAML opens a comment at the start of a line or after whitespace only,
+      // so `red#1` is an ordinary plain scalar. Reading every unquoted `#` as
+      // a comment skipped the rest of that line, and an anchor written there
+      // walked past the one rule this scan exists to enforce.
+      expect(refusalOf('s: [red#1, &b lib]\n'), contains('anchor'));
+      expect(refusalOf('s: [red#1, *b]\n'), contains('alias'));
+      expect(refusalOf('a: b#c\n'), isNull, reason: 'and it is still a scalar');
+    });
+
     test('a comment is not scanned for them', () {
       expect(refusalOf('# an & and a * in a comment\na: b\n'), isNull);
+    });
+
+    test('and a `#` after a space is one, wherever on the line', () {
+      expect(refusalOf('a: b # an & and a * here\n'), isNull);
+      expect(refusalOf('a: b\t# and after a tab\n'), isNull);
     });
 
     test('nor is anything inside quotes', () {

@@ -1024,6 +1024,22 @@ tasks: {}
   });
 
   group('`interruptible:` is refused where it cannot be honoured', () {
+    test('and on a task with no body, as `timeout:` already was', () {
+      // Twelve lines apart in the parser, on the identical argument: a
+      // `timeout:` with no body is a limit on nothing and was refused, and
+      // this read as a guarantee that was being made and was not.
+      expect(
+        refusal(
+          () => parseXtaskFile(
+            'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [echo, hi]}\n'
+            '  c: {desc: y, needs: [a], interruptible: true}\n',
+          ),
+        ),
+        contains('no body to stop'),
+      );
+    });
+
     test(
       'a verb cannot be stopped from outside, so it may not claim to be',
       () {

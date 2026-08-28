@@ -7,6 +7,36 @@ import 'package:xtask/src/sets.dart';
 import 'package:xtask/src/validate.dart';
 
 void main() {
+  group('a task that does nothing', () {
+    test('is one with no body, no `needs:` and no `then:`', () {
+      final report = validateFile(
+        parseXtaskFile(
+          'version: 1\ntasks:\n  idle: {desc: x}\n',
+        ),
+        knownVerbs: const {},
+      );
+      expect(report.ok, isFalse);
+      expect('$report', contains('`idle`'));
+    });
+
+    test('and a pure continuation is not one', () {
+      // `publish then verify`, `verify then notify` runs all three and answers
+      // 0, while this reported the middle one as a name with a description
+      // attached: a file the run accepts and the gate the README tells every
+      // project to adopt refuses.
+      final report = validateFile(
+        parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  publish: {desc: a, run: [echo, up], then: [verify]}\n'
+          '  verify:  {desc: b, then: [notify]}\n'
+          '  notify:  {desc: c, run: [echo, done]}\n',
+        ),
+        knownVerbs: const {},
+      );
+      expect(report.ok, isTrue, reason: '$report');
+    });
+  });
+
   late Directory root;
 
   setUp(() => root = Directory.systemTemp.createTempSync('xtask_validate_'));

@@ -20,6 +20,37 @@ String refusalOf(void Function() body) {
 }
 
 void main() {
+  group('a directory that cannot be read is refused, not passed over', () {
+    test('because a set that is quietly short is a gate that checked less', () {
+      // Unhandled, this left `--validate` on a stack trace and exit 255 — a
+      // number §5.3 does not have — from the one gate the README tells every
+      // project to put in CI.
+      final root = Directory.systemTemp.createTempSync('xtask_locked_');
+      final locked = Directory(p.join(root.path, 'src', 'shut'))
+        ..createSync(recursive: true);
+      File(p.join(root.path, 'src', 'a.dart')).writeAsStringSync('');
+      Process.runSync('chmod', ['000', locked.path]);
+      addTearDown(() {
+        Process.runSync('chmod', ['755', locked.path]);
+        root.deleteSync(recursive: true);
+      });
+
+      expect(
+        () => SetExpander(root: root.path).expand(
+          's',
+          const GlobSet(include: ['src/**.dart'], exclude: []),
+        ),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('cannot be read'), contains('src/shut')),
+          ),
+        ),
+      );
+    }, testOn: '!windows');
+  });
+
   late Directory root;
 
   /// Creates [paths] under the temporary root, directories and all.

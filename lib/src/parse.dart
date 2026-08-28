@@ -285,15 +285,30 @@ void _refuseIncoherent(Task task) {
 /// would read as a promise and the verb would carry on writing to the disk.
 bool _interruptible(YamlMap map, String taskName, Body? body) {
   final asked = _flag(map, 'interruptible', 'task `$taskName`');
-  if (!asked || body is! DoBody) {
+  if (!asked) {
     return asked;
   }
-  throw XtaskFormatException(
-    'task `$taskName` is `interruptible:` and its body is a verb. Stopping '
-    'one means stopping a Dart function from outside, which cannot be done — '
-    'the flag would be a promise nothing keeps',
-    map.nodes['interruptible']!.span,
-  );
+  if (body is DoBody) {
+    throw XtaskFormatException(
+      'task `$taskName` is `interruptible:` and its body is a verb. Stopping '
+      'one means stopping a Dart function from outside, which cannot be done — '
+      'the flag would be a promise nothing keeps',
+      map.nodes['interruptible']!.span,
+    );
+  }
+  if (body == null) {
+    // **The same refusal `timeout:` gives, which this was missing.** Twelve
+    // lines below, on the identical argument, a `timeout:` with no body is
+    // refused as a limit on nothing. A composite has no body to stop either,
+    // so the key read as a guarantee that was being made and was not.
+    throw XtaskFormatException(
+      'task `$taskName` is `interruptible:` and has no body to stop, so there '
+      'is nothing for the flag to be about. Its `needs:` are their own tasks '
+      'and say for themselves whether they may be stopped',
+      map.nodes['interruptible']!.span,
+    );
+  }
+  return asked;
 }
 
 /// A boolean key, refused rather than coerced.

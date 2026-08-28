@@ -67,6 +67,18 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
   var inComment = false;
   int? previous; // last significant character outside quotes and comments
 
+  // **Whether a `#` here would start a comment.** YAML opens one only at the
+  // start of a line or after whitespace: `red#1` is an ordinary plain scalar
+  // and everything after the `#` on that line is still the document. Reading
+  // every unquoted `#` as a comment skipped the rest of that line, so
+  // `base: [red#1, &b lib]` hid an anchor from this scan entirely — and the
+  // alias that used it. The one rule this file exists to enforce, walked past
+  // by one character.
+  //
+  // Kept separately from [previous], which skips spaces on purpose: after
+  // `a: ` it holds the colon, so it cannot answer this question.
+  var afterSpace = true;
+
   for (var i = 0; i < source.length; i++) {
     final c = source.codeUnitAt(i);
 
@@ -86,6 +98,7 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
       if (c == 0x0A) {
         inComment = false;
         previous = 0x0A;
+        afterSpace = true;
       }
       continue;
     }
@@ -105,23 +118,27 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
     }
 
     switch (c) {
-      case 0x23: // #
+      case 0x23 when afterSpace: // #
         inComment = true;
         continue;
       case 0x27: // '
         inSingle = true;
         previous = c;
+        afterSpace = false;
         continue;
       case 0x22: // "
         inDouble = true;
         previous = c;
+        afterSpace = false;
         continue;
       case 0x20:
       case 0x09:
       case 0x0D:
+        afterSpace = true;
         continue;
       case 0x0A:
         previous = 0x0A;
+        afterSpace = true;
         continue;
     }
 
@@ -150,5 +167,6 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
     }
 
     previous = c;
+    afterSpace = false;
   }
 }
