@@ -275,7 +275,7 @@ void main() {
       given(['a.txt']);
       expect(await remove(['a{b']), ExitCode.invalidFile);
       expect(logged.join('\n'), contains('a{b'));
-      expect(logged.join('\n'), contains('cannot read'));
+      expect(logged.join('\n'), contains('not a valid pattern'));
       expect(exists('a.txt'), isTrue, reason: 'it deleted something anyway');
     });
   });

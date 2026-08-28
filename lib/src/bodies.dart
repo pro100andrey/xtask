@@ -138,6 +138,7 @@ final class BodyResolver {
     this.verbs = const {},
     this.environment = const {},
     this.passedThrough,
+    this.cacheSets = false,
   }) : _expander = SetExpander(root: root);
 
   /// The repository root. Every working directory is resolved against it.
@@ -174,7 +175,19 @@ final class BodyResolver {
   /// already said rather than being buried in front of it.
   final ({String task, List<String> arguments})? passedThrough;
 
+  /// Whether a set read once may be answered from memory.
+  ///
+  /// **False for a run, and that is the whole of it.** A set is read when the
+  /// task naming it is about to run, because a task between two others may
+  /// have made or removed the files — which is why there is no cache here by
+  /// default. `--dry-run` runs nothing at all, so the second walk of a set two
+  /// tasks share can only find what the first one found: twenty tasks sharing
+  /// one glob set cost twenty identical walks and 553ms, against 36ms for one.
+  final bool cacheSets;
+
   final SetExpander _expander;
+
+  final _expanded = <String, List<String>>{};
 
   /// Everything [task] comes to, in order. Empty for a composite.
   ///
@@ -442,9 +455,17 @@ final class BodyResolver {
   /// group opened for the task was never closed and everything after it on
   /// GitHub was folded into a task that had already stopped.
   List<String> _expand(Task task, String name) {
+    final remembered = cacheSets ? _expanded[name] : null;
+    if (remembered != null) {
+      return remembered;
+    }
     final set = _set(task, name);
     try {
-      return _expander.expand(name, set);
+      final members = _expander.expand(name, set);
+      if (cacheSets) {
+        _expanded[name] = members;
+      }
+      return members;
     } on EmptySetException catch (problem) {
       // Distinguished by type, so `--dry-run` can tell "not yet" from "wrong"
       // instead of guessing from the exit code — which called a boundary

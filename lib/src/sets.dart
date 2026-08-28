@@ -96,7 +96,12 @@ final class SetExpander {
     final reach = Reach(set.include);
 
     final found = <String>[];
-    void walk(Directory directory) {
+
+    // **The relative path is carried, not re-derived.** `p.relative` was
+    // called once per entry — over thirty thousand of them on an ordinary
+    // repository — to work out something the walk already knew: the parent's
+    // relative path plus this entry's own name. A third of the walk.
+    void walk(Directory directory, String at) {
       // Sorted here as well as at the end: a directory listing is in whatever
       // order the filesystem felt like, and a walk that descends in that order
       // is a walk whose failure messages arrive in it too.
@@ -122,7 +127,7 @@ final class SetExpander {
         // trace and exit 255, a number §5.3 does not have, from the one gate
         // the README tells every project to put in CI.
         throw XtaskFormatException(
-          'set `$name` cannot be read: `${_relative(directory.path)}` is not '
+          'set `$name` cannot be read: `${at.isEmpty ? '.' : at}` is not '
           'listable — ${problem.osError?.message ?? problem.message}. This is '
           'about this machine rather than the file, and it is refused rather '
           'than passed over: a directory that cannot be read may hold members, '
@@ -137,7 +142,9 @@ final class SetExpander {
         if (entry is Link) {
           continue;
         }
-        final relative = _relative(entry.path);
+        final relative = at.isEmpty
+            ? p.basename(entry.path)
+            : '$at/${p.basename(entry.path)}';
         if (excludes.any((g) => g.matches(relative))) {
           continue;
         }
@@ -156,27 +163,38 @@ final class SetExpander {
         // `.git` — once per set, per task, per run — to find nothing there by
         // construction.
         if (entry is Directory && reach.into(relative)) {
-          walk(entry);
+          walk(entry, relative);
         }
       }
     }
 
-    walk(Directory(root));
+    walk(Directory(root), '');
     return found..sort();
   }
 
   /// Every reading of every pattern, as globs, refusing what cannot be one.
   List<Glob> _globs(String name, NamedSet set, List<String> patterns) => [
     for (final pattern in patterns)
-      for (final variant in zeroOrMoreDirectories(
-        _refuseUnrooted(
-          name,
-          set,
-          pattern,
-        ),
-      ))
+      for (final variant in _readings(name, set, pattern))
         _glob(name, set, variant),
   ];
+
+  /// Every reading of [pattern], reported at the set's own line.
+  ///
+  /// `zeroOrMoreDirectories` refuses a pattern with too many of them, and that
+  /// refusal is a `FormatException` — which, unwrapped, would leave `expand`
+  /// past the exit codes, exactly as a malformed pattern used to.
+  Set<String> _readings(String name, NamedSet set, String pattern) {
+    final rooted = _refuseUnrooted(name, set, pattern);
+    try {
+      return zeroOrMoreDirectories(rooted);
+    } on FormatException catch (problem) {
+      throw XtaskFormatException(
+        'in set `$name`: ${problem.message}',
+        set.span,
+      );
+    }
+  }
 
   /// [written] unchanged, or a refusal if it names anything outside [root].
   ///
@@ -234,14 +252,6 @@ final class SetExpander {
       );
     }
   }
-
-  /// [path] relative to [root], written with `/` on every platform.
-  ///
-  /// The separator is normalised for the same reason the patterns are: this
-  /// string becomes a process argument, and an argument list that differs
-  /// between platforms is a portability claim with a hole in it. Windows
-  /// accepts `/` in paths; the tools this passes them to accept it too.
-  String _relative(String path) => relativePosix(path, root: root);
 
   /// An expansion that found nothing is an error, and there is no key to
   /// soften it (§4.2).

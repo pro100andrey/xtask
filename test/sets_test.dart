@@ -20,6 +20,76 @@ String refusalOf(void Function() body) {
 }
 
 void main() {
+  group('a brace does not switch pruning off by itself', () {
+    test('one inside a segment still prunes, and finds the same members', () {
+      // `packages/{a,b}/**` splits and rejoins exactly, so the prune
+      // arithmetic holds. Reading every brace as unprunable made an ordinary
+      // monorepo shape read all of `node_modules` and `.git` — 250ms against
+      // 10ms for the same set written without it.
+      final root = Directory.systemTemp.createTempSync('xtask_brace_');
+      addTearDown(() => root.deleteSync(recursive: true));
+      for (final path in [
+        'packages/a/lib/one.dart',
+        'packages/b/lib/two.dart',
+        'packages/c/lib/three.dart',
+      ]) {
+        File(p.join(root.path, p.joinAll(p.posix.split(path))))
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync('');
+      }
+      expect(
+        SetExpander(root: root.path).expand(
+          's',
+          const GlobSet(include: ['packages/{a,b}/**/*.dart'], exclude: []),
+        ),
+        ['packages/a/lib/one.dart', 'packages/b/lib/two.dart'],
+      );
+    });
+
+    test('and one that spans a separator keeps reaching everywhere', () {
+      // `{a,b/c}/**` makes the segment COUNT depend on which alternative is
+      // taken, so a pattern with four apparent segments may still reach five
+      // deep. That one has to keep going.
+      final root = Directory.systemTemp.createTempSync('xtask_brace2_');
+      addTearDown(() => root.deleteSync(recursive: true));
+      for (final path in ['a/deep/one.dart', 'b/c/deep/two.dart']) {
+        File(p.join(root.path, p.joinAll(p.posix.split(path))))
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync('');
+      }
+      expect(
+        SetExpander(root: root.path).expand(
+          's',
+          const GlobSet(include: ['{a,b/c}/**/*.dart'], exclude: []),
+        ),
+        ['a/deep/one.dart', 'b/c/deep/two.dart'],
+      );
+    });
+  });
+
+  test('a pattern with too many readings is refused, not matched', () {
+    // Each `**/` doubles them, because it means none OR more directories, and
+    // every reading becomes a glob matched against every entry of the walk:
+    // eight globstars is 256 globs per file, ten is over a thousand. One line
+    // of the file, unbounded work.
+    final root = Directory.systemTemp.createTempSync('xtask_many_');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final wild = '${'**/x/' * 8}*.dart';
+    expect(
+      () => SetExpander(root: root.path).expand(
+        's',
+        GlobSet(include: [wild], exclude: const []),
+      ),
+      throwsA(
+        isA<XtaskFormatException>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('readings'), contains('set `s`')),
+        ),
+      ),
+    );
+  });
+
   group('a directory that cannot be read is refused, not passed over', () {
     test('because a set that is quietly short is a gate that checked less', () {
       // Unhandled, this left `--validate` on a stack trace and exit 255 — a

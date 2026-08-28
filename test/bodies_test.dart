@@ -11,6 +11,82 @@ import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 
 void main() {
+  group('a set is read again when its task is about to run', () {
+    test('because a task before it may have made the files', () {
+      // The whole reason there is no cache by default. A run that answered
+      // from memory would hand the second task what the tree looked like
+      // before the first one touched it.
+      final root = Directory.systemTemp.createTempSync('xtask_reread_');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final resolver = BodyResolver(
+        root: root.path,
+        resolver: ExecutableResolver(
+          environment: const {'PATH': '/bin'},
+          windows: false,
+          isRunnable: (_) => true,
+        ),
+        sets: const {
+          'built': GlobSet(include: ['build/*.o'], exclude: []),
+        },
+      );
+      const task = Task(
+        name: 'link',
+        desc: 'x',
+        body: RunBody(['ld']),
+        all: 'built',
+        args: [r'$all'],
+      );
+
+      File(p.join(root.path, 'build', 'a.o'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('');
+      expect(resolver.resolveTask(task).single.arguments, ['build/a.o']);
+
+      File(p.join(root.path, 'build', 'b.o')).writeAsStringSync('');
+      expect(
+        resolver.resolveTask(task).single.arguments,
+        ['build/a.o', 'build/b.o'],
+        reason: 'the run answered from memory',
+      );
+    });
+
+    test('and only a dry run, which runs nothing, may remember it', () {
+      final root = Directory.systemTemp.createTempSync('xtask_cached_');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final resolver = BodyResolver(
+        root: root.path,
+        resolver: ExecutableResolver(
+          environment: const {'PATH': '/bin'},
+          windows: false,
+          isRunnable: (_) => true,
+        ),
+        sets: const {
+          'built': GlobSet(include: ['build/*.o'], exclude: []),
+        },
+        cacheSets: true,
+      );
+      const task = Task(
+        name: 'link',
+        desc: 'x',
+        body: RunBody(['ld']),
+        all: 'built',
+        args: [r'$all'],
+      );
+
+      File(p.join(root.path, 'build', 'a.o'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('');
+      expect(resolver.resolveTask(task).single.arguments, ['build/a.o']);
+
+      File(p.join(root.path, 'build', 'b.o')).writeAsStringSync('');
+      expect(
+        resolver.resolveTask(task).single.arguments,
+        ['build/a.o'],
+        reason: 'nothing ran between the two, so nothing could have changed',
+      );
+    });
+  });
+
   late Directory root;
 
   setUp(() => root = Directory.systemTemp.createTempSync('xtask_resolution_'));

@@ -100,6 +100,7 @@ List<PlanEdge>? routeTo(
   XtaskFile file, {
   required String from,
   required String to,
+  Set<String>? hopeless,
 }) {
   // The path being walked, so a cycle does not hang it.
   final seen = <String>{};
@@ -109,7 +110,13 @@ List<PlanEdge>? routeTo(
   // edge was answered "nothing reaches it". But a path set alone re-walks
   // every shared subtree once per path, and `--why` asks this once per gate
   // member per gate. A no is worth remembering; a yes returns immediately.
-  final hopeless = <String>{};
+  // **Shared across one question, when the caller has one.** Whether [to] can
+  // be reached from a task does not depend on where the walk started, so a no
+  // is worth remembering for the whole of `--why` — which asks this once per
+  // gate member per gate, every time with the same target, and rebuilt the
+  // memo from nothing for each. On a two-thousand task chain that was the
+  // difference between eight seconds and a quarter of one.
+  final unreachable = hopeless ?? <String>{};
   // **And nothing is remembered once a ring has been met.** A branch cut short
   // by the path guard says nothing about that task in general — entered from
   // somewhere else, the edge it turned back on would be walked. Cycles are
@@ -117,17 +124,24 @@ List<PlanEdge>? routeTo(
   // already being reported as broken.
   var metARing = false;
 
-  List<PlanEdge>? walk(String at) {
+  // **Built once, on the way out.** Each level used to return
+  // `[edge, ...rest]`, copying the whole remaining route at every hop — which
+  // is quadratic in a route's length, and a route is as long as the chain.
+  // The edges are appended as the recursion unwinds, so they come out
+  // deepest-first and are reversed at the end.
+  final route = <PlanEdge>[];
+
+  bool walk(String at) {
     if (at == to) {
-      return const [];
+      return true;
     }
-    if (hopeless.contains(at)) {
-      return null;
+    if (unreachable.contains(at)) {
+      return false;
     }
     // A cycle is `--validate`'s to report; here it must only not hang.
     if (!seen.add(at)) {
       metARing = true;
-      return null;
+      return false;
     }
     // **Removed again on the way out.** Kept, it marked every task a dead
     // branch had touched as unreachable for the rest of the search, so a route
@@ -137,7 +151,7 @@ List<PlanEdge>? routeTo(
     void done({required bool reached}) {
       seen.remove(at);
       if (!reached && !metARing) {
-        hopeless.add(at);
+        unreachable.add(at);
       }
     }
 
@@ -147,23 +161,23 @@ List<PlanEdge>? routeTo(
       // it, a second branch reaching the same dangling name read it as a ring
       // and switched the memo off for the rest of the question.
       seen.remove(at);
-      return null;
+      return false;
     }
     for (final (kind, next) in [
       for (final need in task.needs) ('needs', need),
       for (final next in task.then) ('then', next),
     ]) {
-      final rest = walk(next);
-      if (rest != null) {
+      if (walk(next)) {
         done(reached: true);
-        return [PlanEdge(at, kind, next), ...rest];
+        route.add(PlanEdge(at, kind, next));
+        return true;
       }
     }
     done(reached: false);
-    return null;
+    return false;
   }
 
-  return walk(from);
+  return walk(from) ? route.reversed.toList() : null;
 }
 
 /// The order [taskName] resolves to in [file].
@@ -250,9 +264,17 @@ Plan planFor(XtaskFile file, String name) {
 /// about the graph whichever mode happens to ask it.
 Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
   final routes = <String, List<PlanEdge>>{};
+  // One memo for the whole question: every call below asks about the same
+  // target, and what cannot reach it cannot reach it from anywhere.
+  final hopeless = <String>{};
   for (final gate in file.gates.keys) {
     for (final member in tasksInGate(file, gate)) {
-      final route = routeTo(file, from: member.name, to: task);
+      final route = routeTo(
+        file,
+        from: member.name,
+        to: task,
+        hopeless: hopeless,
+      );
       if (route == null) {
         continue;
       }
@@ -268,7 +290,7 @@ Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
     }
   }
   for (final entry in entryPoints(file)) {
-    final route = routeTo(file, from: entry, to: task);
+    final route = routeTo(file, from: entry, to: task, hopeless: hopeless);
     if (route != null) {
       routes[entry] = route;
     }
@@ -327,8 +349,17 @@ final class _Planner {
   final _done = <String>{};
 
   /// Tasks whose resolution has begun and not finished, innermost last. This
-  /// is both the cycle detector and the thing that can print the cycle.
+  /// is the thing that can print the cycle; [_opened] is the thing that
+  /// detects one.
   final _open = <String>[];
+
+  /// The same names, as a set.
+  ///
+  /// **Because `contains` on the list is a scan, and it runs per edge.** One
+  /// plan of depth d cost O(d²), and `--validate` plans every task — so a
+  /// two-thousand task chain spent seven seconds inside `contains`. The list
+  /// stays because a ring has to be printed in the order it was entered.
+  final _opened = <String>{};
 
   /// The ring [name] closes, written from a fixed point.
   ///
@@ -379,7 +410,7 @@ final class _Planner {
       );
     }
 
-    if (_open.contains(name)) {
+    if (_opened.contains(name)) {
       // Reached only through `needs`; a `then:` re-entry is handled where it
       // is issued, below. §5.1 makes this a validation error and asks for the
       // cycle itself, because "there is a cycle" leaves the reader to find it
@@ -392,12 +423,13 @@ final class _Planner {
     }
 
     _open.add(name);
+    _opened.add(name);
     for (final need in task.needs) {
       // Inside the same continuation as whatever needed it: a task pulled in
       // by a continuation's own `needs:` is part of that continuation.
       resolve(need, from: task, continuationOf: continuationOf);
     }
-    _open.removeLast();
+    _opened.remove(_open.removeLast());
 
     // Emitted before the continuations, which is what makes `then:` a
     // continuation rather than a dependency: the body has happened by the time
@@ -406,7 +438,7 @@ final class _Planner {
     steps.add(PlanStep(task, continuationOf: continuationOf));
 
     for (final next in task.then) {
-      if (_open.contains(next)) {
+      if (_opened.contains(next)) {
         // A task still being resolved further up will emit itself when its own
         // frame finishes. Skipping here keeps the run-once rule without
         // calling this a cycle: `a needs b`, `b then a` is an ordering both

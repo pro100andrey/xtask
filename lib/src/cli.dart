@@ -154,13 +154,18 @@ Future<int> runCli(
   /// inside `dryRun`, so a seventh would have reached one of them and the dry
   /// run would have promised something the run did not do — silently, and in
   /// the one place whose job is to be checkable against what somebody meant.
-  BodyResolver bodiesFor(String task, List<String> arguments) => BodyResolver(
+  BodyResolver bodiesFor(
+    String task,
+    List<String> arguments, {
+    bool cacheSets = false,
+  }) => BodyResolver(
     root: root,
     resolver: resolver,
     sets: file.sets,
     verbs: known,
     environment: environment,
     passedThrough: (task: task, arguments: arguments),
+    cacheSets: cacheSets,
   );
 
   try {
@@ -221,7 +226,9 @@ Future<int> runCli(
         _refuseArgumentsWithNowhereToGo(file, task, arguments);
         return await dryRun(
           plan: planFor(file, task),
-          bodies: bodiesFor(task, arguments),
+          // Nothing runs, so nothing can change what a set expands to
+          // between two steps of the plan.
+          bodies: bodiesFor(task, arguments, cacheSets: true),
           log: out,
         );
 

@@ -29,7 +29,29 @@ import 'package:path/path.dart' as p;
 /// meant one thing under `sets:` and another under `do: remove`, in the same
 /// file, with nothing to say so. A file format with two dialects is the defect
 /// §1 exists to remove, and it had grown inside the tool.
-Set<String> zeroOrMoreDirectories(String pattern) => _readings(pattern, 0);
+Set<String> zeroOrMoreDirectories(String pattern) {
+  final readings = _readings(pattern, 0);
+  if (readings.length > mostReadings) {
+    // **Refused, because nothing else bounds it.** Every reading becomes its
+    // own compiled glob, matched against every entry of the walk, so the cost
+    // of one line of `xtask.yaml` doubles per `**/` in it: eight globstars is
+    // 256 globs per entry, and ten is over a thousand. A pattern needing more
+    // than this is not saying what its author thinks it says.
+    throw FormatException(
+      '`$pattern` has ${readings.length} readings, which is more than the '
+      '$mostReadings this engine will match against every file it walks. '
+      'Each `**/` doubles them, because it means none OR more directories. '
+      'Name fewer of them, or split the set',
+    );
+  }
+  return readings;
+}
+
+/// How many readings of one pattern the engine will compile.
+///
+/// Generous: the shapes a person writes have one or two `**/`, and a monorepo
+/// pattern like `packages/**/lib/**/src/**/*.dart` has eight.
+const mostReadings = 32;
 
 /// [pattern]'s readings, given that [open] brace groups are already open where
 /// it begins.
@@ -163,14 +185,51 @@ int _depthOfPath(String path) {
   return depth;
 }
 
+/// Whether a brace group in [pattern] spans a `/`.
+///
+/// **Only that shape defeats pruning, and every brace used to.** The prune
+/// decision slices the pattern by path segment; a brace whose alternatives sit
+/// inside one segment — `packages/{a,b}/**` — splits and rejoins exactly, so
+/// the arithmetic holds. One that spans a separator — `{a,b/c}/**` — makes the
+/// segment COUNT depend on which alternative is taken, and a pattern with
+/// four apparent segments may still reach five deep.
+///
+/// Reading every brace as unprunable turned pruning off for an ordinary
+/// monorepo shape: `packages/{pkg000,pkg001}/**/*.dart` read all of
+/// `node_modules`, `.git` and `build` — 250ms against 10ms for the same set
+/// written without the brace, for twice the members.
+///
+/// An unbalanced brace is answered yes: it tells us nothing, and a prefix that
+/// will not compile is already handled one level down.
+bool _braceSpansASlash(String pattern) {
+  var depth = 0;
+  for (var at = 0; at < pattern.length; at++) {
+    switch (pattern.codeUnitAt(at)) {
+      case 0x5C: // \ — escapes whatever follows, including a brace
+        at++;
+      case 0x7B: // {
+        depth++;
+      case 0x7D: // }
+        depth--;
+      case 0x2F: // /
+        if (depth > 0) {
+          return true;
+        }
+    }
+    if (depth < 0) {
+      return true;
+    }
+  }
+  return depth != 0;
+}
+
 /// One include pattern, with everything a prune decision needs worked out.
 final class _Shape {
   _Shape(String pattern)
-    : // A brace does not split reliably by path segment, so it says "keep
-      // going" at every depth and nothing else needs computing.
-      _anywhere = pattern.contains('{'),
+    : _anywhere = _braceSpansASlash(pattern),
       _segments = p.posix.split(pattern);
 
+  /// Whether this pattern reaches into every directory at every depth.
   final bool _anywhere;
   final List<String> _segments;
 

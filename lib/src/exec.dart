@@ -208,6 +208,10 @@ final class Executor {
     final waiting = [...plan.steps];
     final running = <String, Future<void>>{};
     final finished = <String>{};
+    // **One set, kept as things stop.** This was rebuilt from two maps for
+    // every step on every admission pass — at four thousand steps and `-j 8`,
+    // eight million set literals, about half the time the walk spent.
+    final stopped = <String>{};
 
     // **Buffering is the price of running two at once, so it is paid only
     // then.** At one task in flight §5.2 holds unchanged: the lines go
@@ -229,12 +233,13 @@ final class Executor {
           break;
         }
         final step = waiting[at];
-        final blocker = _blockedBy(step, {...failed.keys, ...skipped.keys});
+        final blocker = _blockedBy(step, stopped);
         if (blocker != null) {
           // Named, not dropped. A task that silently did not happen is
           // indistinguishable from one that passed, which is the whole failure
           // this tool is about.
           skipped[step.task.name] = blocker;
+          stopped.add(step.task.name);
           waiting.removeAt(at--);
           began = true;
           continue;
@@ -243,6 +248,7 @@ final class Executor {
           // Something has failed and this run is not keeping going: what has
           // not started must not start. What IS running is left alone.
           skipped[step.task.name] = const RunStopped();
+          stopped.add(step.task.name);
           waiting.removeAt(at--);
           began = true;
           continue;
@@ -281,6 +287,9 @@ final class Executor {
               running.removeWhere((running, _) => running == name);
               finished.add(name);
               if (code != null) {
+                // `_runOne` has already written `failed[name]`; this is the
+                // same fact, kept where the admission pass reads it.
+                stopped.add(name);
                 answer ??= code;
                 if (!keepGoing) {
                   // **Reaching into what is running, but only where the file
@@ -301,6 +310,7 @@ final class Executor {
         // on something that will never finish.
         for (final step in waiting) {
           skipped[step.task.name] = const NeverStartable();
+          stopped.add(step.task.name);
         }
         waiting.clear();
         break;
