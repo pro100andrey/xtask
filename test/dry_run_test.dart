@@ -98,8 +98,18 @@ void main() {
         );
         expect(output(), contains('a  [packages/one]'));
         expect(output(), contains('a  [packages/two]'));
-        expect(output(), contains('in   ${p.join(root.path, 'packages/one')}'));
-        expect(output(), contains('in   ${p.join(root.path, 'packages/two')}'));
+        // Joined segment by segment, as the engine joins it. Written
+        // `packages/one`, `p.join` leaves the inner `/` alone — so on Windows
+        // this asserted `C:\…\packages/one`, a spelling of the path that the
+        // engine no longer produces and never meant to.
+        expect(
+          output(),
+          contains('in   ${p.join(root.path, 'packages', 'one')}'),
+        );
+        expect(
+          output(),
+          contains('in   ${p.join(root.path, 'packages', 'two')}'),
+        );
       },
     );
 
@@ -121,7 +131,10 @@ void main() {
             '  a: {desc: x, in: packages/lake, run: [dart, test]}\n',
         'a',
       );
-      expect(output(), contains('in   ${p.join(root.path, 'packages/lake')}'));
+      expect(
+        output(),
+        contains('in   ${p.join(root.path, 'packages', 'lake')}'),
+      );
     });
   });
 

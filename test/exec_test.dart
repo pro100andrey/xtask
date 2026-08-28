@@ -1173,7 +1173,10 @@ void main() {
       );
       expect(
         starter.started.single.workingDirectory,
-        p.join(root.path, 'packages/lake'),
+        // Segment by segment: a path written `packages/lake` in the file
+        // becomes this machine's spelling of it, which on Windows is not the
+        // one `p.join` leaves when handed the whole string.
+        p.join(root.path, 'packages', 'lake'),
       );
     });
 

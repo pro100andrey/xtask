@@ -108,7 +108,7 @@ Measured on a synthetic repository of 15,000 files and a task file of 4,000:
   mid-way.
 - `--emit-schema` applies its own drift guard to the keys of a set, which it
   documented and did not do.
-- `CONTEXT.md` and `docs/adr/` record the glossary and the eight decisions that
+- `CONTEXT.md` and `doc/adr/` record the glossary and the eight decisions that
   were written only in code comments.
 
 ### Gate sets are declared
