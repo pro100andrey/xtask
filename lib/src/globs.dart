@@ -1,5 +1,15 @@
 /// How a pattern in `xtask.yaml` is read, wherever it is read.
+///
+/// **Two readers, and they have already drifted once.** The set expander and
+/// the `remove` verb each compile patterns and each walk the repository for
+/// them, so anything either of them decides about what a pattern MEANS has to
+/// be decided here or it will be decided twice. It was: `**/` meant "one
+/// directory or more" on one side and "none or more" on the other, in the same
+/// file, with nothing to say so.
 library;
+
+import 'package:glob/glob.dart';
+import 'package:path/path.dart' as p;
 
 /// [pattern], and the same pattern with each `**/` standing for no directory
 /// at all.
@@ -98,4 +108,62 @@ bool _startsSegment(String pattern, int index, int open) {
     return false;
   }
   return open + _depthOf(pattern, index) > 0;
+}
+
+/// Whether anything under [directory] could match one of [patterns].
+///
+/// Answered from a pattern's own shape, at the depth reached so far, so that a
+/// walk can stop descending instead of reading a subtree that cannot contain a
+/// match by construction.
+///
+/// **Here, because both walkers need it and only one had it.** Include
+/// patterns were used to match and never to prune, so `include:
+/// ['src/**/*.ts']` read all of `node_modules` and all of `.git` — once per
+/// set, per task, per run — to find nothing there. `sets` was taught to prune;
+/// `do: remove` was not, and walked the whole tree for `build/**` on every
+/// invocation. On eighteen thousand files that is 0.19s against 0.01s, and a
+/// repository is bigger than that.
+///
+/// Three shapes say "keep going", and the walk is never narrower than the
+/// patterns are: a `**` at or before that depth, which can match any number of
+/// directories below; a brace, which does not split reliably by path segment;
+/// and a prefix that will not compile on its own, which tells us nothing and
+/// so must not be read as "no".
+///
+/// **`**` is not a whole segment.** `package:glob` lets it cross `/` wherever
+/// it appears, and `lib/**.dart` — the shape this repository's own example
+/// ships — is exactly that. Asking whether a segment IS `**` pruned `lib/src`
+/// out of it and lost every nested match, silently: the set stays non-empty,
+/// nothing is refused, and the gate checks fewer files and goes green. Ask
+/// whether a segment CONTAINS it.
+bool couldReachInto(String directory, List<String> patterns) {
+  final depth = p.posix.split(directory).length;
+  for (final pattern in patterns) {
+    if (pattern.contains('{')) {
+      return true;
+    }
+    final segments = p.posix.split(pattern);
+    if (segments.take(depth).any((segment) => segment.contains('**'))) {
+      return true;
+    }
+    if (segments.length <= depth) {
+      // The pattern names fewer segments than this directory has, so nothing
+      // inside it can match — the pattern ran out above here.
+      continue;
+    }
+    final prefix = segments.take(depth).join('/');
+    final Glob compiled;
+    try {
+      compiled = Glob(prefix, context: p.posix);
+    } on FormatException {
+      // A pattern valid as a whole whose prefix is not — an escape split
+      // across the slice. Unreadable here, so it is not read as "no": the
+      // alternative is a scanner exception out of a walk, past the exit codes.
+      return true;
+    }
+    if (compiled.matches(directory)) {
+      return true;
+    }
+  }
+  return false;
 }

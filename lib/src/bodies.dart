@@ -22,6 +22,7 @@ import 'errors.dart';
 import 'executables.dart';
 import 'exit_codes.dart';
 import 'model.dart';
+import 'primitives.dart';
 import 'sets.dart';
 
 /// A body with everything about it decided — §7's *resolved* plan.
@@ -452,7 +453,11 @@ final class BodyResolver {
       // Whether it is only-yet is the refusal's to say, not this module's:
       // asking the set again here was the same rule written a second time, in
       // a file that has no business knowing what `produced:` means.
-      final message = 'task `${task.name}` cannot run:\n$problem';
+      final message = [
+        'task `${task.name}` cannot run:',
+        '$problem',
+        ?_shapeOfASetFedToRemove(task),
+      ].join('\n');
       throw problem.onlyYet
           ? NotYetFailure(ExitCode.invalidFile, message)
           : RunFailure(ExitCode.invalidFile, message);
@@ -462,6 +467,26 @@ final class BodyResolver {
         'task `${task.name}` cannot run:\n$problem',
       );
     }
+  }
+
+  /// The advice a `do: remove` task needs when its set came back empty.
+  ///
+  /// **The one shape that is green once and red afterwards.** A glob set
+  /// matches the build output on the first run and nothing on the second, so a
+  /// `clean` written that way refuses on a tree it has itself just cleaned —
+  /// and the refusal, which is about sets in general, says nothing about the
+  /// one thing that would fix it. A list of literal patterns is never empty,
+  /// because it is written out, and the globs inside it are this verb's to
+  /// expand under the rule that a missing path is not an error.
+  static String? _shapeOfASetFedToRemove(Task task) {
+    final body = task.body;
+    if (body is! DoBody || body.verb != removeVerbName) {
+      return null;
+    }
+    return 'A set fed to `remove` is written as a list of literal patterns — '
+        "`[build, coverage, '**/*.tmp']` — so that it is never empty. Written "
+        'as a glob it matches the output on the first run and nothing on the '
+        'second, which is why this is green once and red afterwards.';
   }
 
   NamedSet _set(Task task, String name) {

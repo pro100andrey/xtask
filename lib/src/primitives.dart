@@ -23,11 +23,18 @@ import 'globs.dart';
 ///
 /// Passed to the validator as the built-in half of what a `do:` may name, so
 /// that no second list of these names exists anywhere (§8).
-const builtInVerbNames = {'remove'};
+const builtInVerbNames = <String>{removeVerbName};
+
+/// The name `remove` is written under in `do:`.
+///
+/// Spelled once, because three things name it: the closed list above, the
+/// binding below, and the diagnostics that say what a set fed to it should
+/// look like.
+const removeVerbName = 'remove';
 
 /// The built-in verbs, bound to the repository [root] they may act inside.
 Map<String, Verb> builtInVerbs({required String root}) => {
-  'remove': (context) => removeVerb(context, root: root),
+  removeVerbName: (context) => removeVerb(context, root: root),
 };
 
 /// `remove` — deletes each path it is given (§6).
@@ -57,7 +64,21 @@ Future<int> removeVerb(VerbContext context, {required String root}) async {
       return ExitCode.invalidFile;
     }
 
-    for (final path in _paths(argument, root)) {
+    final List<String> paths;
+    try {
+      paths = pathsMatching(argument, root: root);
+    } on FormatException catch (problem) {
+      // **The same refusal a set gets for the same typo.** Uncaught, a `[` or
+      // an `a{b` among these arguments left the verb as a raw
+      // `FormatException` whose "line 1, column 2" points inside the pattern
+      // string rather than at anything in the file — reported as "task threw
+      // FormatException", which sends the reader to look at this engine.
+      context.log(
+        '`remove` cannot read `$argument` as a pattern: ${problem.message}',
+      );
+      return ExitCode.invalidFile;
+    }
+    for (final path in paths) {
       await _delete(p.join(root, p.joinAll(p.posix.split(path))), context);
     }
   }
@@ -80,7 +101,16 @@ String? _outsideRoot(String argument) {
 }
 
 /// What [argument] names on disk: itself, or everything its pattern matches.
-List<String> _paths(String argument, String root) {
+///
+/// **Public, because `--dry-run` has to be able to ask.** This is the verb that
+/// deletes recursively, and a dry run that printed the PATTERN told a reader
+/// least about the one operation they most want to check against what they
+/// meant. Answering the question is not running the verb: nothing here removes
+/// anything.
+///
+/// Throws [FormatException] for a pattern that will not compile, which the
+/// caller turns into a sentence about the file.
+List<String> pathsMatching(String argument, {required String root}) {
   if (!_looksLikeGlob(argument)) {
     // A literal. Returned whether or not it exists — the caller's business,
     // and §6 says a missing one is not an error.
@@ -107,7 +137,13 @@ List<String> _paths(String argument, String root) {
         // what is inside it only to delete the parent is work for nothing.
         continue;
       }
-      if (entry is Directory) {
+      // **Pruned, as `sets:` prunes.** This walked every directory under the
+      // root looking for `build/**`, so `do: remove` read all of `.git` and
+      // all of `node_modules` on every invocation to find nothing there by
+      // construction — 0.19s against 0.01s on eighteen thousand files, and a
+      // repository is bigger than that. `sets` was taught this and this was
+      // not, which is one rule living in two walkers.
+      if (entry is Directory && couldReachInto(relative, [argument])) {
         walk(entry);
       }
     }
@@ -149,4 +185,46 @@ Future<void> _delete(String path, VerbContext context) async {
       context.log('removed $path');
       await File(path).delete();
   }
+}
+
+/// Every path `remove` would actually delete for [arguments] — what is on disk,
+/// in the order it would go.
+///
+/// **What `--dry-run` prints under a `do: remove` block.** Every other body is
+/// fully worked out by the time it is described: a `run:` shows the argv the
+/// child will be handed. This one showed the PATTERN, so the one operation
+/// that deletes recursively was the one a reader could not check against what
+/// they meant.
+///
+/// It does not call the verb. It asks what the verb asks, and removes nothing.
+/// Anything the run would refuse — a path outside the repository, a pattern
+/// that will not compile — comes back empty here, because the run says why and
+/// half a sentence is worse than none.
+List<String> removeWouldDelete(
+  List<String> arguments, {
+  required String root,
+}) {
+  final found = <String>{};
+  for (final argument in arguments) {
+    if (leavesRoot(argument)) {
+      return const [];
+    }
+    final List<String> matched;
+    try {
+      matched = pathsMatching(argument, root: root);
+    } on FormatException {
+      return const [];
+    }
+    for (final path in matched) {
+      final at = p.join(root, p.joinAll(p.posix.split(path)));
+      // §6 says a missing path is not an error, so a literal that is not there
+      // is not something this would delete — and saying it would be a promise
+      // about a file that does not exist.
+      if (FileSystemEntity.typeSync(at, followLinks: false) !=
+          FileSystemEntityType.notFound) {
+        found.add(path);
+      }
+    }
+  }
+  return found.toList()..sort();
 }

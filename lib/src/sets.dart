@@ -114,7 +114,7 @@ final class SetExpander {
         // `include: ['src/**/*.ts']` walked all of `node_modules` and all of
         // `.git` — once per set, per task, per run — to find nothing there by
         // construction.
-        if (entry is Directory && _couldContainAMatch(relative, set)) {
+        if (entry is Directory && couldReachInto(relative, set.include)) {
           walk(entry);
         }
       }
@@ -122,55 +122,6 @@ final class SetExpander {
 
     walk(Directory(root));
     return found..sort();
-  }
-
-  /// Whether anything under [directory] could match one of [set]'s includes.
-  ///
-  /// Answered from the pattern's own shape, at the depth reached so far.
-  ///
-  /// Three shapes say "keep going", and the walk is never narrower than the
-  /// patterns are: a `**` at or before that depth, which can match any number
-  /// of directories below; a brace, which does not split reliably by path
-  /// segment; and a prefix that will not compile on its own, which tells us
-  /// nothing and so must not be read as "no".
-  ///
-  /// **`**` is not a whole segment.** `package:glob` lets it cross `/`
-  /// wherever it appears, and `lib/**.dart` — the shape this repository's own
-  /// example ships — is exactly that. Asking whether a segment IS `**` pruned
-  /// `lib/src` out of it and lost every nested match, silently: the set stays
-  /// non-empty, nothing is refused, and the gate checks fewer files and goes
-  /// green. Ask whether a segment CONTAINS it.
-  bool _couldContainAMatch(String directory, GlobSet set) {
-    final depth = p.posix.split(directory).length;
-    for (final pattern in set.include) {
-      if (pattern.contains('{')) {
-        return true;
-      }
-      final segments = p.posix.split(pattern);
-      if (segments.take(depth).any((segment) => segment.contains('**'))) {
-        return true;
-      }
-      if (segments.length <= depth) {
-        // The pattern names fewer segments than this directory has, so nothing
-        // inside it can match — the pattern ran out above here.
-        continue;
-      }
-      final prefix = segments.take(depth).join('/');
-      final Glob compiled;
-      try {
-        compiled = Glob(prefix, context: p.posix);
-      } on FormatException {
-        // A pattern valid as a whole whose prefix is not — an escape split
-        // across the slice. Unreadable here, so it is not read as "no": the
-        // alternative is a scanner exception out of `expand`, past the exit
-        // codes, which is what `_glob` exists to prevent.
-        return true;
-      }
-      if (compiled.matches(directory)) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /// Every reading of every pattern, as globs, refusing what cannot be one.

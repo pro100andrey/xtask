@@ -12,6 +12,7 @@ import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/markers.dart';
 import 'package:xtask/src/parse.dart';
+import 'package:xtask/src/primitives.dart';
 import 'package:xtask/src/process.dart';
 
 /// A clock that advances by [step] every time it is read.
@@ -197,6 +198,42 @@ void main() {
       concurrency: concurrency,
     ).run(planRun(file, task));
   }
+
+  group('an empty set that feeds `remove` says what shape it wants', () {
+    test(
+      'because a glob set for a clean task is green once and red after',
+      () async {
+        // The one shape that passes on the first run and refuses on the second:
+        // a glob matches the build output, then matches nothing once the task
+        // has done its job. The general refusal is about sets and says nothing
+        // about the one thing that would fix it.
+        final code = await runFile(
+          'version: 1\n'
+              "sets:\n  outs:\n    include: ['build/**']\n"
+              'tasks:\n'
+              r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
+              '\n',
+          'clean',
+          verbs: builtInVerbs(root: root.path),
+        );
+        expect(code, ExitCode.invalidFile);
+        expect(logged.join('\n'), contains('list of literal patterns'));
+      },
+    );
+
+    test('and an ordinary empty set is not given that advice', () async {
+      final code = await runFile(
+        'version: 1\n'
+            "sets:\n  srcs:\n    include: ['lib/**.dart']\n"
+            'tasks:\n'
+            r'  fmt: {desc: x, run: [dart, format, $all], all: srcs}'
+            '\n',
+        'fmt',
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(logged.join('\n'), isNot(contains('list of literal patterns')));
+    });
+  });
 
   group('a `run:` body becomes one process, as argv', () {
     test('argv is not a string anybody splits', () async {

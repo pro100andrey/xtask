@@ -5,6 +5,7 @@ import 'bodies.dart';
 import 'errors.dart';
 import 'exit_codes.dart';
 import 'graph.dart';
+import 'primitives.dart';
 import 'report.dart';
 
 /// Prints [plan] and everything in it, and runs nothing.
@@ -67,8 +68,39 @@ Future<int> dryRun({
     }
     for (final body in resolved) {
       describe(body).forEach(log);
+      _wouldDelete(body, root: bodies.root).forEach(log);
     }
   }
 
   return ExitCode.success;
+}
+
+/// What a `do: remove` block would actually delete, under the block itself.
+///
+/// **The engine ships one verb and it deletes recursively.** `describe` shows
+/// what a body was given, which for every other body is the whole of what will
+/// happen — a `run:` prints the argv the child gets. For this one the argument
+/// is a pattern, so the block said `do remove build/**` and left the reader to
+/// guess what that is on their tree. Naming the verb here rather than in
+/// `describe` is deliberate: a failure prints `describe` too, and reading the
+/// filesystem while reporting a failure is not something a report may do.
+///
+/// Capped, because a clean tree can hold thousands and a plan is meant to be
+/// read.
+List<String> _wouldDelete(Resolved body, {required String root}) {
+  if (body is! ResolvedVerb || body.verb != removeVerbName) {
+    return const [];
+  }
+  final paths = removeWouldDelete(body.arguments, root: root);
+  if (paths.isEmpty) {
+    // Said out loud. Silence here reads as "nothing was worked out", and the
+    // answer — there is nothing there, which §6 makes fine — is the one a
+    // person running `clean` twice needs.
+    return const ['  del  nothing of these is on disk, which is not an error'];
+  }
+  const shown = 10;
+  return [
+    for (final path in paths.take(shown)) '  del  $path',
+    if (paths.length > shown) '  del  … and ${paths.length - shown} more',
+  ];
 }

@@ -189,6 +189,57 @@ void main() {
       expect(output(), isNot(contains('missing-two')));
     });
 
+    test('and `remove` says what it would delete, not just its pattern', () {
+      // The engine ships one verb and it deletes recursively. Every other body
+      // is fully worked out by the time it is described — a `run:` prints the
+      // argv the child gets — and this block used to print the PATTERN, so the
+      // one operation a reader most needs to check was the one they could not.
+      given(['build/out/a.o', 'keep.txt']);
+      expect(
+        dry(
+          'version: 1\n'
+              "sets:\n  outs: ['build', 'coverage']\n"
+              'tasks:\n'
+              r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
+              '\n',
+          'clean',
+          verbs: builtInVerbs(root: root.path),
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('do   remove build coverage'));
+      expect(output(), contains('del  build'));
+      expect(
+        output(),
+        isNot(contains('del  coverage')),
+        reason: 'coverage is not there, and a missing path is not deleted',
+      );
+      expect(
+        File(p.join(root.path, 'build', 'out', 'a.o')).existsSync(),
+        isTrue,
+        reason: 'a dry run deleted something',
+      );
+    });
+
+    test('and says so out loud when there is nothing there', () {
+      // Silence reads as "nothing was worked out". The answer — there is
+      // nothing there, which is not an error — is the one a person running
+      // `clean` a second time needs.
+      expect(
+        dry(
+          'version: 1\n'
+              "sets:\n  outs: ['build']\n"
+              'tasks:\n'
+              r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
+              '\n',
+          'clean',
+          verbs: builtInVerbs(root: root.path),
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('nothing of these is on disk'));
+    });
+
     test('a verb is looked up and NOT called', () async {
       var called = false;
       final code = await dry(

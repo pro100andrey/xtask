@@ -234,6 +234,74 @@ void main() {
     );
   });
 
+  group('the walk is pruned, as `sets:` prunes it', () {
+    test('a subtree no pattern can reach is not read', () {
+      // Not a timing assertion — the point is that the ANSWER is unchanged
+      // while the reading is not. Include patterns were used to match and
+      // never to prune here, so `do: remove build/**` read all of
+      // `node_modules` and all of `.git` on every invocation to find nothing
+      // there by construction: 0.19s against 0.01s on eighteen thousand files.
+      given([
+        'build/out/a.o',
+        'build/keep/b.o',
+        'node_modules/pkg/lib/src/deep.js',
+        '.git/objects/ab/cdef',
+      ]);
+      // The directories themselves, not their contents: a match is about to
+      // be deleted whole, so the walk does not descend into one.
+      expect(pathsMatching('build/**', root: root.path), [
+        'build/keep',
+        'build/out',
+      ]);
+    });
+
+    test('and a pattern that can reach anywhere still does', () {
+      given(['a/b/c/x.tmp', 'y.tmp', 'node_modules/pkg/z.tmp']);
+      expect(pathsMatching('**/*.tmp', root: root.path), [
+        'a/b/c/x.tmp',
+        'node_modules/pkg/z.tmp',
+        'y.tmp',
+      ]);
+    });
+  });
+
+  group('a pattern that will not compile is a sentence, not a stack trace', () {
+    test('the verb says which argument and why', () async {
+      // Uncaught, `[` left the verb as a raw `FormatException` whose "line 1,
+      // column 2" points inside the pattern string rather than at anything in
+      // the file — reported as "task threw FormatException", which sends the
+      // reader to look at this engine.
+      given(['a.txt']);
+      expect(await remove(['a{b']), ExitCode.invalidFile);
+      expect(logged.join('\n'), contains('a{b'));
+      expect(logged.join('\n'), contains('cannot read'));
+      expect(exists('a.txt'), isTrue, reason: 'it deleted something anyway');
+    });
+  });
+
+  group('what a dry run may say it would delete', () {
+    test('is what is on disk, and nothing that is not', () {
+      given(['build/out/a.o', 'keep.txt']);
+      expect(
+        removeWouldDelete(['build', 'coverage', 'keep.txt'], root: root.path),
+        ['build', 'keep.txt'],
+        reason: '`coverage` is not there, and a missing path is not deleted',
+      );
+    });
+
+    test('and nothing at all where the run would refuse', () {
+      given(['a.txt']);
+      expect(removeWouldDelete(['../etc'], root: root.path), isEmpty);
+      expect(removeWouldDelete(['a{b'], root: root.path), isEmpty);
+    });
+
+    test('and it deletes nothing itself', () {
+      given(['build/out/a.o']);
+      removeWouldDelete(['build'], root: root.path);
+      expect(exists('build/out/a.o'), isTrue);
+    });
+  });
+
   group('the closed list §6 promises', () {
     test('is exactly one verb', () {
       expect(builtInVerbNames, {'remove'});
