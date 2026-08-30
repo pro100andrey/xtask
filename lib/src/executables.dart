@@ -92,8 +92,14 @@ final class ExecutableResolver {
   /// `--dry-run` prints this string (§7), so it is behaviour rather than an
   /// implementation detail, and a test pins it.
   String? resolve(String executable, {required String from}) =>
+      // **Keyed on the directory only where the directory is part of the
+      // answer.** A bare name is looked up on `PATH`, which `from` does not
+      // touch, so keying every lookup on the pair missed the cache once per
+      // member of an `each:` — `in: packages/$each` gives each member its own
+      // directory — and re-walked `PATH` for a result that could not differ.
+      // That is the per-member cost this cache was added to remove.
       _resolved.putIfAbsent(
-        (executable, from),
+        (executable, _paths.split(executable).length > 1 ? from : ''),
         () => _find(executable, from),
       );
 
@@ -160,22 +166,27 @@ final class ExecutableResolver {
   /// Says where it looked, because the two cures are different: install the
   /// tool, or put the directory it is already in on `PATH`.
   String missingToolMessage(String executable, {required String from}) {
-    final where = _paths.split(executable).length > 1
-        // Named, because the path is read relative to this directory and a
-        // reader standing somewhere else cannot tell which `./tool/gen` was
-        // looked for. An absolute one says where it is by itself.
-        ? _paths.isAbsolute(executable)
-              ? 'no file at `$executable`, or it is not executable'
-              : 'no file at `$executable` under `$from`, or it is not '
-                    'executable'
-        : 'nothing runnable by that name in the '
-              '${_searchPath.length} directories on PATH';
+    if (_paths.split(executable).length > 1) {
+      // **No suffix list here.** A name that is already a path is tried once,
+      // exactly as written — `_find` appends nothing to it — so naming
+      // `PATHEXT` would tell a Windows reader with `tool\\gen.bat` on disk
+      // that it had been looked at and was not there.
+      //
+      // The directory is named, because the path is read relative to it and a
+      // reader standing somewhere else cannot tell which `./tool/gen` was
+      // meant. An absolute one says where it is by itself.
+      final where = _paths.isAbsolute(executable)
+          ? 'no file at `$executable`, or it is not executable'
+          : 'no file at `$executable` under `$from`, or it is not executable';
+      return '`$executable` is not installed, or is not on PATH — $where';
+    }
     final tried = _suffixesFor(executable).where((s) => s.isNotEmpty);
     final suffixes = windows && tried.isNotEmpty
         ? ', with any of ${tried.join(', ')}'
         : '';
-    return '`$executable` is not installed, or is not on PATH — $where'
-        '$suffixes';
+    return '`$executable` is not installed, or is not on PATH — nothing '
+        'runnable by that name in the ${_searchPath.length} directories on '
+        'PATH$suffixes';
   }
 
   List<String> get _searchPath => [

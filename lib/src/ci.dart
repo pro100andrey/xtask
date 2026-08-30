@@ -131,15 +131,19 @@ final class ExemptsWithoutSaying extends CiProblem {
   const ExemptsWithoutSaying(super.step);
 }
 
-/// An exemption on a step that is a gate set invocation after all.
+/// An exemption on a step that reaches xtask after all.
 ///
-/// Nothing was exempted, so the marker is a line saying something untrue about
-/// the step under it — and the ones that are load-bearing become impossible to
-/// find among the ones that are not.
+/// The marker says the step is not a gate set. On a step that names one — or
+/// asks xtask a question — it says something untrue, and excuses nothing: the
+/// step was never going to be reported as a command. Refused, because a marker
+/// that excuses nothing is how the load-bearing ones become impossible to
+/// find, and because it was hiding real findings — a misspelled gate set
+/// stopped being reported the moment somebody wrote one above it.
 final class ExemptsNothing extends CiProblem {
-  const ExemptsNothing(super.step, this.gate);
+  const ExemptsNothing(super.step, this.reaches);
 
-  final String gate;
+  /// What the step turned out to be: a gate set, or the mode it asks for.
+  final String reaches;
 }
 
 /// A step naming a gate set this file does not declare — so the job runs
@@ -247,45 +251,60 @@ CiReport checkCi(XtaskFile file, {required String root}) {
 
   for (final step in steps) {
     final read = _readStep(step.command);
-    final gate = read.gate;
+    final exemption = step.exemption;
 
-    // Asked before anything is refused, and after the step has been read: an
-    // exemption has to be checked against what the step turned out to be, or
-    // it cannot be told from one that exempts nothing.
-    if (step.exemption case final reason?) {
-      if (reason.isEmpty) {
-        problems.add(ExemptsWithoutSaying(step));
-      } else if (gate != null && declared.contains(gate)) {
+    // **The exemption is asked last, and only of a step that would otherwise
+    // be a command.** Asked first, it swallowed everything: a marker on
+    // `xtask check -j abc` hid the command line's own refusal, and a marker on
+    // `xtask chekc` hid a misspelled gate set — so a job that runs nothing
+    // passed, which is the silent green this mode exists to prevent. What the
+    // marker says is "this step is not a gate set", and that is a sentence
+    // about exactly one of the outcomes below.
+    if (read.refused case final refusal?) {
+      problems.add(RunsSomethingRefused(step, refusal));
+      continue;
+    }
+    if (read.gate case final gate?) {
+      if (exemption != null) {
         problems.add(ExemptsNothing(step, gate));
+      } else if (!declared.contains(gate)) {
+        problems.add(RunsAnUndeclaredGate(step, gate, declared));
+      } else {
+        invocations.add((step: step, gate: gate));
+      }
+      continue;
+    }
+    if (read.named case final named?) {
+      problems.add(
+        exemption != null
+            ? ExemptsNothing(step, named)
+            : NamesAGateWithoutRunningIt(step, read.mode ?? '', named),
+      );
+      continue;
+    }
+    if (read.mode case final mode?) {
+      if (exemption != null) {
+        problems.add(ExemptsNothing(step, mode));
+      } else {
+        questions.add((step: step, mode: mode));
+      }
+      continue;
+    }
+    if (exemption != null) {
+      if (exemption.isEmpty) {
+        problems.add(ExemptsWithoutSaying(step));
       } else {
         exempted.add(step);
       }
       continue;
     }
-
-    if (gate == null) {
-      final refused = read.refused;
-      if (refused != null) {
-        problems.add(RunsSomethingRefused(step, refused));
-      } else if (read.named case final named?) {
-        problems.add(
-          NamesAGateWithoutRunningIt(step, read.mode ?? '', named),
-        );
-      } else if (read.mode case final mode?) {
-        questions.add((step: step, mode: mode));
-      } else {
-        problems.add(RunsACommand(step));
-      }
-      continue;
-    }
-    if (!declared.contains(gate)) {
-      problems.add(RunsAnUndeclaredGate(step, gate, declared));
-      continue;
-    }
-    invocations.add((step: step, gate: gate));
+    problems.add(RunsACommand(step));
   }
 
-  if (invocations.isEmpty && questions.isEmpty && problems.isEmpty) {
+  if (invocations.isEmpty &&
+      questions.isEmpty &&
+      exempted.isEmpty &&
+      problems.isEmpty) {
     throw XtaskFormatException(
       'nothing under `$workflowDirectory` invokes xtask, so there is nothing '
       'to check this file against',
@@ -312,19 +331,20 @@ CiReport checkCi(XtaskFile file, {required String root}) {
 /// entry point to the project and a checker that only recognised one spelling
 /// would report a working workflow as broken.
 bool _namesXtask(String word) =>
-    // **Not inside a quoted string.** The words come from splitting on
-    // whitespace, which is not what a shell does, so a word may still be
-    // carrying the quote it was written with: `echo "install xtask first"`
-    // splits into `echo`, `"install`, `xtask`, `first"`, and reading on from
-    // the third word reported `first"` as a gate set this file does not
-    // declare. A word wearing a quote was not tokenised the way it will be
-    // run, and nothing true can be said about what follows it.
-    !word.contains('"') &&
-    !word.contains("'") &&
-    (word == 'xtask' ||
-        word.endsWith(':xtask') ||
-        word.endsWith('xtask.dart') ||
-        word.endsWith('/xtask'));
+    word == 'xtask' ||
+    word.endsWith(':xtask') ||
+    word.endsWith('xtask.dart') ||
+    word.endsWith('/xtask');
+
+/// Whether splitting on whitespace cut [word] out of a quoted string.
+///
+/// An odd count is what says so. A balanced pair is a quoted argument that
+/// survived the split whole, and `-j "2"` is a thing somebody writes.
+bool _cutThroughAQuote(String word) =>
+    '"'.allMatches(word).length.isOdd || "'".allMatches(word).length.isOdd;
+
+/// [word] without the quotes a shell would take off it.
+String _unquoted(String word) => word.replaceAll('"', '').replaceAll("'", '');
 
 /// What shell step [command] turns out to be.
 ///
@@ -351,19 +371,29 @@ bool _namesXtask(String word) =>
     named: null,
   );
   final words = command.split(RegExp(r'\s+'));
-  if (words.any((word) => word.contains('"') || word.contains("'"))) {
-    // A step this cannot tokenise the way a shell will. Saying it runs a
-    // command is true — it does — and saying anything more precise would be
-    // reading quotes, which is the shell grammar this refuses to keep.
-    return notAnInvocation;
-  }
   final at = words.indexWhere(_namesXtask);
   if (at == -1) {
     return notAnInvocation;
   }
 
+  // **Only the words this is about to parse, and only unbalanced quotes.**
+  // Splitting on whitespace is not what a shell does, so a word may still be
+  // wearing half of the quote it was written inside: `echo "install xtask
+  // first"` gives `first"` after the xtask word, and reading on from it
+  // reported `first"` as a gate set the file does not declare. An odd number
+  // of quotes is what says the split cut through a string.
+  //
+  // Judged on these words rather than on the whole step, because a step may
+  // quote something before reaching xtask — a `run: |` block that echoes a
+  // line and then runs the gate — and a balanced pair is an ordinary argument
+  // that survives the split whole.
+  final arguments = words.skip(at + 1).toList();
+  if (arguments.any(_cutThroughAQuote)) {
+    return notAnInvocation;
+  }
+
   final request = parseArguments(
-    words.skip(at + 1).toList(),
+    arguments.map(_unquoted).toList(),
     // The number is discarded — only whether it PARSES is being asked — and a
     // check that read this machine's width would vouch differently for one
     // workflow on two runners.
@@ -510,7 +540,15 @@ String? _exemptionNear(List<String> lines, SourceSpan? span) {
   final at = span.start.line;
   for (final line in [
     if (at < lines.length) lines[at],
-    if (at > 0 && at - 1 < lines.length) lines[at - 1],
+    // **Only when the line above is nothing but a comment.** Taken as written,
+    // a marker trailing one step's own line was also found by the step under
+    // it: `- run: npm ci # xtask: not a gate — deps` exempted the `- run: dart
+    // analyze` beneath it, which is the duplicate list growing back, green,
+    // under somebody else's reason.
+    if (at > 0 &&
+        at - 1 < lines.length &&
+        lines[at - 1].trimLeft().startsWith('#'))
+      lines[at - 1],
   ]) {
     final marker = line.indexOf(exemptionMarker);
     if (marker != -1) {

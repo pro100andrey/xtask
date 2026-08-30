@@ -117,12 +117,13 @@ List<PlanEdge>? routeTo(
   // memo from nothing for each. On a two-thousand task chain that was the
   // difference between eight seconds and a quarter of one.
   final unreachable = hopeless ?? <String>{};
-  // **And nothing is remembered once a ring has been met.** A branch cut short
-  // by the path guard says nothing about that task in general — entered from
-  // somewhere else, the edge it turned back on would be walked. Cycles are
-  // §8's to refuse, so this costs the fast bound only on files that are
-  // already being reported as broken.
-  var metARing = false;
+  // **And nothing is remembered once a branch has been cut short.** A "no"
+  // that came from the path guard rather than from having looked says nothing
+  // about that task in general — entered from somewhere
+  // else, the edge it turned back on would be walked. Cycles are §8's to
+  // refuse, so this costs the fast bound only on files that are already being
+  // reported as broken.
+  var cutShort = false;
 
   // **Built once, on the way out.** Each level used to return
   // `[edge, ...rest]`, copying the whole remaining route at every hop — which
@@ -135,15 +136,26 @@ List<PlanEdge>? routeTo(
     if (at == to) {
       return true;
     }
-    if (unreachable.contains(at) || depth > mostDepth) {
-      // The same bound the planner keeps, and for the same reason: one frame
-      // per edge. `--why` is asked about files `--validate` has not
-      // necessarily been run on first.
+    if (unreachable.contains(at)) {
       return false;
+    }
+    // The same bound the planner keeps, and for the same reason: one frame per
+    // edge. **Refused rather than answered**, because the two answers this
+    // walk can give are "here is the route" and "nothing reaches it", and the
+    // second is a lie about a task a gate set does reach. `planRun` refuses
+    // the same file; two modes disagreeing about one file is worse than
+    // either of them saying no.
+    if (depth > mostDepth) {
+      throw XtaskFormatException(
+        'the chain reaching `$at` is more than $mostDepth tasks deep, which is '
+        'further than this engine walks — so what reaches `$to` cannot be '
+        'answered without saying less than the truth',
+        file.tasks[at]?.span,
+      );
     }
     // A cycle is `--validate`'s to report; here it must only not hang.
     if (!seen.add(at)) {
-      metARing = true;
+      cutShort = true;
       return false;
     }
     // **Removed again on the way out.** Kept, it marked every task a dead
@@ -153,7 +165,7 @@ List<PlanEdge>? routeTo(
     // wrong-shaped everywhere: `seen` is the path, not the visited set.
     void done({required bool reached}) {
       seen.remove(at);
-      if (!reached && !metARing) {
+      if (!reached && !cutShort) {
         unreachable.add(at);
       }
     }

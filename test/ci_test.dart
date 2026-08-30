@@ -300,6 +300,67 @@ jobs:
       expect(check().exempted, hasLength(1));
     });
 
+    test('but a trailing marker does not exempt the step under it', () {
+      // Read as "the line above", a marker trailing one step's own line was
+      // also found by the next step: `npm ci # …` exempted the `dart analyze`
+      // beneath it — the duplicate list growing back, green, under somebody
+      // else's reason. The line above counts only when it is nothing but a
+      // comment.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: npm ci # xtask: not a gate — deps
+      - run: dart analyze
+''');
+      expect(check().exempted, hasLength(1));
+      expect(said().single, contains('dart analyze'));
+    });
+
+    test('and a marker does not silence what the command line refuses', () {
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze -j abc # xtask: not a gate — flaky
+''');
+      expect(said().single, contains('is not a number of jobs'));
+    });
+
+    test('and it does not silence a misspelled gate set', () {
+      // The worst of the three: a job that runs nothing, passing, because
+      // somebody wrote a comment above it.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: dart run :xtask ci-analyse # xtask: not a gate — legacy
+''');
+      expect(said().single, contains('excuses nothing'));
+      expect(check().exempted, isEmpty);
+    });
+
+    test('and a step that only quotes something still runs its gate', () {
+      // The quote guard was asked of every word in the step, so a block that
+      // echoes a line before running the gate was reported as a duplicated
+      // command list — about a gate already in the task file. It is asked of
+      // the words being parsed, and only of unbalanced quotes.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: |
+          echo "running the gates"
+          dart run :xtask ci-analyze
+      - run: dart run :xtask ci-web -j "2"
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: '${refusals(found)}');
+      expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+    });
+
     test('but an exemption with no reason is refused', () {
       // The reason is the whole price. Without it the marker is a way of
       // turning a red gate green that leaves nothing behind saying what for.

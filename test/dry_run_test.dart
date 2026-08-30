@@ -308,6 +308,22 @@ void main() {
       );
     });
 
+    test('and a refused `remove` inside a `then:` fails as one', () {
+      // The early return answered 2 flat, while the run turns any failure
+      // inside a continuation into its own code — so this mode disagreed with
+      // the run it describes, about the same file.
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, run: [dart, test], then: [clean]}\n'
+              '  clean: {desc: y, do: remove, args: [../outside]}\n',
+          'a',
+          verbs: builtInVerbs(root: root.path),
+        ),
+        completion(ExitCode.continuationFailed),
+      );
+    });
+
     test('and says the same about a pattern that will not compile', () {
       expect(
         dry(

@@ -384,10 +384,22 @@ tasks:
       );
     });
 
-    test('and `--why` answers rather than following it down', () {
-      // Asked of files `--validate` has not necessarily been run on.
+    test('and `--why` refuses it rather than answering less than true', () {
+      // It cut the branch and returned false, which `routesTo` renders as
+      // `nothing reaches it` — about a task the first entry point does reach.
+      // Two modes disagreeing about one file is worse than either saying no.
       final file = parseXtaskFile(chain(mostDepth + 50));
       expect(() => routesTo(file, 't0'), returnsNormally);
+      expect(
+        () => routesTo(file, 't${mostDepth + 20}'),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('further than this engine walks'),
+          ),
+        ),
+      );
     });
   });
 }

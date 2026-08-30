@@ -75,7 +75,13 @@ Future<int> dryRun({
       // never be reached, and printing it as though it would be is the thing
       // this mode exists not to do.
       if (deletion.refused) {
-        return ExitCode.invalidFile;
+        // The code the run would give, including the third outcome — the same
+        // question the resolution failure above asks. A `remove` refused
+        // inside a `then:` fails as a continuation, and answering 2 here
+        // would be this mode disagreeing with the run it describes.
+        return step.isContinuation
+            ? ExitCode.continuationFailed
+            : ExitCode.invalidFile;
       }
     }
   }

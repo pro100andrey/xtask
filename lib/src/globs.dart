@@ -29,66 +29,13 @@ import 'package:path/path.dart' as p;
 /// meant one thing under `sets:` and another under `do: remove`, in the same
 /// file, with nothing to say so. A file format with two dialects is the defect
 /// §1 exists to remove, and it had grown inside the tool.
-Set<String> zeroOrMoreDirectories(String pattern) {
-  // **Counted before anything is built, which is the whole point of a limit.**
-  // This was applied to the readings after `_readings` had materialised every
-  // one of them: twenty-four globstars built sixteen million strings and then
-  // refused, and thirty took the process down with an out-of-memory instead of
-  // the sentence written here for it.
-  //
-  // Each `**/` at most doubles the readings, so the same limit said in
-  // globstars is answerable by walking the pattern once and allocating
-  // nothing — and it is the only check there needs to be, because past it
-  // `_readings` cannot exceed [mostReadings].
-  final globstars = _globstars(pattern, 0);
-  if (globstars > _mostGlobstars) {
-    throw FormatException(
-      '`$pattern` has $globstars `**/` segments, which is up to '
-      '${1 << globstars} readings — more than the $mostReadings this engine '
-      'will match against every file it walks. Each `**/` doubles them, '
-      'because it means none OR more directories. Name fewer of them, or '
-      'split the set',
-    );
-  }
-  return _readings(pattern, 0);
-}
+Set<String> zeroOrMoreDirectories(String pattern) => _readings(pattern, 0);
 
 /// How many readings of one pattern the engine will compile.
 ///
 /// Generous: the shapes a person writes have one or two `**/`, and a monorepo
 /// pattern like `packages/**/lib/**/src/**/*.dart` has eight.
 const mostReadings = 32;
-
-/// How many `**/` segments [pattern] has that [_readings] would double on.
-///
-/// The same walk [_readings] makes, without building anything: the count is
-/// what says whether building is affordable, so it cannot be a by-product of
-/// having built. A loop rather than a recursion, because counting has no
-/// reason to hold a frame per segment when the thing it guards against is
-/// holding too many.
-int _globstars(String pattern, int open) {
-  var count = 0;
-  var rest = pattern;
-  var depth = open;
-  while (true) {
-    var index = rest.indexOf('**/');
-    while (index > 0 && !_startsSegment(rest, index, depth)) {
-      index = rest.indexOf('**/', index + 1);
-    }
-    if (index == -1) {
-      return count;
-    }
-    count++;
-    depth += _depthOf(rest, index + 3);
-    rest = rest.substring(index + 3);
-  }
-}
-
-/// The same limit as [mostReadings], said in what a pattern is written with.
-///
-/// Each `**/` at most doubles the readings, so five of them is thirty-two and
-/// a sixth is the first count that can exceed it.
-const _mostGlobstars = 5;
 
 /// [pattern]'s readings, given that [open] brace groups are already open where
 /// it begins.
@@ -99,42 +46,87 @@ const _mostGlobstars = 5;
 /// start and its second as an ordinary comma, and the set matched every nested
 /// `.yaml` and no root one.
 Set<String> _readings(String pattern, int open) {
-  // Find the first `**` that stands as a WHOLE segment, skipping past any that
-  // do not. Stopping at the first occurrence and giving up if it was part of a
-  // larger token abandons the zero-directory reading of every later,
-  // legitimate one: `a**/b/**/c` was left untouched entirely that way.
-  var index = pattern.indexOf('**/');
-  while (index > 0 && !_startsSegment(pattern, index, open)) {
-    index = pattern.indexOf('**/', index + 1);
+  // **Left to right, and refused the moment it is too many.** This recursed on
+  // the tail and combined on the way out, so the count was a by-product of
+  // having built every reading — and the limit was applied after: twenty-four
+  // globstars built sixteen million strings before refusing, and thirty ran
+  // the process out of memory instead of reaching the sentence written for it.
+  //
+  // Counting the globstars instead and calling it `2^n` was worse than wrong,
+  // it was wrong in the refusing direction: readings collapse. `a/**/**/b` has
+  // three readings and not four, and six adjacent globstars have seven rather
+  // than sixty-four — patterns the old check accepted and a count of segments
+  // turns away. Accumulating the set says exactly how many there are, at every
+  // step, having built only that many.
+  var readings = {''};
+  var rest = pattern;
+  var depth = open;
+
+  while (true) {
+    // Find the first `**` that stands as a WHOLE segment, skipping past any
+    // that do not. Stopping at the first occurrence and giving up if it was
+    // part of a larger token abandons the zero-directory reading of every
+    // later, legitimate one: `a**/b/**/c` was left untouched entirely that way.
+    var index = rest.indexOf('**/');
+    while (index > 0 && !_startsSegment(rest, index, depth)) {
+      index = rest.indexOf('**/', index + 1);
+    }
+    if (index == -1) {
+      return {
+        for (final reading in readings) reading + rest,
+        // `**/` on its own yields the empty pattern, which `Glob` refuses. It
+        // is the engine's own by-product, so it is dropped here rather than
+        // surfacing as a crash on a pattern the library accepts.
+      }..removeWhere((variant) => variant.isEmpty);
+    }
+
+    final withStar = rest.substring(0, index + 3);
+    final withoutStar = rest.substring(0, index);
+    final tail = rest.substring(index + 3);
+
+    // **Unless dropping it would empty a brace alternative.** `{**/,b}` has an
+    // alternative that is nothing BUT the globstar, so the zero-directory
+    // reading of it is `{,b}` — which `package:glob` builds without complaint
+    // and then throws `Bad state: No element` from, at match time, past the
+    // `FormatException` guard that catches a malformed pattern. A variant this
+    // function invented must not be one the file could not have written.
+    final emptiesAnAlternative =
+        (withoutStar.endsWith('{') || withoutStar.endsWith(',')) &&
+        (tail.isEmpty || tail.startsWith(',') || tail.startsWith('}'));
+
+    readings = {
+      for (final reading in readings) reading + withStar,
+      if (!emptiesAnAlternative)
+        for (final reading in readings) reading + withoutStar,
+    };
+    if (readings.length > mostReadings) {
+      // **Refused, because nothing else bounds it.** Every reading becomes its
+      // own compiled glob, matched against every entry of the walk, so the
+      // cost of one line of `xtask.yaml` doubles per `**/` in it: eight
+      // globstars is 256 globs per entry, and ten is over a thousand. A
+      // pattern needing more than this is not saying what its author thinks it
+      // says.
+      throw FormatException(
+        '`${_short(pattern)}` has more than $mostReadings readings, which is '
+        'more than '
+        'this engine will match against every file it walks. Each `**/` can '
+        'double them, because it means none OR more directories. Name fewer '
+        'of them, or split the set',
+      );
+    }
+
+    depth += _depthOf(rest, index + 3);
+    rest = tail;
   }
-  if (index == -1) {
-    return {pattern};
-  }
-
-  final withStar = pattern.substring(0, index + 3);
-  final withoutStar = pattern.substring(0, index);
-  final rest = pattern.substring(index + 3);
-  final tails = _readings(rest, open + _depthOf(pattern, index + 3));
-
-  // **Unless dropping it would empty a brace alternative.** `{**/,b}` has an
-  // alternative that is nothing BUT the globstar, so the zero-directory
-  // reading of it is `{,b}` — which `package:glob` builds without complaint
-  // and then throws `Bad state: No element` from, at match time, past the
-  // `FormatException` guard that catches a malformed pattern. A variant this
-  // function invented must not be one the file could not have written.
-  final emptiesAnAlternative =
-      (withoutStar.endsWith('{') || withoutStar.endsWith(',')) &&
-      (rest.isEmpty || rest.startsWith(',') || rest.startsWith('}'));
-
-  return {
-    for (final tail in tails) withStar + tail,
-    if (!emptiesAnAlternative)
-      for (final tail in tails) withoutStar + tail,
-    // `**/` on its own yields the empty pattern, which `Glob` refuses. It is
-    // the engine's own by-product, so it is dropped here rather than surfacing
-    // as a crash on a pattern the library accepts.
-  }..removeWhere((variant) => variant.isEmpty);
 }
+
+/// [pattern], short enough to read in a refusal.
+///
+/// The pattern is quoted so a reader can see which line of the file this is
+/// about, and a pathological one is exactly the pattern that reaches here: a
+/// thousand globstars printed whole is a refusal nobody can read.
+String _short(String pattern) =>
+    pattern.length <= 120 ? pattern : '${pattern.substring(0, 117)}...';
 
 /// How many brace groups the first [upTo] characters of [pattern] open.
 int _depthOf(String pattern, int upTo) {

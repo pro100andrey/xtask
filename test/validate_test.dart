@@ -63,6 +63,14 @@ void main() {
       expect(check("['/etc']").ok, isFalse);
     });
 
+    test('and names every one of them, not the first', () {
+      // `--validate` opens by saying everything wrong with a file rather than
+      // the first thing; three bad paths answered one at a time is three
+      // round trips.
+      final report = check("['/etc', '../..', '/var/lib']");
+      expect(report.problems, hasLength(3));
+    });
+
     test('and says nothing about arguments that stay inside', () {
       expect(check("['build', 'coverage']").ok, isTrue);
     });

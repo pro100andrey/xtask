@@ -360,14 +360,15 @@ String _about(CiStep step, String what) =>
 
 String _why(CiProblem problem) => switch (problem) {
   RunsACommand(:final step) =>
-    'runs `${step.command}`. What runs belongs in the task file as a task in '
-        'a gate set; a job runs the gate, so that the two cannot drift apart',
+    'runs `${_oneLine(step.command)}`. What runs belongs in the task file as '
+        'a task in a gate set; a job runs the gate, so that the two cannot '
+        'drift apart',
   // **The command line's own sentence, not a guess at it.** Such a step may
   // name a gate set correctly and still exit before doing anything, and
   // "what runs belongs in the task file" about it sends the reader to move a
   // task that is already where it should be.
   RunsSomethingRefused(:final step, :final refusal) =>
-    'runs `${step.command}`, which xtask refuses: $refusal',
+    'runs `${_oneLine(step.command)}`, which xtask refuses: $refusal',
   RunsAnUndeclaredGate(:final gate, :final declared) =>
     'runs the gate set `$gate`, which this file does not declare — so the job '
         'runs nothing'
@@ -379,13 +380,14 @@ String _why(CiProblem problem) => switch (problem) {
   // a way of turning a red gate green and leaving nothing behind that says
   // who did it or what for.
   ExemptsWithoutSaying(:final step) =>
-    'exempts `${step.command}` and gives no reason. Write it after '
+    'exempts `${_oneLine(step.command)}` and gives no reason. Write it after '
         '`$exemptionMarker`: the reason is what someone reads before deleting '
         'the line, and what makes an exemption possible to weigh',
-  ExemptsNothing(:final gate) =>
-    'exempts a step that runs the gate set `$gate`, so the marker excuses '
-        'nothing. A marker on a step that did not need one is how the ones '
-        'that are load-bearing become impossible to find',
+  ExemptsNothing(:final reaches) =>
+    'exempts a step that reaches xtask as `$reaches`, so the marker excuses '
+        'nothing — the step was never going to be reported as a command. A '
+        'marker that excuses nothing hides the findings under it and makes '
+        'the load-bearing ones impossible to find',
 };
 
 /// [of], sorted and joined.

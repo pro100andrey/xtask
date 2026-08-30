@@ -5,6 +5,7 @@ import 'package:glob/list_local_fs.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/errors.dart';
+import 'package:xtask/src/globs.dart';
 import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/sets.dart';
@@ -57,14 +58,16 @@ void main() {
     });
   });
 
-  test('and it is refused before the readings are built', () {
-    // The limit used to be applied to the readings after every one had been
-    // materialised: twenty-four globstars built sixteen million strings and
-    // then refused, and thirty ran the process out of memory instead of
-    // reaching the sentence written here for it. Counting walks the pattern
-    // once, so this returns rather than allocating.
+  test('and it is refused before every reading is built', () {
+    // The limit used to be applied after every reading had been materialised:
+    // twenty-four globstars built sixteen million strings and then refused,
+    // and thirty ran the process out of memory instead of reaching the
+    // sentence written here for it. The readings are accumulated left to
+    // right and the count is checked at each step, so a pattern like this one
+    // is refused having built thirty-three strings, not 2^50000.
     final root = tempRepo('vast');
-    final vast = '${'**/' * 30}*.dart';
+    final vast = '${'**/x/' * 50000}*.dart';
+    final clock = Stopwatch()..start();
     expect(
       () => SetExpander(root: root.path).expand(
         's',
@@ -74,11 +77,26 @@ void main() {
         isA<XtaskFormatException>().having(
           (e) => e.message,
           'message',
-          allOf(contains('readings'), contains('30 `**/` segments')),
+          allOf(contains('readings'), contains('set `s`')),
         ),
       ),
     );
+    expect(
+      clock.elapsed,
+      lessThan(const Duration(seconds: 5)),
+      reason: 'this refusal is meant to arrive before the work does',
+    );
   });
+
+  test(
+    'and a pattern whose readings collapse is not refused for its shape',
+    () {
+      // Counting globstars and calling it `2^n` refused this: six of them, so
+      // sixty-four readings by that arithmetic. Dropping one adjacent globstar
+      // and dropping the next produce the same string, so there are seven.
+      expect(zeroOrMoreDirectories('a/**/**/**/**/**/**/b'), hasLength(7));
+    },
+  );
 
   test('a pattern with too many readings is refused, not matched', () {
     // Each `**/` doubles them, because it means none OR more directories, and

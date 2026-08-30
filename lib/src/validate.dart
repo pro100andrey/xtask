@@ -159,13 +159,12 @@ void _checkRemoveArguments(Task task, List<XtaskFormatException> problems) {
     if (!leavesRoot(argument)) {
       continue;
     }
+    // Every one of them. This module opens by saying everything wrong with a
+    // file rather than the first thing, and three bad paths answered one at a
+    // time is three round trips.
     problems.add(
-      XtaskFormatException(
-        removeLeavesRoot(written: argument),
-        task.span,
-      ),
+      XtaskFormatException(removeLeavesRoot(written: argument), task.span),
     );
-    return;
   }
 }
 
