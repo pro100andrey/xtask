@@ -155,7 +155,10 @@ void _checkRemoveArguments(Task task, List<XtaskFormatException> problems) {
   if (body is! DoBody || body.verb != removeVerbName) {
     return;
   }
-  for (final argument in task.args) {
+  // Distinct, because the span is the task's: `args: ['/etc', 'x', '/etc']`
+  // printed the same sentence twice under the same underlined line, which
+  // reads as the validator repeating itself rather than as two facts.
+  for (final argument in task.args.toSet()) {
     if (!leavesRoot(argument)) {
       continue;
     }

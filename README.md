@@ -341,14 +341,27 @@ The rule is blanket, and the exception is written where the exception is:
 - run: npx playwright install --with-deps
 ```
 
-The marker goes on the step's own line or the line above it, and **the reason
-is required** — a marker with nothing after it is refused, because a marker
-with nothing after it is what this becomes when it is reached for to make a
-red gate green. So is a marker on a step that runs a gate set after all: it
-excuses nothing, and markers that excuse nothing are how the ones that matter
-become impossible to find. Every exemption is printed with its reason next to
-the jobs that passed, so a workflow that has quietly exempted its way to green
-says so in the same breath.
+The marker goes on the step's own line, or on a line of its own directly above
+it — not on a line inside another step's script, which is that script's
+comment and not this file's.
+
+**The reason is required.** A marker with nothing after it is refused, because
+a marker with nothing after it is what this becomes when it is reached for to
+make a red gate green.
+
+**And it only excuses a step that would otherwise be reported as a command**,
+which is the one thing it claims: that xtask misread this step. On a step that
+does reach xtask it is refused, whatever it says — one that runs a gate set,
+one that names a gate set under a mode, one that asks a question, one the
+command line itself turns away, one that names a gate set with a typo in it.
+Otherwise the marker is a way of making a job that runs nothing pass, which is
+the failure this whole mode exists to catch.
+
+Every exemption is printed with its reason next to the jobs that passed, so a
+workflow that has quietly exempted its way to green says so in the same
+breath. And a workflow whose every `run:` step is exempted invokes xtask
+nowhere, which is refused as it was before: the marker cannot stand in for the
+invocation.
 
 The rule stays blanket rather than growing a sense of which steps are
 "infrastructure" because no tool anywhere has one: the axis does not exist, and

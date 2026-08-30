@@ -384,10 +384,12 @@ tasks:
       );
     });
 
-    test('and `--why` refuses it rather than answering less than true', () {
-      // It cut the branch and returned false, which `routesTo` renders as
-      // `nothing reaches it` — about a task the first entry point does reach.
-      // Two modes disagreeing about one file is worse than either saying no.
+    test('and `--why` refuses only where the cut changed the answer', () {
+      // Two ways to get this wrong, and both were tried. Returning false
+      // renders as `nothing reaches it`, about a branch never looked down.
+      // Throwing from the walk refused a whole question over a chain the
+      // question did not touch. So the cut is reported to the caller, which
+      // knows whether the answer depended on it.
       final file = parseXtaskFile(chain(mostDepth + 50));
       expect(() => routesTo(file, 't0'), returnsNormally);
       expect(
@@ -400,6 +402,20 @@ tasks:
           ),
         ),
       );
+    });
+
+    test('and an unrelated deep chain does not refuse a short question', () {
+      final file = parseXtaskFile(
+        [
+          'version: 1',
+          'gates: [g]',
+          'tasks:',
+          '  s: {desc: x, gate: [g], needs: [z]}',
+          "  z: {desc: y, run: ['true']}",
+          chain(mostDepth + 100).split('\n').skip(2).join('\n'),
+        ].join('\n'),
+      );
+      expect(routesTo(file, 'z').keys, contains('gate g'));
     });
   });
 }

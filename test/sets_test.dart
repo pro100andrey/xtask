@@ -67,7 +67,6 @@ void main() {
     // is refused having built thirty-three strings, not 2^50000.
     final root = tempRepo('vast');
     final vast = '${'**/x/' * 50000}*.dart';
-    final clock = Stopwatch()..start();
     expect(
       () => SetExpander(root: root.path).expand(
         's',
@@ -81,11 +80,49 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('and a pattern whose readings collapse is bounded by its length', () {
+    // The readings bound cannot catch this one: `{a,**/}` keeps the set at a
+    // single member however many times it is repeated, so the loop ran once
+    // per segment and nothing stopped it — sixteen thousand of them was a
+    // second and a half of work to answer with one string.
+    //
+    // Counted rather than timed. A wall-clock assertion in a suite three OS
+    // runners run is a gate that goes red for being busy.
     expect(
-      clock.elapsed,
-      lessThan(const Duration(seconds: 5)),
-      reason: 'this refusal is meant to arrive before the work does',
+      () => zeroOrMoreDirectories('{a,**/}' * (mostGlobstarSegments + 10)),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('`**/` segments'),
+        ),
+      ),
     );
+    expect(
+      zeroOrMoreDirectories('{a,**/}' * mostGlobstarSegments),
+      hasLength(1),
+      reason: 'the bound is on the segments, and this many is still read',
+    );
+  });
+
+  test('and an alternative that is only a globstar is never emptied', () {
+    // `{**/,b}` dropped to `{,b}`, which `package:glob` builds and then
+    // throws `Bad state: No element` from at match time — a StateError, past
+    // the FormatException guard, so exit 255. The check was asked of the text
+    // before the globstar, which after the first segment no longer holds the
+    // `{`: `{**/**/,b}` reached it with nothing to look at and built `{,b}`
+    // anyway.
+    for (final pattern in ['{**/,b}', '{**/**/,b}', '{a,**/**/}']) {
+      for (final reading in zeroOrMoreDirectories(pattern)) {
+        expect(
+          () => Glob(reading).matches('x'),
+          returnsNormally,
+          reason: '$pattern produced `$reading`, which Glob cannot match',
+        );
+      }
+    }
   });
 
   test(

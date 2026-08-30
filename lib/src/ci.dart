@@ -301,10 +301,11 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     problems.add(RunsACommand(step));
   }
 
-  if (invocations.isEmpty &&
-      questions.isEmpty &&
-      exempted.isEmpty &&
-      problems.isEmpty) {
+  // Exemptions are deliberately NOT counted here. A step somebody marked as
+  // not a gate is a step that does not invoke xtask, so a workflow of nothing
+  // but those invokes it nowhere — and answering 0 is what this throw exists
+  // to prevent: `--check-ci` passing after the invocation was deleted.
+  if (invocations.isEmpty && questions.isEmpty && problems.isEmpty) {
     throw XtaskFormatException(
       'nothing under `$workflowDirectory` invokes xtask, so there is nothing '
       'to check this file against',
@@ -335,6 +336,42 @@ bool _namesXtask(String word) =>
     word.endsWith(':xtask') ||
     word.endsWith('xtask.dart') ||
     word.endsWith('/xtask');
+
+/// Where in [words] xtask is being **run**, or null.
+///
+/// **Naming it is not running it.** Any word matching was taken as the
+/// invocation, so `chmod +x ./xtask`, `cp ./xtask /usr/local/bin` and `dart
+/// compile exe bin/xtask.dart -o xtask` were each read as an xtask command
+/// line and reported for whatever `parseArguments` made of the words after —
+/// `cp` was told it ran a gate set called `/usr/local/bin`. Those steps are
+/// ordinary commands that happen to mention the binary, which a repository
+/// building its own copy of it does in the same workflow.
+///
+/// A command starts a step, or follows the thing that runs it. Loose about
+/// WHICH runner, for the reason [_namesXtask] is loose about the spelling: the
+/// entry point is the project's, and `dart run`, `npx` and `pnpm exec` are all
+/// somebody's.
+int? _runsXtask(List<String> words) {
+  for (var at = 0; at < words.length; at++) {
+    if (!_namesXtask(words[at])) {
+      continue;
+    }
+    if (at == 0 || _runsWhatFollows(words[at - 1])) {
+      return at;
+    }
+  }
+  return null;
+}
+
+/// Whether [word] is a thing whose next argument is a command to run.
+bool _runsWhatFollows(String word) => const {
+  'run',
+  'exec',
+  'npx',
+  'bunx',
+  'pnpx',
+  'dlx',
+}.contains(word);
 
 /// Whether splitting on whitespace cut [word] out of a quoted string.
 ///
@@ -371,8 +408,8 @@ String _unquoted(String word) => word.replaceAll('"', '').replaceAll("'", '');
     named: null,
   );
   final words = command.split(RegExp(r'\s+'));
-  final at = words.indexWhere(_namesXtask);
-  if (at == -1) {
+  final at = _runsXtask(words);
+  if (at == null) {
     return notAnInvocation;
   }
 
@@ -503,17 +540,22 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
     if (steps is! YamlList) {
       continue;
     }
+    // Where the previous step's `run:` block ended. A `#` line inside one is
+    // shell, not a YAML comment, and belongs to the script it is written in.
+    var previousEnded = -1;
     for (final step in steps) {
       if (step is! YamlMap) {
         continue;
       }
       if (step['run'] case final String command) {
+        final span = step.nodes['run']?.span;
         yield CiStep(
           name,
           '${entry.key}',
           command.trim(),
-          exemption: _exemptionNear(lines, step.nodes['run']?.span),
+          exemption: _exemptionNear(lines, span, after: previousEnded),
         );
+        previousEnded = span?.end.line ?? previousEnded;
       }
     }
   }
@@ -531,7 +573,11 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
 /// A marker with nothing after it comes back as the empty string rather than
 /// null, so that the caller can tell "no exemption" from "an exemption that
 /// gave no reason" and refuse the second.
-String? _exemptionNear(List<String> lines, SourceSpan? span) {
+String? _exemptionNear(
+  List<String> lines,
+  SourceSpan? span, {
+  required int after,
+}) {
   if (span == null) {
     return null;
   }
@@ -540,12 +586,17 @@ String? _exemptionNear(List<String> lines, SourceSpan? span) {
   final at = span.start.line;
   for (final line in [
     if (at < lines.length) lines[at],
-    // **Only when the line above is nothing but a comment.** Taken as written,
-    // a marker trailing one step's own line was also found by the step under
-    // it: `- run: npm ci # xtask: not a gate — deps` exempted the `- run: dart
-    // analyze` beneath it, which is the duplicate list growing back, green,
-    // under somebody else's reason.
+    // **Only when the line above is a YAML comment of its own.** Taken as
+    // written, a marker trailing one step's own line was also found by the
+    // step below it: `- run: npm ci # xtask: not a gate — deps` exempted the
+    // `- run: dart analyze` beneath it, which is the duplicate list growing
+    // back, green, under somebody else's reason.
+    //
+    // Starting with `#` is not enough on its own — a `#` line inside the
+    // previous step's `run: |` block is shell, and belongs to that script.
+    // [after] is where that block ended.
     if (at > 0 &&
+        at - 1 > after &&
         at - 1 < lines.length &&
         lines[at - 1].trimLeft().startsWith('#'))
       lines[at - 1],

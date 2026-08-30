@@ -99,7 +99,7 @@ final class ExecutableResolver {
       // directory — and re-walked `PATH` for a result that could not differ.
       // That is the per-member cost this cache was added to remove.
       _resolved.putIfAbsent(
-        (executable, _paths.split(executable).length > 1 ? from : ''),
+        (executable, _isAPath(executable) ? from : ''),
         () => _find(executable, from),
       );
 
@@ -122,7 +122,7 @@ final class ExecutableResolver {
     // back. `Process.start` resolves a relative executable against the
     // directory it is handed, so this is the check agreeing with the run it is
     // checking rather than a rule of its own.
-    if (_paths.split(executable).length > 1) {
+    if (_isAPath(executable)) {
       final candidate = _paths.isAbsolute(executable)
           ? executable
           : _paths.normalize(_paths.join(from, executable));
@@ -142,6 +142,13 @@ final class ExecutableResolver {
     }
     return null;
   }
+
+  /// Whether [executable] is a name that already says where it is.
+  ///
+  /// §5.4 rule 1, asked once. It was written out at three sites — the cache
+  /// key, the resolution and the message — and a change to it in two of them
+  /// is a cache that disagrees with the answer it caches.
+  bool _isAPath(String executable) => _paths.split(executable).length > 1;
 
   /// Whether starting [resolvedPath] has to go through the system shell.
   ///
@@ -166,7 +173,7 @@ final class ExecutableResolver {
   /// Says where it looked, because the two cures are different: install the
   /// tool, or put the directory it is already in on `PATH`.
   String missingToolMessage(String executable, {required String from}) {
-    if (_paths.split(executable).length > 1) {
+    if (_isAPath(executable)) {
       // **No suffix list here.** A name that is already a path is tried once,
       // exactly as written — `_find` appends nothing to it — so naming
       // `PATHEXT` would tell a Windows reader with `tool\\gen.bat` on disk

@@ -383,8 +383,9 @@ String _why(CiProblem problem) => switch (problem) {
     'exempts `${_oneLine(step.command)}` and gives no reason. Write it after '
         '`$exemptionMarker`: the reason is what someone reads before deleting '
         'the line, and what makes an exemption possible to weigh',
-  ExemptsNothing(:final reaches) =>
-    'exempts a step that reaches xtask as `$reaches`, so the marker excuses '
+  ExemptsNothing(:final step, :final reaches) =>
+    'exempts `${_oneLine(step.command)}`, which reaches xtask as `$reaches` — '
+        'so the marker excuses '
         'nothing — the step was never going to be reported as a command. A '
         'marker that excuses nothing hides the findings under it and makes '
         'the load-bearing ones impossible to find',

@@ -101,6 +101,7 @@ List<PlanEdge>? routeTo(
   required String from,
   required String to,
   Set<String>? hopeless,
+  void Function()? tooDeep,
 }) {
   // The path being walked, so a cycle does not hang it.
   final seen = <String>{};
@@ -140,18 +141,17 @@ List<PlanEdge>? routeTo(
       return false;
     }
     // The same bound the planner keeps, and for the same reason: one frame per
-    // edge. **Refused rather than answered**, because the two answers this
-    // walk can give are "here is the route" and "nothing reaches it", and the
-    // second is a lie about a task a gate set does reach. `planRun` refuses
-    // the same file; two modes disagreeing about one file is worse than
-    // either of them saying no.
+    // edge. **Said out loud rather than answered silently**: the two answers
+    // this walk gives are "here is the route" and "nothing reaches it", and
+    // the second is a lie about a branch that was never looked down. It is
+    // reported to the caller, which knows whether the answer depended on it —
+    // throwing from here refused a whole `--why` over a chain the question
+    // did not touch, which is the disagreement between modes it was meant to
+    // remove.
     if (depth > mostDepth) {
-      throw XtaskFormatException(
-        'the chain reaching `$at` is more than $mostDepth tasks deep, which is '
-        'further than this engine walks — so what reaches `$to` cannot be '
-        'answered without saying less than the truth',
-        file.tasks[at]?.span,
-      );
+      cutShort = true;
+      tooDeep?.call();
+      return false;
     }
     // A cycle is `--validate`'s to report; here it must only not hang.
     if (!seen.add(at)) {
@@ -292,6 +292,11 @@ Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
   // One memo for the whole question: every call below asks about the same
   // target, and what cannot reach it cannot reach it from anywhere.
   final hopeless = <String>{};
+  // Whether any branch was given up on for being deeper than the engine
+  // walks. Only matters if nothing was found: a route that WAS found is the
+  // answer whatever some other branch would have said.
+  var cutByDepth = false;
+  void tooDeep() => cutByDepth = true;
   for (final gate in file.gates.keys) {
     for (final member in tasksInGate(file, gate)) {
       final route = routeTo(
@@ -299,6 +304,7 @@ Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
         from: member.name,
         to: task,
         hopeless: hopeless,
+        tooDeep: tooDeep,
       );
       if (route == null) {
         continue;
@@ -315,10 +321,25 @@ Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
     }
   }
   for (final entry in entryPoints(file)) {
-    final route = routeTo(file, from: entry, to: task, hopeless: hopeless);
+    final route = routeTo(
+      file,
+      from: entry,
+      to: task,
+      hopeless: hopeless,
+      tooDeep: tooDeep,
+    );
     if (route != null) {
       routes[entry] = route;
     }
+  }
+  if (routes.isEmpty && cutByDepth) {
+    // "Nothing reaches it" would be a claim about branches this gave up on.
+    throw XtaskFormatException(
+      'what reaches `$task` cannot be answered: a chain on the way to it is '
+      'more than $mostDepth tasks deep, which is further than this engine '
+      'walks',
+      file.tasks[task]?.span,
+    );
   }
   return routes;
 }
