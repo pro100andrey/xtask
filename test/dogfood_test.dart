@@ -175,6 +175,58 @@ void main() {
     });
   });
 
+  group('the README shows this engine answering, not a description of it', () {
+    // Both blocks were wrong, and wrong the way prose about output goes wrong:
+    // `--dry-run check` was shown planning `check` itself, which is a gate set
+    // and never a step, and `--why` was shown printing `check needs lint` — a
+    // shape no gate set can produce, in a README that says two paragraphs
+    // later that there is no composite task.
+    //
+    // Derived, not listed. Writing the members here would be the third copy of
+    // the gate that this file opens by refusing to make.
+
+    /// What the README shows under somebody typing [command].
+    ///
+    /// By the line typed rather than by a heading: both blocks sit under one
+    /// heading, and `_fencedBlockAfter` answers with the first of them.
+    List<String> shown(String command) {
+      final lines = File(
+        p.join(root, 'README.md'),
+      ).readAsStringSync().split('\n');
+      final at = lines.indexOf(r'$ ' + command);
+      expect(at, isNonNegative, reason: 'README.md never shows `$command`');
+      final closed = lines.indexWhere((line) => line.startsWith('```'), at);
+      expect(closed, isNonNegative, reason: 'the block under it is unclosed');
+      return lines.sublist(at + 1, closed);
+    }
+
+    test('the plan it shows is the plan this file makes', () {
+      final planLine = shown(
+        'xtask --dry-run check',
+      ).firstWhere((line) => line.startsWith('plan: '));
+      expect(
+        planLine,
+        'plan: ${planGate(file, 'check').names.join(', ')}',
+        reason:
+            'the README shows a plan for `check` that this file does not '
+            'make. A gate set is never a step in its own plan.',
+      );
+    });
+
+    test('and the routes it shows are the routes this file has', () {
+      const asked = 'test';
+      expect(
+        shown(
+          'xtask --why $asked',
+        ).where((line) => !line.startsWith(' ')),
+        routesTo(file, asked).keys,
+        reason:
+            'the README shows entry points for `$asked` that this file does '
+            'not have. `--why` keys a gate set entry as `gate <name>`.',
+      );
+    });
+  });
+
   group("the README's own examples are files this engine would accept", () {
     // Written after both defects in one example: it had no `version:` at all,
     // and it wrote a glob as a plain list, which is a literal member that

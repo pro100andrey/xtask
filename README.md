@@ -222,15 +222,18 @@ The task names below are this repository's own, from [`xtask.yaml`](xtask.yaml):
 
 ```shell
 $ xtask --dry-run check
-plan: format, analyze, test, check
+plan: format, analyze, test
 format
   run  /opt/homebrew/bin/dart format --output=none --set-exit-if-changed .
-  in   /home/you/xtask
+  in   /Users/you/xtask
 analyze
   run  /opt/homebrew/bin/dart analyze --fatal-infos
-  in   /home/you/xtask
+  in   /Users/you/xtask
 ...
 ```
+
+The plan names the tasks, not the gate set: `check` is what you asked for, and
+what a run does is its members.
 
 A `do: remove` block goes further and says what it would delete. The one verb
 this engine ships is the one that deletes recursively, and a plan showing only
@@ -262,10 +265,17 @@ the route edge by edge, saying which kind each edge is, because "it runs before
 this" and "it runs after this" are opposite answers:
 
 ```shell
-$ xtask --why lint
-check
-  check needs lint
+$ xtask --why test
+gate check
+  gate check runs test
+test
+  nothing else names it: `test` is where a run starts
 ```
+
+Two routes, because there are two: the gate set reaches it, and so does
+somebody typing its name. An edge says which kind it is — `runs`, `needs`,
+`then` — because "it runs before this" and "it runs after this" are the two
+answers a single word would blur.
 
 ## Gate sets, and CI
 
