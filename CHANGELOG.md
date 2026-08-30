@@ -2,6 +2,68 @@
 
 ## 0.2.0
 
+### A repository-relative program is read from where the body runs
+
+`run: ['./tool/build.sh']` worked when `xtask` was typed at the repository root
+and was refused, as a missing tool with code 3, from any subdirectory of the
+same repository. The check was made against the process's own directory while
+the body is started at the root, or at `in:` — and `Process.start` resolves a
+relative executable against the directory it is handed, so the program would
+have started. `findRoot` exists so the command can be typed from anywhere.
+
+`in: sub` with `run: ['./x.sh']` now finds `sub/x.sh`, which is where the run
+looks. `--dry-run` prints the resolved path, as it already did for a name found
+on `PATH`, and a missing one names the directory it was looked for under.
+
+### `--validate` and `--dry-run` say what the run would refuse
+
+`do: remove` with an argument outside the repository was answered three ways.
+The run refused it and exited 2. `--dry-run` printed `del  nothing of these is
+on disk, which is not an error` and exited 0. `--validate` said `nothing
+wrong`.
+
+A dry run now stops where the run stops, with the run's own sentence and its
+code, rather than printing a plan below a step that will never be reached; and
+`--validate` checks this verb's `args:`, which it never had. It checked `in:`
+and every set member, so the one body that deletes recursively was the one
+place the boundary was found by running it or not at all.
+
+### A workflow can say a step is not a gate
+
+`--check-ci` had one rule — a `run:` step is one invocation of one gate set —
+and one sentence for everything else: "what runs belongs in the task file".
+
+A step asking xtask a **question** is no longer one of them. `- run: xtask
+--validate` was reported as a duplicated command list, and so was `--check-ci`
+itself, so adding this mode to CI made this mode refuse it. Such a step is
+listed beside the jobs now. A mode that *names* a gate set stays a finding —
+`xtask --dry-run ci-analyze` in a job called `ci-analyze` reads as though the
+gate is covered and runs none of it — but in its own words.
+
+And a `run:` step may be neither a gate nor a duplicate. Playwright's own
+action says "you don't need this GitHub Action" and sends you to `npx
+playwright install --with-deps`; a line writing `$GITHUB_ENV` has no `uses:`
+form at all. The rule stays blanket, because telling infrastructure from logic
+would mean classifying shell, and is paid for where the exception is:
+
+```yaml
+# xtask: not a gate — the browser driver, which no action installs
+- run: npx playwright install --with-deps
+```
+
+The reason is required, an exemption that excuses nothing is refused, and every
+exemption prints with its reason beside the jobs that passed.
+
+### Two more endings the exit code table does not have
+
+A `**/`-heavy pattern was refused for having more readings than the engine will
+match — after building all of them. Twenty-four globstars built sixteen million
+strings before refusing; thirty ran out of memory instead of reaching the
+sentence. The count is now taken by walking the pattern once.
+
+A `needs:` chain deep enough overflowed the stack, ending `--validate` at 255.
+Chains past a thousand tasks are refused with the line they were reached from.
+
 ### The command line is parsed in one place
 
 `--check-ci` exists so that a workflow and the task file cannot hold two lists
@@ -91,6 +153,22 @@ Measured on a synthetic repository of 15,000 files and a task file of 4,000:
 
 ### Also
 
+- Empty names are refused everywhere a name is written. `gates:` refused an
+  empty one; tasks, sets and environment variables took the same key and kept
+  it, so a task with no name validated clean and printed a blank column.
+- Two blocks of output in the README were transcripts nobody had run — the
+  plan for a gate set listed the gate set itself, and `--why` was shown an
+  answer no gate set can produce. Both are pinned against the engine now.
+- The example's README counted four tasks where there are three, and showed
+  commands that cannot work there: one of its tasks has a `do:`, so it needs
+  `dart run :xtask`. The README's own CI snippet had the same mistake.
+- `-j auto` is the machine's processors capped at 8, not "the number of
+  processors"; `each:` members are not sequential under `-j`; the refusal of a
+  member beginning with `-` applies to what a glob found, not to what you
+  wrote. All three were documented otherwise.
+- Section numbers pointing at a design document that is not kept are gone from
+  `CHANGELOG.md` and from the three files dartdoc publishes — the places a
+  reader without the repository open would meet them.
 - The engine answers `--why` about a name the file gives to both a gate set and
   a task by saying so, instead of "`x` is a gate set, not a task" — which was
   false about that file, and contradicted by every other mode.
