@@ -292,11 +292,12 @@ final class BodyResolver {
         );
 
       case RunBody(:final argv):
-        final executable = resolver.resolve(argv.first);
+        final executable = resolver.resolve(argv.first, from: where);
         if (executable == null) {
           throw RunFailure(
             ExitCode.missingTool,
-            'task `${task.name}`: ${resolver.missingToolMessage(argv.first)}',
+            'task `${task.name}`: '
+            '${resolver.missingToolMessage(argv.first, from: where)}',
           );
         }
         _refuseFoundMemberReadAsOption(

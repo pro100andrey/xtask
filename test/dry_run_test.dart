@@ -84,6 +84,35 @@ void main() {
       expect(output(), isNot(contains('run  dart analyze')));
     });
 
+    test('and a repository-relative program is that path too', () {
+      // Not pinned anywhere before, because it did not work: the check was
+      // made against the process's own directory while the body runs at the
+      // root, so this refused as a missing tool whenever `xtask` was typed
+      // from a subdirectory. Printing it resolved is the same promise the
+      // line above makes — what will be started, not what was typed.
+      expect(
+        dry(
+          'version: 1\ntasks:\n  a: {desc: x, run: [./tool/gen, --check]}\n',
+          'a',
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('run  ${p.join(root.path, 'tool', 'gen')}'));
+      expect(output(), isNot(contains('run  ./tool/gen')));
+    });
+
+    test('and `in:` moves where that path is read from', () {
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, in: sub, run: [./gen]}\n',
+          'a',
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('run  ${p.join(root.path, 'sub', 'gen')}'));
+    });
+
     test(
       'a glob set is expanded, and each member gets its own block',
       () async {

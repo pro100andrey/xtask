@@ -205,12 +205,18 @@ final class BodyRunner {
         'verb of task `${body.task.name}` asked to run nothing',
       );
     }
-    final executable = bodies.resolver.resolve(argv.first);
+    final executable = bodies.resolver.resolve(
+      argv.first,
+      from: workingDirectory,
+    );
     if (executable == null) {
       throw RunFailure(
         ExitCode.missingTool,
         'task `${body.task.name}`: '
-        '${bodies.resolver.missingToolMessage(argv.first)}',
+        '${bodies.resolver.missingToolMessage(
+          argv.first,
+          from: workingDirectory,
+        )}',
       );
     }
     final arguments = argv.skip(1).toList();

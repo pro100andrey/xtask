@@ -64,7 +64,7 @@ final class ExecutableResolver {
   /// costs a `stat` per directory on `PATH` — nineteen of them on an ordinary
   /// machine, about 39µs. It was paid once per `run:` body, which under
   /// `each:` is once per member, and again for every program a verb starts.
-  final _resolved = <String, String?>{};
+  final _resolved = <(String, String), String?>{};
 
   /// The default `PATHEXT`, used when the machine does not set a usable one.
   static const defaultPathExt = '.COM;.EXE;.BAT;.CMD';
@@ -91,10 +91,13 @@ final class ExecutableResolver {
   /// `dart.BAT`. NTFS does not care and the path starts either way, but
   /// `--dry-run` prints this string (§7), so it is behaviour rather than an
   /// implementation detail, and a test pins it.
-  String? resolve(String executable) =>
-      _resolved.putIfAbsent(executable, () => _find(executable));
+  String? resolve(String executable, {required String from}) =>
+      _resolved.putIfAbsent(
+        (executable, from),
+        () => _find(executable, from),
+      );
 
-  String? _find(String executable) {
+  String? _find(String executable, String from) {
     if (executable.isEmpty) {
       return null;
     }
@@ -102,8 +105,22 @@ final class ExecutableResolver {
     // A name that is already a path is used as given (§5.4, rule 1) — the
     // author said where it is, and searching `PATH` for it would be
     // second-guessing a statement of fact.
+    //
+    // **Where it is, is where the body runs.** This asked the question of the
+    // process's own directory, while the body is started with
+    // `workingDirectory:` set to the root or to `in:` — so `run:
+    // ['./tool/build.sh']` worked when somebody typed `xtask` at the root and
+    // was refused, as a missing tool, from any subdirectory of the same
+    // repository. `findRoot` exists so that the command can be typed from
+    // anywhere; a check that reads the directory it was typed in takes that
+    // back. `Process.start` resolves a relative executable against the
+    // directory it is handed, so this is the check agreeing with the run it is
+    // checking rather than a rule of its own.
     if (_paths.split(executable).length > 1) {
-      return isRunnable(executable) ? executable : null;
+      final candidate = _paths.isAbsolute(executable)
+          ? executable
+          : _paths.normalize(_paths.join(from, executable));
+      return isRunnable(candidate) ? candidate : null;
     }
 
     // Read once. They are getters over the environment, and leaving them
@@ -142,9 +159,15 @@ final class ExecutableResolver {
   ///
   /// Says where it looked, because the two cures are different: install the
   /// tool, or put the directory it is already in on `PATH`.
-  String missingToolMessage(String executable) {
+  String missingToolMessage(String executable, {required String from}) {
     final where = _paths.split(executable).length > 1
-        ? 'no file at `$executable`, or it is not executable'
+        // Named, because the path is read relative to this directory and a
+        // reader standing somewhere else cannot tell which `./tool/gen` was
+        // looked for. An absolute one says where it is by itself.
+        ? _paths.isAbsolute(executable)
+              ? 'no file at `$executable`, or it is not executable'
+              : 'no file at `$executable` under `$from`, or it is not '
+                    'executable'
         : 'nothing runnable by that name in the '
               '${_searchPath.length} directories on PATH';
     final tried = _suffixesFor(executable).where((s) => s.isNotEmpty);
