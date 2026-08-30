@@ -9,6 +9,15 @@
 /// the first `${...}` in it is the start of the expression language R1 exists
 /// to prevent.
 ///
+/// **And what belongs to the workflow, this must not refuse.** Two of those
+/// four arrive as `uses:` and are passed over here; a browser driver does not
+/// — Playwright's own action says "you don't need this GitHub Action" and
+/// sends you to `npx playwright install --with-deps` — and neither does a line
+/// writing `$GITHUB_ENV`. So the rule below is blanket and [exemptionMarker]
+/// is what it costs, rather than a rule that tries to tell infrastructure from
+/// logic. Nothing does: no workflow linter classifies a `run:` step that way,
+/// and one inventing the axis here would be reading shell.
+///
 /// A check closes the same drift and needs none of that. It reads the workflow
 /// that a person wrote and compares it with the gate sets, in both directions.
 library;
@@ -16,6 +25,7 @@ library;
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:source_span/source_span.dart';
 import 'package:yaml/yaml.dart';
 
 import 'boundary.dart';
@@ -29,16 +39,39 @@ const workflowDirectory = '.github/workflows';
 
 /// One shell step of one job.
 final class CiStep {
-  const CiStep(this.workflow, this.job, this.command);
+  const CiStep(this.workflow, this.job, this.command, {this.exemption});
 
   /// The file it came from, relative to the repository root.
   final String workflow;
 
   final String job;
 
-  /// The `run:` line, trimmed.
+  /// The `run:` block, trimmed. A block written with `|` keeps its newlines:
+  /// GitHub writes the whole of it to one file and runs it as one script, so
+  /// splitting it into commands here would be this checker deciding what a
+  /// shell means — which is the second grammar [_readStep] exists not to
+  /// keep. A block this cannot read is a block to exempt.
   final String command;
+
+  /// The reason written beside it, when a person said this step is not a gate.
+  ///
+  /// Null unless the step carries [exemptionMarker].
+  final String? exemption;
 }
+
+/// What a person writes beside a `run:` step that is not a gate set.
+///
+/// **A blanket rule, paid for out loud.** The rule below is that a `run:` step
+/// is one invocation of one gate set, and it is kept blanket on purpose: a
+/// checker that tried to tell a step installing a browser driver from a step
+/// running the build would be classifying shell, which nothing does and this
+/// least of all. So the rule stays absolute and the exception is written
+/// where the exception is, by the person who knows why.
+///
+/// The reason is required. An exemption whose reason is missing is refused
+/// like any other bad step, because a marker with nothing after it is the
+/// form this grows into when it is used to make a red gate green.
+const exemptionMarker = '# xtask: not a gate';
 
 /// Why a shell step is not a job running a gate set.
 ///
@@ -73,6 +106,42 @@ final class RunsSomethingRefused extends CiProblem {
   final String refusal;
 }
 
+/// A step that names a gate set in a mode, so the job does not run it.
+///
+/// `xtask --dry-run ci-analyze` reads, in a job called `ci-analyze`, as though
+/// the gate is covered; nothing of it happens. It is the shape a step takes
+/// when somebody was debugging and did not take the flag back out, and the
+/// green tick afterwards is the whole problem.
+final class NamesAGateWithoutRunningIt extends CiProblem {
+  const NamesAGateWithoutRunningIt(super.step, this.mode, this.named);
+
+  /// The mode flag that made it a question rather than a run.
+  final String mode;
+
+  /// The gate set or task the step named.
+  final String named;
+}
+
+/// An exemption marker with nothing after it.
+///
+/// The reason is the whole price of the exemption, so a marker without one is
+/// refused rather than honoured: `# xtask: not a gate` alone is what this
+/// grows into when somebody reaches for it to make a red gate green.
+final class ExemptsWithoutSaying extends CiProblem {
+  const ExemptsWithoutSaying(super.step);
+}
+
+/// An exemption on a step that is a gate set invocation after all.
+///
+/// Nothing was exempted, so the marker is a line saying something untrue about
+/// the step under it — and the ones that are load-bearing become impossible to
+/// find among the ones that are not.
+final class ExemptsNothing extends CiProblem {
+  const ExemptsNothing(super.step, this.gate);
+
+  final String gate;
+}
+
 /// A step naming a gate set this file does not declare — so the job runs
 /// nothing.
 final class RunsAnUndeclaredGate extends CiProblem {
@@ -90,10 +159,30 @@ final class CiReport {
     required this.invocations,
     required this.problems,
     required this.unrun,
+    this.questions = const [],
+    this.exempted = const [],
   });
 
   /// Every shell step that is a well-formed invocation, by gate set.
   final List<({CiStep step, String gate})> invocations;
+
+  /// Steps that reach xtask without running a gate — `--validate`, `--list`,
+  /// `--check-ci`.
+  ///
+  /// **Reported and not judged**, like [unrun] and for a related reason. Such
+  /// a step names no command that could drift from the task file: it names
+  /// this tool, asking it a question. Filing it under "what runs belongs in
+  /// the task file" sent a reader to move something that is not a task and
+  /// has nowhere to be moved to — and said it about `--check-ci` itself, the
+  /// step §7.1 asks a project to add.
+  final List<({CiStep step, String mode})> questions;
+
+  /// Steps a person exempted, with the reason each gave.
+  ///
+  /// Counted here rather than passed over silently: an exemption nobody can
+  /// see is one nobody revisits, and the count is what makes a workflow that
+  /// has quietly exempted its way to green visible in one line.
+  final List<CiStep> exempted;
 
   /// Steps that are not one, and gates named by one that is not declared.
   final List<CiProblem> problems;
@@ -152,18 +241,41 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   }
 
   final invocations = <({CiStep step, String gate})>[];
+  final questions = <({CiStep step, String mode})>[];
+  final exempted = <CiStep>[];
   final problems = <CiProblem>[];
 
   for (final step in steps) {
     final read = _readStep(step.command);
     final gate = read.gate;
+
+    // Asked before anything is refused, and after the step has been read: an
+    // exemption has to be checked against what the step turned out to be, or
+    // it cannot be told from one that exempts nothing.
+    if (step.exemption case final reason?) {
+      if (reason.isEmpty) {
+        problems.add(ExemptsWithoutSaying(step));
+      } else if (gate != null && declared.contains(gate)) {
+        problems.add(ExemptsNothing(step, gate));
+      } else {
+        exempted.add(step);
+      }
+      continue;
+    }
+
     if (gate == null) {
       final refused = read.refused;
-      problems.add(
-        refused == null
-            ? RunsACommand(step)
-            : RunsSomethingRefused(step, refused),
-      );
+      if (refused != null) {
+        problems.add(RunsSomethingRefused(step, refused));
+      } else if (read.named case final named?) {
+        problems.add(
+          NamesAGateWithoutRunningIt(step, read.mode ?? '', named),
+        );
+      } else if (read.mode case final mode?) {
+        questions.add((step: step, mode: mode));
+      } else {
+        problems.add(RunsACommand(step));
+      }
       continue;
     }
     if (!declared.contains(gate)) {
@@ -173,7 +285,7 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     invocations.add((step: step, gate: gate));
   }
 
-  if (invocations.isEmpty && problems.isEmpty) {
+  if (invocations.isEmpty && questions.isEmpty && problems.isEmpty) {
     throw XtaskFormatException(
       'nothing under `$workflowDirectory` invokes xtask, so there is nothing '
       'to check this file against',
@@ -183,6 +295,8 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   final run = {for (final invocation in invocations) invocation.gate};
   return CiReport(
     invocations: List.unmodifiable(invocations),
+    questions: List.unmodifiable(questions),
+    exempted: List.unmodifiable(exempted),
     problems: List.unmodifiable(problems),
     unrun: List.unmodifiable([
       for (final gate in declared.toList()..sort())
@@ -198,10 +312,19 @@ CiReport checkCi(XtaskFile file, {required String root}) {
 /// entry point to the project and a checker that only recognised one spelling
 /// would report a working workflow as broken.
 bool _namesXtask(String word) =>
-    word == 'xtask' ||
-    word.endsWith(':xtask') ||
-    word.endsWith('xtask.dart') ||
-    word.endsWith('/xtask');
+    // **Not inside a quoted string.** The words come from splitting on
+    // whitespace, which is not what a shell does, so a word may still be
+    // carrying the quote it was written with: `echo "install xtask first"`
+    // splits into `echo`, `"install`, `xtask`, `first"`, and reading on from
+    // the third word reported `first"` as a gate set this file does not
+    // declare. A word wearing a quote was not tokenised the way it will be
+    // run, and nothing true can be said about what follows it.
+    !word.contains('"') &&
+    !word.contains("'") &&
+    (word == 'xtask' ||
+        word.endsWith(':xtask') ||
+        word.endsWith('xtask.dart') ||
+        word.endsWith('/xtask'));
 
 /// What shell step [command] turns out to be.
 ///
@@ -218,9 +341,22 @@ bool _namesXtask(String word) =>
 /// arguments after `--` have nothing to reach, because a gate set has no body.
 /// Each of those is a [Request] that is not a bare [RunTask], and none of them
 /// is spelled out here.
-({String? gate, String? refused}) _readStep(String command) {
-  const notAnInvocation = (gate: null, refused: null);
+({String? gate, String? refused, String? mode, String? named}) _readStep(
+  String command,
+) {
+  const notAnInvocation = (
+    gate: null,
+    refused: null,
+    mode: null,
+    named: null,
+  );
   final words = command.split(RegExp(r'\s+'));
+  if (words.any((word) => word.contains('"') || word.contains("'"))) {
+    // A step this cannot tokenise the way a shell will. Saying it runs a
+    // command is true — it does — and saying anything more precise would be
+    // reading quotes, which is the shell grammar this refuses to keep.
+    return notAnInvocation;
+  }
   final at = words.indexWhere(_namesXtask);
   if (at == -1) {
     return notAnInvocation;
@@ -234,22 +370,72 @@ bool _namesXtask(String word) =>
     processors: () => 1,
   );
   return switch (request) {
-    RunTask(:final task, arguments: []) => (gate: task, refused: null),
+    RunTask(:final task, arguments: []) => (
+      gate: task,
+      refused: null,
+      mode: null,
+      named: null,
+    ),
     // A gate set has no body, so the arguments reach nothing and the step
     // exits 2. The command line does not refuse this — only the file can say
     // whether the name has a body — so the sentence is written here.
     RunTask() => (
       gate: null,
+      mode: null,
+      named: null,
       refused:
           'a gate set gathers tasks and runs nothing of its own, so there is '
           'nothing for the arguments after `--` to be arguments to',
     ),
     // Everything the command line itself would turn away, in its own words.
-    ShowUsage(problem: final problem?) => (gate: null, refused: problem),
-    // A mode names a gate set without running it, which is a step doing
-    // something other than running a gate rather than a broken one.
-    _ => notAnInvocation,
+    ShowUsage(problem: final problem?) => (
+      gate: null,
+      mode: null,
+      named: null,
+      refused: problem,
+    ),
+    // **A mode that names a gate set is a job that does not run it.** The
+    // step reads as though the gate is covered and nothing of it happens, so
+    // this stays a finding — but its own, because "what runs belongs in the
+    // task file" tells a reader to move a gate that is already there.
+    DryRunTask(:final task) => _names(task, words, at),
+    GateMembers(:final gate) => _names(gate, words, at),
+    WhyTask(:final task) => _names(task, words, at),
+    ListTasks(gate: final gate?) => _names(gate, words, at),
+    // **A mode that names nothing is a question, not a broken step.** This
+    // said so in a comment and then answered `notAnInvocation`, which the
+    // caller cannot tell from "no xtask here at all" — so `- run: xtask
+    // --validate` was filed under "what runs belongs in the task file", and
+    // so was `--check-ci`, the step §7.1 asks a project to add.
+    _ => (
+      gate: null,
+      refused: null,
+      named: null,
+      mode: _modeIn(words.skip(at + 1)),
+    ),
   };
+}
+
+/// A mode that names [what], for the finding to quote both.
+({String? gate, String? refused, String? mode, String? named}) _names(
+  String what,
+  List<String> words,
+  int at,
+) => (
+  gate: null,
+  refused: null,
+  mode: _modeIn(words.skip(at + 1)),
+  named: what,
+);
+
+/// The mode flag among [arguments], for the report to name.
+String? _modeIn(Iterable<String> arguments) {
+  for (final argument in arguments) {
+    if (modes.contains(argument)) {
+      return argument;
+    }
+  }
+  return null;
 }
 
 Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
@@ -277,6 +463,7 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
   if (jobs is! YamlMap) {
     return;
   }
+  final lines = source.split('\n');
   for (final entry in jobs.entries) {
     final job = entry.value;
     if (job is! YamlMap) {
@@ -291,8 +478,50 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
         continue;
       }
       if (step['run'] case final String command) {
-        yield CiStep(name, '${entry.key}', command.trim());
+        yield CiStep(
+          name,
+          '${entry.key}',
+          command.trim(),
+          exemption: _exemptionNear(lines, step.nodes['run']?.span),
+        );
       }
     }
   }
+}
+
+/// The reason written beside the `run:` key at [span], if there is one.
+///
+/// **Read out of the source, because the parse does not keep it.**
+/// `package:yaml` discards comments — there is no comment on a `YamlNode` to
+/// ask — so the only place [exemptionMarker] survives is the text, and a span
+/// is what says which text. Looked for on the `run:` line itself and on the
+/// line above it, which are the two places a person writes a note about a
+/// step; anywhere further and it stops being beside the thing it excuses.
+///
+/// A marker with nothing after it comes back as the empty string rather than
+/// null, so that the caller can tell "no exemption" from "an exemption that
+/// gave no reason" and refuse the second.
+String? _exemptionNear(List<String> lines, SourceSpan? span) {
+  if (span == null) {
+    return null;
+  }
+  // A block scalar's span starts at the `|`, and the marker belongs to the
+  // line that carries the key. Both candidates are read for that reason.
+  final at = span.start.line;
+  for (final line in [
+    if (at < lines.length) lines[at],
+    if (at > 0 && at - 1 < lines.length) lines[at - 1],
+  ]) {
+    final marker = line.indexOf(exemptionMarker);
+    if (marker != -1) {
+      // The dash or colon somebody writes between the marker and the reason
+      // is punctuation, and the report supplies its own — kept, it renders as
+      // `exempts \u0060x\u0060 — — the reason`.
+      return line
+          .substring(marker + exemptionMarker.length)
+          .replaceFirst(RegExp(r'^[\s\u2014\u2013:,-]+'), '')
+          .trim();
+    }
+  }
+  return null;
 }

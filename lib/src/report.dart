@@ -315,12 +315,36 @@ List<String> workflow(CiReport report) {
   return [
     for (final invocation in report.invocations)
       _ran(invocation.step.workflow, invocation.step.job, invocation.gate),
+    // Named rather than passed over. Such a step is not a problem and is not
+    // a gate either, and a listing that showed neither left a reader unable
+    // to tell it had been read at all.
+    for (final question in report.questions)
+      _asked(question.step, question.mode),
+    // **Counted, not silent.** An exemption nobody sees is one nobody
+    // revisits, and a workflow that has quietly exempted its way to green
+    // should say so in the same breath as it passes.
+    for (final step in report.exempted) _exempted(step),
     if (report.ok && report.unrun.isNotEmpty) ...['', nobody],
   ];
 }
 
+/// [command] on one line, for a listing that is one line per step.
+///
+/// A `run: |` block keeps its newlines, which is right for a refusal quoting
+/// what it refused and wrong for a column of jobs.
+String _oneLine(String command) =>
+    command.replaceAll(RegExp(r'\s*\n\s*'), ' ; ');
+
 String _ran(String workflow, String job, String gate) =>
     '$workflow: job `$job` runs the gate set `$gate`';
+
+String _asked(CiStep step, String mode) =>
+    '${step.workflow}: job `${step.job}` asks `$mode`, which is a question '
+    'rather than a gate set';
+
+String _exempted(CiStep step) =>
+    '${step.workflow}: job `${step.job}` exempts `${_oneLine(step.command)}` '
+    '— ${step.exemption}';
 
 /// `--check-ci`: why each step is not a job running a gate set.
 ///
@@ -348,6 +372,20 @@ String _why(CiProblem problem) => switch (problem) {
     'runs the gate set `$gate`, which this file does not declare — so the job '
         'runs nothing'
         '${declared.isEmpty ? '' : '. Declared: ${_names(declared)}'}',
+  NamesAGateWithoutRunningIt(:final mode, :final named) =>
+    'names the gate set `$named` under `$mode`, which asks about it rather '
+        'than running it — so the job passes having run nothing of it',
+  // The reason is the whole price of the exemption. Without it the marker is
+  // a way of turning a red gate green and leaving nothing behind that says
+  // who did it or what for.
+  ExemptsWithoutSaying(:final step) =>
+    'exempts `${step.command}` and gives no reason. Write it after '
+        '`$exemptionMarker`: the reason is what someone reads before deleting '
+        'the line, and what makes an exemption possible to weigh',
+  ExemptsNothing(:final gate) =>
+    'exempts a step that runs the gate set `$gate`, so the marker excuses '
+        'nothing. A marker on a step that did not need one is how the ones '
+        'that are load-bearing become impossible to find',
 };
 
 /// [of], sorted and joined.

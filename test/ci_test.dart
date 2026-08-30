@@ -5,7 +5,8 @@ import 'package:test/test.dart';
 import 'package:xtask/src/ci.dart';
 import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/parse.dart';
-import 'package:xtask/src/report.dart';
+import 'package:xtask/src/report.dart' hide workflow;
+import 'package:xtask/src/report.dart' as report show workflow;
 
 import 'helpers.dart';
 
@@ -235,6 +236,113 @@ jobs:
       - run: dart run :xtask --dry-run ci-analyze
 ''');
       expect(check().problems, isNotEmpty);
+      // In its own words. "What runs belongs in the task file" sends a reader
+      // to move a gate set that is already in the task file.
+      final problem = said().single;
+      expect(problem, contains('`ci-analyze`'));
+      expect(problem, contains('--dry-run'));
+      expect(problem, contains('run nothing of it'));
+      expect(problem, isNot(contains('belongs in the task file')));
+    });
+
+    test('but a mode that names nothing is a question, not a problem', () {
+      // The comment here said as much and the code answered otherwise: a mode
+      // came back indistinguishable from "no xtask in this step at all", so
+      // `--validate` was reported as a command belonging in the task file —
+      // and so was `--check-ci`, which is the step §7.1 asks a project to add.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: dart run :xtask --validate
+      - run: dart run :xtask --check-ci
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: '${refusals(found)}');
+      expect(found.questions.map((q) => q.mode), ['--validate', '--check-ci']);
+    });
+
+    test('a step a person exempted is not a problem, and is named', () {
+      // The rule is blanket on purpose: telling a step that installs a browser
+      // driver from a step that runs the build would be classifying shell,
+      // which nothing does. So the exception is written where the exception
+      // is — and counted, because an exemption nobody sees is one nobody
+      // revisits.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      # xtask: not a gate — the browser driver, which no action installs
+      - run: npx playwright install --with-deps
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: '${refusals(found)}');
+      expect(found.exempted.single.command, contains('playwright'));
+      expect(
+        report.workflow(found).join('\n'),
+        contains(
+          'job `a` exempts `npx playwright install --with-deps` — the browser '
+          'driver, which no action installs',
+        ),
+      );
+    });
+
+    test('and the marker may sit on the line of the step itself', () {
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: docker login # xtask: not a gate — credentials, not a task
+''');
+      expect(check().exempted, hasLength(1));
+    });
+
+    test('but an exemption with no reason is refused', () {
+      // The reason is the whole price. Without it the marker is a way of
+      // turning a red gate green that leaves nothing behind saying what for.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      # xtask: not a gate
+      - run: npx playwright install
+''');
+      expect(said().single, contains('gives no reason'));
+    });
+
+    test('and one that exempts nothing is refused too', () {
+      // A marker on a step that did not need one is how the ones that are
+      // load-bearing become impossible to find.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze # xtask: not a gate — no need
+''');
+      expect(said().single, contains('excuses nothing'));
+    });
+
+    test('and a word wearing a quote is not read on from', () {
+      // Split on whitespace, `echo "install xtask first"` gives `first"` after
+      // the xtask word, which was reported as a gate set this file does not
+      // declare — a sentence about a name nobody wrote.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: echo "install xtask first"
+''');
+      final problem = said().single;
+      expect(problem, contains('belongs in the task file'));
+      // The quoted command is quoted back, which is right. What is gone is
+      // the claim that `first"` is a gate set name somebody wrote.
+      expect(problem, isNot(contains('the gate set `first"`')));
+      expect(problem, isNot(contains('does not declare')));
     });
 
     test('but a step doing two things is still refused', () {

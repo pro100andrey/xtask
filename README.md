@@ -319,7 +319,31 @@ one invocation of one gate set is refused, because that is exactly how the
 duplicate list grows back — somebody writes `- run: dart analyze` instead of
 adding a task. A gate set no job runs is reported rather than refused: gate
 sets are named after who runs them, and that is the jobs *plus the people*,
-which nothing in the file distinguishes.
+which nothing in the file distinguishes. A step that asks xtask a question —
+`--validate`, `--check-ci` itself — is reported the same way: it names no
+command that could drift, so there is nothing to move into the file.
+
+The rule is blanket, and the exception is written where the exception is:
+
+```yaml
+- run: dart run :xtask check
+# xtask: not a gate — the browser driver, which no action installs
+- run: npx playwright install --with-deps
+```
+
+The marker goes on the step's own line or the line above it, and **the reason
+is required** — a marker with nothing after it is refused, because a marker
+with nothing after it is what this becomes when it is reached for to make a
+red gate green. So is a marker on a step that runs a gate set after all: it
+excuses nothing, and markers that excuse nothing are how the ones that matter
+become impossible to find. Every exemption is printed with its reason next to
+the jobs that passed, so a workflow that has quietly exempted its way to green
+says so in the same breath.
+
+The rule stays blanket rather than growing a sense of which steps are
+"infrastructure" because no tool anywhere has one: the axis does not exist, and
+a checker inventing it would be classifying shell — the second grammar this
+mode is written not to keep.
 
 It does not generate the workflow. Doing that would mean generating the
 checkout, the toolchain and the artifact upload too, which needs a template
