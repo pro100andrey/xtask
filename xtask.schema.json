@@ -134,7 +134,7 @@
           },
           "each": {
             "type": "string",
-            "description": "A set whose members the body runs once per, sequentially, with `$each` standing for the member — a whole argument, or the end of one: `packages/$each`. Nothing may follow it. A failure names the member; without `--keep-going` no further member is STARTED, so at `-j 1` it stops the rest and above that it stops what had not begun."
+            "description": "A set whose members the body runs once per, with `$each` standing for the member — a whole argument, or the end of one: `packages/$each`. Nothing may follow it. A failure names the member; without `--keep-going` no further member is STARTED, so at `-j 1` it stops the rest and above that it stops what had not begun."
           },
           "in": {
             "type": "string",

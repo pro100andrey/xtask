@@ -265,7 +265,8 @@ final class Task with Located {
   /// refused and nobody meant.
   final String? all;
 
-  /// A set whose members the body runs once per, sequentially (§5.2).
+  /// A set whose members the body runs once per, one at a time unless `-j`
+  /// says otherwise.
   final String? each;
 
   /// `in:` — a path, or the literal `$each`. The substitution is execution's

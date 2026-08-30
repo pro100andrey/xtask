@@ -311,7 +311,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
-      - run: xtask check
+      - run: dart run :xtask check
 ```
 
 Run-once still holds, because a job is one invocation. Parallelism is preserved,
@@ -436,9 +436,10 @@ because a task that silently did not happen reads exactly like one that passed.
 It is off by default, because a pipeline wants the earliest possible red
 rather than a broken run read to the end.
 
-`-j <n>` runs tasks that do not depend on each other at once — and the
-members of one `each:` at once — up to the
-number of processors, `-j auto` or `-j N`. It is **not** the default, and the
+`-j <n>` runs tasks that do not depend on each other at once — and the members
+of one `each:` at once. `-j auto` is this machine's processors, capped at 8,
+because one unit here is a whole `dart test` or `dart analyze` rather than a
+thread; `-j N` is the number you write. It is **not** the default, and the
 reason is a real cost rather than caution: normally a task's output passes
 through as it arrives and each task is a section that folds, and two tasks
 writing to one terminal at once break both — the transcript belongs to neither.
@@ -516,7 +517,7 @@ registry will not accept that version again.
 | `do` | a verb: `remove`, or one this project registered |
 | `args` | extra arguments appended to the body |
 | `all` | a set whose members replace the `$all` marker, in one invocation — a whole argument, written once |
-| `each` | a set whose members the body runs once per, sequentially, with `$each` standing for the member |
+| `each` | a set whose members the body runs once per, with `$each` standing for the member |
 | `in` | where the body runs, relative to the root — may end with `$each` |
 | `env` | environment for this task only |
 | `env-required` | variables that must already be set, checked before the body runs |
@@ -570,7 +571,8 @@ tasks:
     args: [$all]
 ```
 
-`each:` runs the body once per member, sequentially. `$each` is that member,
+`each:` runs the body once per member — in the order the set gives them, and
+one at a time unless `-j` says otherwise. `$each` is that member,
 and it may stand as a whole argument or **end** one — `packages/$each`,
 `--flavor=$each` — with nothing after it. That line is the same line twice: a
 prefix lets a set hold the part a path cannot be derived from, the bare name,
@@ -617,11 +619,13 @@ looking like a Windows drive. It is also what lets a set hold the bare name a
 path cannot be derived from, with `in: packages/$each` composing the path
 around it.
 
-A member that begins with `-` is refused where it would reach a program's
-arguments: a file called `-n.dart` is a path to you and an option to almost
-everything else. Write `--` before the marker, where a command line says its
-operands begin — the engine will not add it for you, because that would change
-the argv the task wrote.
+A member a **glob** found that begins with `-` is refused where it would reach
+a program's arguments: a file called `-n.dart` is a path to you and an option to
+almost everything else. Write `--` before the marker, where a command line says
+its operands begin — the engine will not add it for you, because that would
+change the argv the task wrote. A member you wrote out yourself is not refused:
+you can see it, and a `values:` set holding `-v` is somebody passing a flag on
+purpose.
 
 **A set is read when the task that names it is about to run**, and at no other
 time. `--validate` and `--dry-run` happen before that, so a set the run itself

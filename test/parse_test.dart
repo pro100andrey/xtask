@@ -714,10 +714,45 @@ tasks: {}
           isA<XtaskFormatException>().having(
             (e) => e.message,
             'message',
-            contains('no name'),
+            contains('a gate name that is empty'),
           ),
         ),
       );
+    });
+
+    test('and so is one anywhere else a name is written', () {
+      // The gate list refused this and the other three keys took it: a file
+      // with an empty task name validated clean and printed a blank column,
+      // with nothing able to name it in a `needs:`. The argument the gate
+      // refusal makes applies verbatim, so the check moved to where names are
+      // read rather than staying at the one caller that made it.
+      for (final (what, yaml) in [
+        (
+          'a task name',
+          'version: 1\ntasks:\n  "": {desc: x, run: [d]}\n',
+        ),
+        (
+          'a set name',
+          'version: 1\nsets:\n  "": [a]\ntasks:\n  a: {desc: x, run: [d]}\n',
+        ),
+        (
+          'an environment variable name',
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, run: [d], env: {"": v}}\n',
+        ),
+      ]) {
+        expect(
+          () => parseXtaskFile(yaml),
+          throwsA(
+            isA<XtaskFormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('$what that is empty'),
+            ),
+          ),
+          reason: 'an empty $what was accepted',
+        );
+      }
     });
 
     test('an empty list is refused rather than read as none', () {

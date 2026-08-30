@@ -115,13 +115,6 @@ Map<String, SourceSpan?> _gates(YamlMap root) {
   final gates = <String, SourceSpan?>{};
   for (final item in node.nodes) {
     final name = _name(item, 'a gate name');
-    if (name.isEmpty) {
-      throw XtaskFormatException(
-        'a gate set with no name. `--list` would print a heading with nothing '
-        'after it, and nothing could name it in a `gate:`',
-        item.span,
-      );
-    }
     if (gates.containsKey(name)) {
       throw XtaskFormatException(
         'gate set `$name` is declared twice. The order of this list is the '
@@ -525,12 +518,29 @@ List<String> _stringList(YamlNode node, String what) {
   ];
 }
 
+/// [key] read as a name, refusing anything that is not one.
+///
+/// **Including the empty one, and here rather than at one caller.** The gate
+/// list refused `"":` with a sentence about `--list` printing a heading with
+/// nothing after it; tasks, sets and environment variables took the same key
+/// and kept it. A file with an empty task name validated clean and printed a
+/// blank name column, and nothing could name it in a `needs:` — the argument
+/// the gate refusal makes, applying verbatim to three keys that did not make
+/// it.
 String _name(YamlNode key, String what) {
   final value = key.value;
-  if (value is String) {
-    return value;
+  if (value is! String) {
+    throw XtaskFormatException('$what must be a string', key.span);
   }
-  throw XtaskFormatException('$what must be a string', key.span);
+  if (value.isEmpty) {
+    throw XtaskFormatException(
+      'the file has $what that is empty. A name is what a report prints and '
+      'what something else writes to reach it, and neither works with nothing '
+      'there',
+      key.span,
+    );
+  }
+  return value;
 }
 
 String? _optionalString(YamlMap map, String key, String taskName) {
