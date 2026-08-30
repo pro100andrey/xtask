@@ -2,7 +2,7 @@
 /// is built on.
 library;
 
-/// A job the project implements in Dart, named by a task's `do:` key (§9).
+/// A job the project implements in Dart, named by a task's `do:` key.
 ///
 /// Rule R1 pushes logic here deliberately: the file cannot branch, so a task
 /// that needs a condition becomes one of these instead. It is ordinary Dart —
@@ -28,7 +28,7 @@ String unknownVerb({
     '${known.isEmpty ? '' : ' — known: '
               '${(known.toList()..sort()).join(', ')}'}';
 
-/// Everything a verb is given (§9).
+/// Everything a verb is given.
 final class VerbContext {
   const VerbContext({
     required this.args,
@@ -66,8 +66,8 @@ final class VerbContext {
   final String workingDirectory;
 
   /// Where to write. A verb writing to `stdout` directly would bypass the
-  /// grouping markers §7.1 needs, so it is given a sink instead of finding
-  /// one.
+  /// grouping markers a folded CI log needs, so it is given a sink instead
+  /// of finding one.
   final void Function(String line) log;
 
   /// The member of `each:` this invocation is for, or null when there is none.
@@ -88,13 +88,14 @@ final class VerbContext {
   /// **Because "make it a verb" was advice that could not be taken.** R1 puts
   /// logic in Dart and the README sends derived paths there — `x.proto` to
   /// `x.pb.dart` is a verb's job — but a verb that wanted to run a program had
-  /// to reach for `Process.start` itself, and lost §5.4's `PATH` walk, its
+  /// to reach for `Process.start` itself, and lost the engine's `PATH` walk,
+  /// its
   /// `PATHEXT` rules, its refusal to hand `cmd.exe` a metacharacter through a
   /// batch shim, and the exit code that says a tool is missing rather than
   /// broken. Half an escape hatch is not one.
   ///
-  /// [workingDirectory] defaults to [this.workingDirectory], which under
-  /// `each:` is already the member's own.
+  /// The [workingDirectory] parameter defaults to the context's own, which
+  /// under `each:` is already the member's.
   Future<int> run(List<String> argv, {String? workingDirectory}) =>
       start(argv, workingDirectory: workingDirectory ?? this.workingDirectory);
 }
@@ -110,14 +111,14 @@ final class VerbContext {
 abstract interface class ProcessStarter {
   /// Runs [executable] with [arguments] and answers with its exit code.
   ///
-  /// Output goes straight through as it arrives; §5.2 requires it never be
-  /// buffered to the end, because a long test run has to be watchable.
+  /// Output goes straight through as it arrives, and is never buffered to
+  /// the end, because a long test run has to be watchable.
   /// [timeout], where a task set one, is the starter's to enforce — not the
   /// caller's. Only whoever holds the process can kill it, and a deadline
   /// applied by waiting less would report a timeout while the process ran on.
   ///
   /// [output], when given, is where the body's own stdout and stderr go
-  /// instead of straight through — **the one place §5.2's promise is
+  /// instead of straight through — **the one place that promise is
   /// deliberately not kept**, and only a run that asked to be parallel gives
   /// it. Two tasks writing to one terminal at once produce a transcript
   /// belonging to neither, and a section that folds lines from two tasks folds

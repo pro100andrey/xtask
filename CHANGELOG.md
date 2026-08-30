@@ -20,7 +20,8 @@ before doing anything.
 
 ### Endings the exit code table does not have
 
-Six paths could end the process at `255`, which is not a code §5.3 defines:
+Six paths could end the process at `255`, which is not a code the exit code
+table defines:
 a directory a set's patterns reach that cannot be listed, a workflow that is
 not UTF-8, a `.github/workflows` that cannot be listed, a task printing a byte
 that is not UTF-8 while its output is piped, a pattern `do: remove` could not
@@ -345,7 +346,8 @@ multi-threaded, so one per core on a 32-core machine is 32 analysis servers.
 
 `--check-ci` accepts flags after the gate set's name. It required exactly one
 word and refused anything starting with `-`, which made `xtask check -j 4`
-impossible to write in a workflow — while §7.1 sends all parallelism to CI. A
+impossible to write in a workflow — while parallelism is the thing a CI job
+is for. A
 step doing two *things* is still refused, which is what that rule was for.
 
 **Breaking:** `--parallel` and `--parallel=N` are gone; write `-j N`.

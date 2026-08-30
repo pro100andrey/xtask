@@ -16,7 +16,7 @@ import 'src/process.dart';
 
 // Re-exported rather than restated. A second declaration of `Verb` or of what
 // a verb is handed would be two lists of the same thing, which is the defect
-// §1 exists to remove.
+// this package exists to remove.
 export 'src/context.dart' show Verb, VerbContext;
 
 // A verb answers with a number, and the README tells its author to write that
@@ -33,15 +33,15 @@ export 'src/exit_codes.dart' show ExitCode;
 ///
 /// This is the whole public surface. A project depends on `xtask`, writes
 /// `bin/xtask.dart` calling this, and `dart run :xtask <task>` reaches it by
-/// file name (§7, §9). **The answer is the process's exit code and has to be
+/// file name. **The answer is the process's exit code and has to be
 /// used as one** — a caller that discards it reports success whatever
 /// happened.
 ///
 /// Everything ambient is supplied here and nowhere below: the directory the
 /// command was run in, the environment, the two output streams, how a program
 /// is found on this machine and how one is started. [runCli] takes all of it
-/// as parameters, which is what lets §7's surface and §7.1's GitHub markers be
-/// tested without a toolchain and from a machine that is not a runner.
+/// as parameters, which is what lets the report and its GitHub grouping
+/// markers be tested without a toolchain, from a machine that is not a runner.
 Future<int> runXtask(
   List<String> args, {
   Map<String, Verb> verbs = const {},
@@ -60,7 +60,7 @@ Future<int> runXtask(
   workingDirectory: workingDirectory ?? Directory.current.path,
   environment: Platform.environment,
   // The engine's own reports go to stdout, with the bodies' output rather
-  // than beside it: §7.1's grouping markers only fold what is on the same
+  // than beside it: GitHub's grouping markers only fold what is on the same
   // stream, and on GitHub an `::error::` written to stderr is not an
   // annotation, it is a line of red text.
   out: _writing(stdout),
@@ -75,7 +75,8 @@ Future<int> runXtask(
 /// **`xtask --list | head -2` is an ordinary thing to type.** `head` closes the
 /// pipe as soon as it has what it wants, and the next write raises
 /// `FileSystemException: Broken pipe` — which nothing caught, so the run ended
-/// on a stack trace and exit 255, a number §5.3 does not have, for output that
+/// on a stack trace and exit 255, a number the exit code table does not have,
+/// for output that
 /// arrived exactly as asked. Every well-behaved command answers a closed pipe
 /// by stopping, and this is how it stops: the remaining lines go nowhere,
 /// because there is nowhere for them to go.
