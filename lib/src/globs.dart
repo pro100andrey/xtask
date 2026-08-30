@@ -30,21 +30,27 @@ import 'package:path/path.dart' as p;
 /// file, with nothing to say so. A file format with two dialects is the defect
 /// §1 exists to remove, and it had grown inside the tool.
 Set<String> zeroOrMoreDirectories(String pattern) {
-  final readings = _readings(pattern, 0);
-  if (readings.length > mostReadings) {
-    // **Refused, because nothing else bounds it.** Every reading becomes its
-    // own compiled glob, matched against every entry of the walk, so the cost
-    // of one line of `xtask.yaml` doubles per `**/` in it: eight globstars is
-    // 256 globs per entry, and ten is over a thousand. A pattern needing more
-    // than this is not saying what its author thinks it says.
+  // **Counted before anything is built, which is the whole point of a limit.**
+  // This was applied to the readings after `_readings` had materialised every
+  // one of them: twenty-four globstars built sixteen million strings and then
+  // refused, and thirty took the process down with an out-of-memory instead of
+  // the sentence written here for it.
+  //
+  // Each `**/` at most doubles the readings, so the same limit said in
+  // globstars is answerable by walking the pattern once and allocating
+  // nothing — and it is the only check there needs to be, because past it
+  // `_readings` cannot exceed [mostReadings].
+  final globstars = _globstars(pattern, 0);
+  if (globstars > _mostGlobstars) {
     throw FormatException(
-      '`$pattern` has ${readings.length} readings, which is more than the '
-      '$mostReadings this engine will match against every file it walks. '
-      'Each `**/` doubles them, because it means none OR more directories. '
-      'Name fewer of them, or split the set',
+      '`$pattern` has $globstars `**/` segments, which is up to '
+      '${1 << globstars} readings — more than the $mostReadings this engine '
+      'will match against every file it walks. Each `**/` doubles them, '
+      'because it means none OR more directories. Name fewer of them, or '
+      'split the set',
     );
   }
-  return readings;
+  return _readings(pattern, 0);
 }
 
 /// How many readings of one pattern the engine will compile.
@@ -52,6 +58,37 @@ Set<String> zeroOrMoreDirectories(String pattern) {
 /// Generous: the shapes a person writes have one or two `**/`, and a monorepo
 /// pattern like `packages/**/lib/**/src/**/*.dart` has eight.
 const mostReadings = 32;
+
+/// How many `**/` segments [pattern] has that [_readings] would double on.
+///
+/// The same walk [_readings] makes, without building anything: the count is
+/// what says whether building is affordable, so it cannot be a by-product of
+/// having built. A loop rather than a recursion, because counting has no
+/// reason to hold a frame per segment when the thing it guards against is
+/// holding too many.
+int _globstars(String pattern, int open) {
+  var count = 0;
+  var rest = pattern;
+  var depth = open;
+  while (true) {
+    var index = rest.indexOf('**/');
+    while (index > 0 && !_startsSegment(rest, index, depth)) {
+      index = rest.indexOf('**/', index + 1);
+    }
+    if (index == -1) {
+      return count;
+    }
+    count++;
+    depth += _depthOf(rest, index + 3);
+    rest = rest.substring(index + 3);
+  }
+}
+
+/// The same limit as [mostReadings], said in what a pattern is written with.
+///
+/// Each `**/` at most doubles the readings, so five of them is thirty-two and
+/// a sixth is the first count that can exceed it.
+const _mostGlobstars = 5;
 
 /// [pattern]'s readings, given that [open] brace groups are already open where
 /// it begins.

@@ -57,6 +57,29 @@ void main() {
     });
   });
 
+  test('and it is refused before the readings are built', () {
+    // The limit used to be applied to the readings after every one had been
+    // materialised: twenty-four globstars built sixteen million strings and
+    // then refused, and thirty ran the process out of memory instead of
+    // reaching the sentence written here for it. Counting walks the pattern
+    // once, so this returns rather than allocating.
+    final root = tempRepo('vast');
+    final vast = '${'**/' * 30}*.dart';
+    expect(
+      () => SetExpander(root: root.path).expand(
+        's',
+        GlobSet(include: [vast], exclude: const []),
+      ),
+      throwsA(
+        isA<XtaskFormatException>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('readings'), contains('30 `**/` segments')),
+        ),
+      ),
+    );
+  });
+
   test('a pattern with too many readings is refused, not matched', () {
     // Each `**/` doubles them, because it means none OR more directories, and
     // every reading becomes a glob matched against every entry of the walk:

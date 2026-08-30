@@ -1,4 +1,5 @@
 import 'package:test/test.dart';
+import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/parse.dart';
@@ -347,6 +348,46 @@ tasks:
         routeTo(file, from: 'top', to: 'target')!.first.to,
         'first',
       );
+    });
+  });
+
+  group('a chain deeper than the engine walks is refused, not crashed on', () {
+    // One stack frame per edge, so a long enough chain took `--validate` and
+    // `--dry-run` out on a stack overflow and exit 255 — a number the table
+    // does not define, from the modes whose job is to answer about a file.
+    String chain(int length) => [
+      'version: 1',
+      'tasks:',
+      for (var i = 0; i < length; i++) ...[
+        '  t$i:',
+        '    desc: x',
+        "    run: ['true']",
+        if (i < length - 1) '    needs: [t${i + 1}]',
+      ],
+    ].join('\n');
+
+    test('and one at the bound still plans', () {
+      final plan = planRun(parseXtaskFile(chain(mostDepth)), 't0');
+      expect(plan.names, hasLength(mostDepth));
+    });
+
+    test('and one past it is a sentence and a code the table has', () {
+      expect(
+        () => planRun(parseXtaskFile(chain(mostDepth + 50)), 't0'),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('deep'), contains('$mostDepth')),
+          ),
+        ),
+      );
+    });
+
+    test('and `--why` answers rather than following it down', () {
+      // Asked of files `--validate` has not necessarily been run on.
+      final file = parseXtaskFile(chain(mostDepth + 50));
+      expect(() => routesTo(file, 't0'), returnsNormally);
     });
   });
 }

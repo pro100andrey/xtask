@@ -131,11 +131,14 @@ List<PlanEdge>? routeTo(
   // deepest-first and are reversed at the end.
   final route = <PlanEdge>[];
 
-  bool walk(String at) {
+  bool walk(String at, [int depth = 0]) {
     if (at == to) {
       return true;
     }
-    if (unreachable.contains(at)) {
+    if (unreachable.contains(at) || depth > mostDepth) {
+      // The same bound the planner keeps, and for the same reason: one frame
+      // per edge. `--why` is asked about files `--validate` has not
+      // necessarily been run on first.
       return false;
     }
     // A cycle is `--validate`'s to report; here it must only not hang.
@@ -167,7 +170,7 @@ List<PlanEdge>? routeTo(
       for (final need in task.needs) ('needs', need),
       for (final next in task.then) ('then', next),
     ]) {
-      if (walk(next)) {
+      if (walk(next, depth + 1)) {
         done(reached: true);
         route.add(PlanEdge(at, kind, next));
         return true;
@@ -179,6 +182,16 @@ List<PlanEdge>? routeTo(
 
   return walk(from) ? route.reversed.toList() : null;
 }
+
+/// How deep a chain of `needs:` or `then:` this engine walks.
+///
+/// **A bound, because the walk is one stack frame per edge.** Without it a
+/// long enough chain ended `--validate` and `--dry-run` on a stack overflow
+/// and exit 255, which is not a code the table defines — a file answered with
+/// a crash by the modes whose job is to answer about files. Far past anything
+/// a person writes: the depth of a real graph is the length of its longest
+/// dependency chain, which is tens.
+const mostDepth = 1000;
 
 /// The order [taskName] resolves to in [file].
 ///
@@ -382,9 +395,22 @@ final class _Planner {
     String name, {
     required Task? from,
     String? continuationOf,
+    int depth = 0,
   }) {
     if (_done.contains(name)) {
       return;
+    }
+    if (depth > mostDepth) {
+      // **A number the table has, rather than a stack overflow.** This walk
+      // is one frame per edge, so a `needs:` chain long enough overflowed the
+      // stack and ended the process at 255 — from `--validate`, whose whole
+      // job is to answer about a file rather than fall over on one.
+      throw XtaskFormatException(
+        'the chain reaching `$name` is more than $mostDepth tasks deep. That '
+        'is deeper than a file anybody writes and deeper than this engine '
+        'walks, so it is refused rather than run partway',
+        file.tasks[name]?.span,
+      );
     }
 
     final task = file.tasks[name];
@@ -427,7 +453,12 @@ final class _Planner {
     for (final need in task.needs) {
       // Inside the same continuation as whatever needed it: a task pulled in
       // by a continuation's own `needs:` is part of that continuation.
-      resolve(need, from: task, continuationOf: continuationOf);
+      resolve(
+        need,
+        from: task,
+        continuationOf: continuationOf,
+        depth: depth + 1,
+      );
     }
     _opened.remove(_open.removeLast());
 
@@ -446,7 +477,7 @@ final class _Planner {
         // says nothing contradictory.
         continue;
       }
-      resolve(next, from: task, continuationOf: name);
+      resolve(next, from: task, continuationOf: name, depth: depth + 1);
     }
   }
 }
