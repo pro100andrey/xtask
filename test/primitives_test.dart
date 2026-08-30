@@ -278,17 +278,31 @@ void main() {
   group('what a dry run may say it would delete', () {
     test('is what is on disk, and nothing that is not', () {
       given(['build/out/a.o', 'keep.txt']);
+      final would = removeWouldDelete(
+        ['build', 'coverage', 'keep.txt'],
+        root: root.path,
+      );
       expect(
-        removeWouldDelete(['build', 'coverage', 'keep.txt'], root: root.path),
+        would.paths,
         ['build', 'keep.txt'],
         reason: '`coverage` is not there, and a missing path is not deleted',
       );
+      expect(would.refused, isNull);
     });
 
-    test('and nothing at all where the run would refuse', () {
+    test('and where the run would refuse, it says why in the same words', () {
+      // It used to answer an empty list here, which the caller renders as
+      // "nothing of these is on disk, which is not an error" — a positive
+      // assurance about a recursive delete aimed outside the repository.
       given(['a.txt']);
-      expect(removeWouldDelete(['../etc'], root: root.path), isEmpty);
-      expect(removeWouldDelete(['a{b'], root: root.path), isEmpty);
+      final outside = removeWouldDelete(['../etc'], root: root.path);
+      expect(outside.paths, isEmpty);
+      expect(outside.refused, contains('outside the repository'));
+      expect(outside.refused, contains('../etc'));
+
+      final bad = removeWouldDelete(['a{b'], root: root.path);
+      expect(bad.paths, isEmpty);
+      expect(bad.refused, contains('not a valid pattern'));
     });
 
     test('and it deletes nothing itself', () {

@@ -282,6 +282,45 @@ void main() {
       expect(output(), contains('nothing of these is on disk'));
     });
 
+    test('and stops where the run stops, rather than calling it harmless', () {
+      // The gap this closes: `--dry-run` rendered a refused `remove` as
+      // "nothing of these is on disk, which is not an error" and answered 0,
+      // while the run refused it and answered 2. A mode that promises to stop
+      // where the run stops said a recursive delete aimed outside the
+      // repository was fine.
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              '  clean: {desc: x, do: remove, args: [../outside]}\n'
+              '  after: {desc: y, needs: [clean], run: [dart, test]}\n',
+          'after',
+          verbs: builtInVerbs(root: root.path),
+        ),
+        completion(ExitCode.invalidFile),
+      );
+      expect(output(), contains('outside the repository'));
+      expect(output(), contains('../outside'));
+      expect(output(), isNot(contains('nothing of these is on disk')));
+      expect(
+        output(),
+        isNot(contains('run  /bin/dart test')),
+        reason: 'a plan below a step the run refuses is a plan never reached',
+      );
+    });
+
+    test('and says the same about a pattern that will not compile', () {
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              "  clean: {desc: x, do: remove, args: ['a{b']}\n",
+          'clean',
+          verbs: builtInVerbs(root: root.path),
+        ),
+        completion(ExitCode.invalidFile),
+      );
+      expect(output(), contains('not a valid pattern'));
+    });
+
     test('a verb is looked up and NOT called', () async {
       var called = false;
       final code = await dry(

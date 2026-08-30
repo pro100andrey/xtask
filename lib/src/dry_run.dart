@@ -68,7 +68,15 @@ Future<int> dryRun({
     }
     for (final body in resolved) {
       describe(body).forEach(log);
-      _wouldDelete(body, root: bodies.root).forEach(log);
+      final deletion = _wouldDelete(body, root: bodies.root);
+      deletion.lines.forEach(log);
+      // **Where the run would stop.** A `do: remove` the run refuses is not a
+      // block to print and walk past: the plan below it is a plan that will
+      // never be reached, and printing it as though it would be is the thing
+      // this mode exists not to do.
+      if (deletion.refused) {
+        return ExitCode.invalidFile;
+      }
     }
   }
 
@@ -87,20 +95,42 @@ Future<int> dryRun({
 ///
 /// Capped, because a clean tree can hold thousands and a plan is meant to be
 /// read.
-List<String> _wouldDelete(Resolved body, {required String root}) {
+({List<String> lines, bool refused}) _wouldDelete(
+  Resolved body, {
+  required String root,
+}) {
   if (body is! ResolvedVerb || body.verb != removeVerbName) {
-    return const [];
+    return (lines: const [], refused: false);
   }
-  final paths = removeWouldDelete(body.arguments, root: root);
+  final would = removeWouldDelete(body.arguments, root: root);
+  if (would.refused case final refusal?) {
+    // In the run's own words, and in the run's own place: this used to render
+    // as "nothing of these is on disk", which told a reader that a `remove`
+    // aimed outside the repository was harmless.
+    return (lines: ['error: ${_about(body, refusal)}'], refused: true);
+  }
+  final paths = would.paths;
   if (paths.isEmpty) {
     // Said out loud. Silence here reads as "nothing was worked out", and the
     // answer — there is nothing there, which §6 makes fine — is the one a
     // person running `clean` twice needs.
-    return const ['  del  nothing of these is on disk, which is not an error'];
+    return (
+      lines: const [
+        '  del  nothing of these is on disk, which is not an error',
+      ],
+      refused: false,
+    );
   }
   const shown = 10;
-  return [
-    for (final path in paths.take(shown)) '  del  $path',
-    if (paths.length > shown) '  del  … and ${paths.length - shown} more',
-  ];
+  return (
+    refused: false,
+    lines: [
+      for (final path in paths.take(shown)) '  del  $path',
+      if (paths.length > shown) '  del  … and ${paths.length - shown} more',
+    ],
+  );
 }
+
+/// A refusal, named for the task it is about, the way a run names it.
+String _about(Resolved body, String refusal) =>
+    'task `${body.task.name}`: $refusal';

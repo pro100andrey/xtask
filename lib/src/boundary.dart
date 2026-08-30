@@ -59,6 +59,19 @@ String workingDirectoryLeavesRoot({
     'that runs somewhere the repository does not own is not something this '
     'file can vouch for';
 
+/// Why `remove` refuses the argument [written].
+///
+/// Beside [workingDirectoryLeavesRoot] and for the same reason, which now has
+/// three callers rather than two: the verb refuses this when a run reaches it,
+/// `--dry-run` has to say the same thing rather than print a plan the run will
+/// not carry out, and `--validate` answers the question without a filesystem
+/// at all. This is the verb that deletes recursively; three sentences drifting
+/// apart is the last place to allow it.
+String removeLeavesRoot({required String written}) =>
+    '`remove` refuses `$written`: it names a path outside the '
+    'repository. A verb that deletes recursively and treats a missing path '
+    'as ordinary is the last place to take a path on trust';
+
 /// [posixPath], written the way this machine writes paths, under [root].
 ///
 /// **The file speaks POSIX and the machine may not.** Every path in

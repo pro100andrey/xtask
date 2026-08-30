@@ -39,6 +39,48 @@ void main() {
     });
   });
 
+  group('the repository boundary, on the one body that deletes', () {
+    // §8's promise is that this class is found without running anything, and
+    // for `do: remove` it was not: `in:` and the sets were checked and the
+    // verb's own arguments were not. A file aiming a recursive delete at
+    // `/etc` was answered "nothing wrong" here and refused by the run.
+    ValidationReport check(String args) => validateFile(
+      parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  clean: {desc: x, do: remove, args: $args}\n',
+      ),
+      knownVerbs: const {'remove'},
+    );
+
+    test('refuses an argument that climbs out of the repository', () {
+      final report = check("['../outside']");
+      expect(report.ok, isFalse);
+      expect('$report', contains('../outside'));
+      expect('$report', contains('outside the repository'));
+    });
+
+    test('and an absolute one', () {
+      expect(check("['/etc']").ok, isFalse);
+    });
+
+    test('and says nothing about arguments that stay inside', () {
+      expect(check("['build', 'coverage']").ok, isTrue);
+    });
+
+    test('and leaves another verb alone', () {
+      // The check is this verb's, not every verb's: `args:` for a project's
+      // own verb is whatever that verb wants, and §6 puts no boundary on it.
+      final report = validateFile(
+        parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  ship: {desc: x, do: notify, args: [/etc]}\n',
+        ),
+        knownVerbs: const {'notify'},
+      );
+      expect(report.ok, isTrue, reason: '$report');
+    });
+  });
+
   late Directory root;
 
   setUp(() => root = tempRepo('validate'));

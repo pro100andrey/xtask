@@ -7,6 +7,7 @@ import 'errors.dart';
 import 'gates.dart';
 import 'graph.dart';
 import 'model.dart';
+import 'primitives.dart';
 import 'sets.dart';
 
 /// Everything wrong with a file, rather than the first thing.
@@ -54,6 +55,7 @@ ValidationReport validateFile(
     _checkVerb(task, knownVerbs, problems);
     _checkSetReferences(task, file, problems);
     _checkWorkingDirectory(task, file, problems);
+    _checkRemoveArguments(task, problems);
   }
 
   _checkGraph(file, problems);
@@ -130,6 +132,36 @@ void _checkWorkingDirectory(
     problems.add(
       XtaskFormatException(
         workingDirectoryLeavesRoot(task: task.name, written: path),
+        task.span,
+      ),
+    );
+    return;
+  }
+}
+
+/// The repository boundary, asked of the arguments `do: remove` will delete.
+///
+/// **The one body that deletes, and the one place the fence was missing.**
+/// `boundary.dart` says every place that turns a written string into a path
+/// calls it, and `in:` and the sets do. These arguments did not: a task with
+/// `do: remove` and `args: ['/etc']` was answered "nothing wrong" here and
+/// refused by the run, so the mode whose whole promise is finding this class
+/// without running anything did not find it for the verb that most needs it.
+///
+/// Literal arguments only, which is all this can see without a filesystem —
+/// a member a glob finds is the resolver's to check, and it does.
+void _checkRemoveArguments(Task task, List<XtaskFormatException> problems) {
+  final body = task.body;
+  if (body is! DoBody || body.verb != removeVerbName) {
+    return;
+  }
+  for (final argument in task.args) {
+    if (!leavesRoot(argument)) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        removeLeavesRoot(written: argument),
         task.span,
       ),
     );

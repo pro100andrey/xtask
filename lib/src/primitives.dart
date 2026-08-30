@@ -96,9 +96,7 @@ String? _outsideRoot(String argument) {
   if (!leavesRoot(argument)) {
     return null;
   }
-  return '`remove` refuses `$argument`: it names a path outside the '
-      'repository. A verb that deletes recursively and treats a missing path '
-      'as ordinary is the last place to take a path on trust';
+  return removeLeavesRoot(written: argument);
 }
 
 /// What [argument] names on disk: itself, or everything its pattern matches.
@@ -276,32 +274,44 @@ Future<void> _deleting(String path, Future<void> Function() delete) async {
 /// they meant.
 ///
 /// It does not call the verb. It asks what the verb asks, and removes nothing.
-/// Anything the run would refuse — a path outside the repository, a pattern
-/// that will not compile — comes back empty here, because the run says why and
-/// half a sentence is worse than none.
-List<String> removeWouldDelete(
+///
+/// **Two answers, not one empty list.** Anything the run would refuse — a path
+/// outside the repository, a pattern that will not compile — used to come back
+/// as `const []`, on the reasoning that the run would say why. It does not:
+/// `--dry-run` renders an empty list as "nothing of these is on disk, which is
+/// not an error", so a `remove` pointed at `/etc` was reported as harmless and
+/// answered 0, while the run refused it and answered 2. A positive assurance
+/// is not silence, and this is the one verb where the difference deletes
+/// things. So `refused` carries the run's own sentence and `paths` is only
+/// ever what would go.
+({List<String> paths, String? refused}) removeWouldDelete(
   List<String> arguments, {
   required String root,
 }) {
-  if (arguments.any(leavesRoot)) {
-    return const [];
+  for (final argument in arguments) {
+    if (leavesRoot(argument)) {
+      return (paths: const [], refused: removeLeavesRoot(written: argument));
+    }
   }
   final List<String> matched;
   try {
     matched = pathsMatchingAll(arguments, root: root);
-  } on FormatException {
-    return const [];
+  } on FormatException catch (problem) {
+    return (paths: const [], refused: '`remove`: ${problem.message}');
   }
-  return [
-    for (final path in matched)
-      // §6 says a missing path is not an error, so a literal that is not there
-      // is not something this would delete — and saying it would be a promise
-      // about a file that does not exist.
-      if (FileSystemEntity.typeSync(
-            underRoot(root, path),
-            followLinks: false,
-          ) !=
-          FileSystemEntityType.notFound)
-        path,
-  ]..sort();
+  return (
+    refused: null,
+    paths: [
+      for (final path in matched)
+        // §6 says a missing path is not an error, so a literal that is not
+        // there is not something this would delete — and saying it would be a
+        // promise about a file that does not exist.
+        if (FileSystemEntity.typeSync(
+              underRoot(root, path),
+              followLinks: false,
+            ) !=
+            FileSystemEntityType.notFound)
+          path,
+    ]..sort(),
+  );
 }
