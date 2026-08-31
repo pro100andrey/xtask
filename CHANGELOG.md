@@ -2,6 +2,97 @@
 
 ## 0.2.0
 
+### A gate set runs in an order the graph allows
+
+A gate set is planned by seeding one planner with each of its members, and the
+seeds went in declaration order — which is not always an order the graph
+permits. A `release` gate holding `verify` and `publish then verify` verified
+before it published, because `verify` was written first. A failed verification
+then answered 1 rather than 4, telling a pipeline the publish failed when the
+registry has already accepted that version, and the guard that stops a failed
+publish being announced never fired, because nothing was a continuation of
+anything. `xtask publish`, `--why` and `--validate` had the order right the
+whole time, so the gate and its own members described two different runs.
+
+`needs:` and `then:` are one relation read from two ends — "y before x" and "x
+before y" — and the members are now put in an order that relation allows.
+Where it separates none of them, the order stays the one the file wrote, which
+is what makes cheap gates before slow ones mean something.
+
+**Behaviour change:** a gate set holding two tasks with a `needs:` or a `then:`
+between them may run them in a different order than 0.1.0 did. That order is
+the one every other mode already reported.
+
+### A verb starts its program inside the repository
+
+`context.run` was given a working directory and joined it onto the repository
+root without asking the boundary every other written path is asked about, so a
+verb could start a child anywhere on the machine — `workingDirectory:
+'../../..'` ran at the filesystem root — and the run answered 0.
+
+The path is now checked. A relative one may not climb, in either platform's
+notation; an absolute one is allowed exactly where it lands inside the root, so
+`context.workingDirectory` handed back, or a path composed around it, means
+what it looks like it means. Anything else is refused with code 2, which is
+what `remove` already answers on the same question.
+
+**Behaviour change for a project's own verbs:** `context.run(argv,
+workingDirectory: …)` no longer defaults the parameter inside `VerbContext` —
+the engine applies the same default one layer down, where it can still tell a
+path the verb wrote from one the engine handed out. A verb that passes nothing
+is unaffected and still runs where the task runs.
+
+### A workflow step is read by what it says
+
+`--check-ci` read a `run:` step by where the xtask word sat, and every
+narrowing of that rule fixed the case in front of it and broke the next.
+`timeout 600 ./xtask ci-web`, `xvfb-run ./xtask ci-web` and
+`cd sub && ./xtask ci-web` were all turned down and told to move a gate set
+that was already in the task file. A step is now recognised by its remaining
+words parsing into a gate set this file declares, or into a mode — nothing
+writes those by accident, and naming the binary as an operand,
+`cp ./xtask /usr/local/bin`, names no gate this file has.
+
+A `run: |` block is read line by line, with a shell's line continuations joined
+first, so `dart run :xtask \` and `ci-analyze` are one command and not two. The
+exemption marker follows the block in: at the end of a line it excuses that
+line, on a line of its own it excuses the line under it, and it no longer
+reaches out of one step's script into the next. A marker inside a quoted string
+is what the step prints rather than what the step claims, and excuses nothing —
+`echo '# xtask: not a gate - pretend'` used to exempt itself.
+
+**Behaviour change:** a workflow whose exemption was written inside quotes, or
+inside another step's script, goes from green to red. Both were exempting a
+step nobody had excused.
+
+### The scan of the raw text reads the file the way YAML does
+
+The character-by-character pass that runs before the parser refused things YAML
+has no objection to. A leading byte-order mark — what Notepad and older Visual
+Studio write, on a tool whose own CI runs `windows-latest` — was reported as
+whitespace pasted from a document; it is removed instead, ahead of both readers
+so that a span cannot mean two things. An invisible space inside a `#` comment
+refused the whole file and explained itself in terms of indentation YAML never
+read, since YAML reads no structure in a comment; the scan now runs behind the
+comment and quote guards, where the rule is true. A `-`, a `,` or a `:` inside
+a word is no longer an indicator, so `desc: red,&blue` and `desc: x -*- y` are
+descriptions rather than anchors, and `<<` is the merge key only where a key
+can be.
+
+The other direction: a task, gate, set or environment-variable name may no
+longer run to more than one line. `--list` pads a column with it and a CI host
+reads a section marker to the end of its line, so a name with a newline in it
+opened a fold that was not the task's. This is the rule `desc:` was already
+held to, on the other half of the same output line.
+
+### `--why` walks as far as the file goes
+
+The depth bound on route-finding was a wrong answer whichever way it was spent:
+a branch given up on is neither a route nor a proof there is none. It is gone,
+and the walk holds its own stack rather than one frame per edge, so a
+four-thousand-hop route is a route. The planner keeps its bound, because it
+plans the whole file and has no partial answer to get wrong.
+
 ### A repository-relative program is read from where the body runs
 
 `run: ['./tool/build.sh']` worked when `xtask` was typed at the repository root
@@ -153,6 +244,32 @@ Measured on a synthetic repository of 15,000 files and a task file of 4,000:
 
 ### Also
 
+- A run's exit code is the first failure in the **plan's** order, not the first
+  to finish. Under `-j`, two tasks failing with 3 and 1 answered whichever
+  ended sooner, and `--keep-going` could pin a whole run to 4 — which the table
+  reads as "the body succeeded and only a `then:` after it did not".
+- `xtask check | head -1` ran no tasks at all: the flush that orders this
+  process's output against an inherited child threw before the first child
+  started, and the failure was reported down the pipe that had just gone away.
+  `xtask check >&-` ended at 255 from inside the failure reporting. A closed
+  reader is an ordinary end in both places now. A piped child's stdin is closed
+  rather than left as a pipe nothing fills.
+- An `::error::` annotation escapes `%` before it escapes the newlines. The
+  runner decodes what it reads back, so a message quoting `--name a%0Ab` — what
+  a failure prints of its own argv — was decoded into the newline the escaping
+  exists to remove, and truncated there.
+- `do: remove` sorts the paths it reports whether or not one of its arguments
+  contains a glob character. It sorted them in one case and kept written order
+  in the other, so one block's `--dry-run` could not be compared with another's.
+- A `timeout:` or an `interruptible:` on a body that cannot honour one is
+  collected with the rest of a task's contradictions rather than thrown one at
+  a time. Its caret now points at the task rather than at the key, which is
+  where every other rule of that kind points.
+- The `**/` bound counts readings by walking the pattern once. Calling it `2ⁿ`
+  was wrong in the refusing direction — readings collapse, and `a/**/**/b` has
+  three rather than four — and the README's arithmetic said so too.
+- `--emit-schema` says a name is one line and not empty, which the parser
+  refuses and the schema accepted.
 - Empty names are refused everywhere a name is written. `gates:` refused an
   empty one; tasks, sets and environment variables took the same key and kept
   it, so a task with no name validated clean and printed a blank column.

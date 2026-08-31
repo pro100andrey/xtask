@@ -17,7 +17,8 @@
       "type": "array",
       "items": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "pattern": "^[^\\r\\n]+$"
       },
       "minItems": 1,
       "uniqueItems": true,
@@ -26,6 +27,11 @@
     "sets": {
       "type": "object",
       "description": "Named lists and globs, referenced by a task's `each:` or `all:`. A set that expands to nothing is an error: a task given no files checked nothing.",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^\\r\\n]+$"
+      },
       "additionalProperties": {
         "oneOf": [
           {
@@ -88,7 +94,12 @@
     },
     "tasks": {
       "type": "object",
-      "description": "The graph. Declaration order is meaningful: a gate set runs its tasks in the order they appear here.",
+      "description": "The graph. Declaration order is meaningful: a gate set runs its tasks in the order they appear here, except where a `needs:` or a `then:` puts one of them after another.",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^\\r\\n]+$"
+      },
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
@@ -142,6 +153,11 @@
           },
           "env": {
             "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$"
+            },
             "additionalProperties": {
               "type": "string"
             },

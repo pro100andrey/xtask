@@ -96,7 +96,9 @@ final class VerbContext {
   ///
   /// [workingDirectory] is a path from the repository root, written the way
   /// the file writes one — and left as null it is the task's own, which under
-  /// `each:` is already the member's.
+  /// `each:` is already the member's. An absolute path is taken as written and
+  /// allowed where it lands inside the root, so passing [workingDirectory]
+  /// back in, or a path composed around it, says what it looks like it says.
   ///
   /// **Passed through as written, not defaulted here.** Filling it in with
   /// [workingDirectory] made every call arrive at the engine holding an

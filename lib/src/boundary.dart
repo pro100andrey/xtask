@@ -59,6 +59,30 @@ String workingDirectoryLeavesRoot({
     'that runs somewhere the repository does not own is not something this '
     'file can vouch for';
 
+/// [written] resolved under [root], or null when the root does not own it.
+///
+/// **The verb's question, and it is not the file's.** `in:` is text somebody
+/// committed, so [leavesRoot] refuses an absolute path outright: a committed
+/// file that names `/home/someone/src` is wrong on every other machine. A verb
+/// is Dart, and the absolute path it most often holds is the one this engine
+/// handed it — `context.workingDirectory` — so asking the file's question of a
+/// verb refused the obvious way to be explicit, and said of the repository
+/// root itself that it reaches outside the repository.
+///
+/// So an absolute path is allowed exactly where it lands inside the root, and
+/// a relative one is still the file's rule: nothing that climbs, in either
+/// platform's notation, because it is about to be joined with the platform's
+/// own `p.join`.
+String? verbDirectoryUnderRoot(String root, String written) {
+  if (p.isAbsolute(written)) {
+    final resolved = p.normalize(written);
+    return p.equals(root, resolved) || p.isWithin(root, resolved)
+        ? resolved
+        : null;
+  }
+  return leavesRoot(written) ? null : underRoot(root, written);
+}
+
 /// Why a verb's own working directory is refused on task [task].
 ///
 /// **The third place a written string becomes a path, and the one that had no
@@ -68,6 +92,11 @@ String workingDirectoryLeavesRoot({
 /// added so that a verb which runs a program keeps §5.4's answers — joined its
 /// argument onto the root and asked nothing, so `../../..` started the child
 /// at the filesystem root and the run answered 0.
+///
+/// Said of what [verbDirectoryUnderRoot] turned down, so it is said of a path
+/// that really is outside: the first version of this refused every absolute
+/// path and told the reader that the repository root reaches outside the
+/// repository.
 ///
 /// A verb is Dart rather than YAML, so this names the task and quotes what the
 /// verb asked for: the person reading it has to find a call, not a key.

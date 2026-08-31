@@ -161,7 +161,9 @@ Future<int> regen(VerbContext context) async {
   context.log('regenerating ${context.args.length} files');
   // context.member   which member of `each:` this run is for, or null
   // context.run(...)  a program, started the way a `run:` body is —
-  //                   PATH, PATHEXT, the batch rule, the exit codes
+  //                   PATH, PATHEXT, the batch rule, the exit codes.
+  //                   `workingDirectory:` is a path from the repository
+  //                   root, and stays inside it; left out, it is the task's
   // context.args     `args:` with `$all` expanded, then anything
   //                  the command line passed after `--`
   // context.env      this machine's environment, with `env:` winning a clash
@@ -174,7 +176,9 @@ The engine ships **no** project verbs — `regen` above is one repository's
 business, not the tool's. Its only built-in is `remove`.
 
 The file name *is* the declaration: `dart run :xtask` resolves to
-`bin/xtask.dart` and nothing else, so no manifest entry names it.
+`bin/xtask.dart` and nothing else, so nothing has to name it to make that work.
+(`pubspec.yaml` does carry an `executables:` entry, and it is there for
+`dart install` — which fails outright without one — not for `dart run`.)
 
 ## The command
 
@@ -292,7 +296,9 @@ being mentioned could not be misspelled, because the misspelling was a new
 gate. The order is the author's, and is the order `--list` groups by.
 
 A task lists the sets it belongs to, and `xtask check` runs every task in
-`check`, in the order they appear in the file (cheap gates before slow ones).
+`check`, in the order they appear in the file (cheap gates before slow ones) —
+except where a `needs:` or a `then:` between two of them says otherwise, since
+"it runs before this" is an order too, and the one the file states outright.
 A declared set nothing is in is refused, for the reason the empty-set rule
 exists: a gate that examined nothing reports the same green as one that passed.
 
@@ -344,6 +350,14 @@ The rule is blanket, and the exception is written where the exception is:
 The marker goes on the step's own line, or on a line of its own directly above
 it — not on a line inside another step's script, which is that script's
 comment and not this file's.
+
+A `run: |` block is read the way a shell reads it: line by line, with a `\` at
+the end of one joining it to the next, so a long command line is one step and
+not two. The same two placements hold inside a block — a marker at the end of a
+line excuses that line, and a marker on a line of its own excuses the command
+under it — and it has to be a comment where it stands. A marker inside a quoted
+string is what the step prints, not what the step claims, and excuses
+nothing.
 
 **The reason is required.** A marker with nothing after it is refused, because
 a marker with nothing after it is what this becomes when it is reached for to
@@ -551,7 +565,7 @@ spawns a server and hangs may leave the server behind. A `do:` cannot carry a
 and a limit that passed while the verb kept writing to disk would be worse than
 none. That is refused when the file is read, not discovered at runtime.
 
-The example at the top uses four keys because four is what that repository
+The example at the top uses three keys because three is what that repository
 needs. Here is one using the rest — a release, which is where `needs:`,
 `then:` and a verb all earn their keep at once:
 
@@ -619,10 +633,12 @@ sets:
 
 `**/` means **none or more** directories, as bash and git read it — so
 `packages/**/*.lake` finds `packages/x.lake` too. That is two readings of one
-pattern, and each `**/` doubles them, so a pattern carrying more than a handful
-is refused rather than matched: every reading becomes a glob compared against
-every file the walk touches, and eight of them is two hundred and fifty-six
-comparisons per file.
+pattern: it with the `**/` kept, and it with the `**/` dropped. A pattern
+carrying more than a handful of them is refused rather than matched, because
+every reading becomes a glob compared against every file the walk touches. The
+readings are counted rather than estimated as `2ⁿ` — they collapse, and
+`a/**/**/b` has three and not four — so the limit turns away what is actually
+expensive and nothing else.
 
 `values:` is a declaration, not decoration. Every other kind of set holds
 paths, and the engine treats them as paths — it refuses one that reaches

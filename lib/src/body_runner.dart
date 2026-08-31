@@ -246,7 +246,7 @@ final class BodyRunner {
   /// directory it worked from the root and quietly targeted somewhere else
   /// from a subdirectory, which is a supported way to run xtask.
   ///
-  /// **And asked [leavesRoot], which is the half that was missing.** Joining
+  /// **And asked the boundary, which is the half that was missing.** Joining
   /// onto the root is not a fence: `p.join` walks straight up a `..`, so a
   /// verb could start a child anywhere on the machine and the run answered 0.
   /// Code 2 rather than 1, for the reason `remove` answers 2 on the same
@@ -256,13 +256,14 @@ final class BodyRunner {
     if (written == null) {
       return body.workingDirectory;
     }
-    if (leavesRoot(written)) {
+    final where = verbDirectoryUnderRoot(bodies.root, written);
+    if (where == null) {
       throw RunFailure(
         ExitCode.invalidFile,
         verbDirectoryLeavesRoot(task: body.task.name, written: written),
       );
     }
-    return underRoot(bodies.root, written);
+    return where;
   }
 
   /// Does what [body] resolved to, and answers with its exit code.

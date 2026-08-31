@@ -1995,6 +1995,41 @@ void main() {
       );
     });
 
+    test('and its own directory passed back in is not "outside"', () async {
+      // The obvious way for a verb to be explicit, and the way any path
+      // composed around `context.workingDirectory` arrives. Refusing every
+      // absolute path refused this one and said, of the repository root, that
+      // it reaches outside the repository.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) => context.run(
+            ['ruff'],
+            workingDirectory: context.workingDirectory,
+          ),
+        },
+      );
+      expect(starter.started.single.workingDirectory, root.path);
+    });
+
+    test('and with no directory at all it runs where the task runs', () async {
+      // The default the context used to apply itself and the engine now
+      // applies one layer down. Nothing asserted it, so the two halves of that
+      // move could disagree in silence.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, in: packages/a, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) => context.run(['ruff']),
+        },
+      );
+      expect(
+        starter.started.single.workingDirectory,
+        p.join(root.path, 'packages', 'a'),
+      );
+    });
+
     test('and a directory outside the repository is refused', () async {
       // `boundary.dart` says the fence is one function, and that every place
       // turning a written string into a path calls it. This was the third such

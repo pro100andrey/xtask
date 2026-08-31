@@ -187,6 +187,46 @@ tasks:
       expect(planGate(file, 'check').names, ['install', 'a']);
     });
 
+    test('but a member merely NEEDED by a continuation does not move', () {
+      // The first attempt at this deferred a member whenever a `then:` stood
+      // anywhere on the way to it, which is a different question: `build` has
+      // no `then:` and no `needs:`, and was demoted for being needed by
+      // somebody else's continuation. The gate then published first and failed
+      // to build afterwards — exit 4 and `the upload took place`, the ending
+      // this whole ordering exists to prevent, produced by the fix for it.
+      final file = parseXtaskFile('''
+version: 1
+gates: [release]
+tasks:
+  build: {desc: build the artifact, gate: [release], run: [dart]}
+  publish: {desc: upload, gate: [release], then: [announce], run: [dart]}
+  announce: {desc: post the note, needs: [build], run: [dart]}
+''');
+      expect(planGate(file, 'release').names, [
+        'build',
+        'publish',
+        'announce',
+      ]);
+      expect(planGate(file, 'release').steps.first.continuationOf, isNull);
+    });
+
+    test('and a member that needs a continuation waits behind it too', () {
+      // `needs:` and `then:` are one relation read from two ends. Deferring
+      // only the direct target of a `then:` left this one written-order: the
+      // whole chain publish → verify → smoke was answered as verify, smoke,
+      // publish, with nothing marked a continuation of anything.
+      final file = parseXtaskFile('''
+version: 1
+gates: [release]
+tasks:
+  smoke: {desc: smoke test, gate: [release], needs: [verify], run: [dart]}
+  publish: {desc: upload, gate: [release], then: [verify], run: [dart]}
+  verify: {desc: check, run: [dart]}
+''');
+      expect(planGate(file, 'release').names, ['publish', 'verify', 'smoke']);
+      expect(planGate(file, 'release').steps[1].continuationOf, 'publish');
+    });
+
     test('a ring of `then:` among members is planned, not refused', () {
       // Every member defers to another, so nothing is left to seed first.
       // `xtask a` runs this file without complaint; a gate set holding the

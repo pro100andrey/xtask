@@ -75,7 +75,7 @@ Map<String, Map<String, Object?>> get _topLevel => {
   },
   'gates': {
     'type': 'array',
-    'items': {'type': 'string', 'minLength': 1},
+    'items': _name,
     'minItems': 1,
     'uniqueItems': true,
     'description':
@@ -91,15 +91,31 @@ Map<String, Map<String, Object?>> get _topLevel => {
         "Named lists and globs, referenced by a task's `each:` or `all:`. A "
         'set that expands to nothing is an error: a task given no files '
         'checked nothing.',
+    'propertyNames': _name,
     'additionalProperties': _set,
   },
   'tasks': {
     'type': 'object',
     'description':
         'The graph. Declaration order is meaningful: a gate set runs its tasks '
-        'in the order they appear here.',
+        'in the order they appear here, except where a `needs:` or a `then:` '
+        'puts one of them after another.',
+    'propertyNames': _name,
     'additionalProperties': _task,
   },
+};
+
+/// A name, as the parser reads one: not empty, and one line.
+///
+/// **Value-level, where this file is otherwise about shape.** The parser
+/// refuses both — a name is what a report prints and what something else
+/// writes to reach it, and `--gate-members` writes one per line — so an editor
+/// that accepted a name with a newline in it offered a file the engine turns
+/// down, which is the one thing this projection exists not to do.
+const _name = <String, Object?>{
+  'type': 'string',
+  'minLength': 1,
+  'pattern': r'^[^\r\n]+$',
 };
 
 /// A named set, §4.2: a list of paths, a glob with exclusions, or values
@@ -228,6 +244,7 @@ const _taskKeys = <String, Map<String, Object?>>{
   },
   'env': {
     'type': 'object',
+    'propertyNames': _name,
     'additionalProperties': {'type': 'string'},
     'description':
         'Environment for this task only. A key rather than syntax, because '

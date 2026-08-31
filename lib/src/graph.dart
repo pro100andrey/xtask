@@ -266,74 +266,133 @@ Plan planRun(XtaskFile file, String taskName) {
 /// removed from its own members to avoid needing itself.
 Plan planGate(XtaskFile file, String gate) {
   final planner = _Planner(file);
-  final members = tasksInGate(file, gate);
-  final continuations = _continuedInto(file, members);
-  for (final task in members) {
-    // Seeded in declaration order, minus the members another member continues
-    // into: those are reached by the task whose `then:` names them, which is
-    // where they belong and where they are told what they continue.
-    if (!continuations.contains(task.name)) {
-      planner.resolve(task.name, from: null);
-    }
-  }
-  // And then whatever a ring of `then:` left unseeded, because every member of
-  // one defers to another. Declaration order decides, as it did before: a ring
-  // has no first task, and refusing the gate over it would refuse a file
-  // `xtask <member>` runs without complaint.
-  for (final task in members) {
+  for (final task in _seedOrder(file, tasksInGate(file, gate))) {
     planner.resolve(task.name, from: null);
   }
   return Plan(List.unmodifiable(planner.steps));
 }
 
-/// Which of [members] another member's `then:` reaches.
+/// [members], reordered so that seeding them in turn answers correctly.
 ///
-/// **Because seeding was in declaration order and `then:` is not.** A member
-/// that a second member continues into was emitted first whenever it was
-/// declared first — ahead of the task it is a continuation OF, and with no
-/// `continuationOf`, because nothing had reached it through a `then:` yet. A
-/// `release` gate holding `verify` and `publish then verify` therefore
-/// verified before it published; a failed verification answered 1 instead of
-/// §5.3's code for a continuation; `_walk`'s guard on a stopped body never
-/// fired, so a publish that failed was announced anyway. `planRun` had the
-/// order right the whole time, which left `--why`, `--validate` and
+/// **Declaration order is what a member is seeded by, and it is not always an
+/// order the graph allows.** Seeded as written, a member that a second member
+/// continues into was emitted first whenever it was declared first — ahead of
+/// the task it is a continuation OF, and with no `continuationOf`, because
+/// nothing had reached it through a `then:` yet. A `release` gate holding
+/// `verify` and `publish then verify` therefore verified before it published,
+/// a failed verification answered 1 rather than §5.3's code for a
+/// continuation, and a publish that failed was announced anyway. `planRun` had
+/// the order right the whole time, which left `--why`, `--validate` and
 /// `xtask publish` describing a run `xtask release` does not take.
 ///
-/// Reachability over both kinds of edge, counted only once a `then:` has been
-/// crossed. A member reached through `needs:` alone already comes out before
-/// whatever needs it, whichever of the two was seeded first — so deferring it
-/// would move a task for no reason, and declaration order is meaningful (§4.3).
-Set<String> _continuedInto(XtaskFile file, List<Task> members) {
-  // Two visited sets, because arriving before any `then:` and arriving after
-  // one are different arrivals: reaching a task the first way says nothing
-  // about whether it is also reachable the second.
-  final directly = <String>{};
-  final afterAThen = <String>{};
-  final pending = <(String, bool)>[
-    for (final member in members) (member.name, false),
-  ];
-  while (pending.isNotEmpty) {
-    final (name, past) = pending.removeLast();
-    if (!(past ? afterAThen : directly).add(name)) {
-      continue;
-    }
-    // A dangling name is §8's to report, not this walk's: it answers about the
-    // members, and a name with no task reaches nothing either way.
-    final task = file.tasks[name];
-    if (task == null) {
-      continue;
-    }
-    for (final need in task.needs) {
-      pending.add((need, past));
-    }
-    for (final next in task.then) {
-      pending.add((next, true));
+/// **`needs:` and `then:` are one relation read from two ends.** `x needs y`
+/// says y is before x; `x then y` says x is before y. Written that way there
+/// is nothing to special-case: the members are put in an order that relation
+/// allows, and among members it does not separate, the order stays the one the
+/// file wrote — which §4.3 makes meaningful, cheap gates before slow ones.
+///
+/// The first attempt at this deferred a member whenever a `then:` appeared
+/// anywhere on the way to it, and that is not the same question. `build`,
+/// `publish then announce`, `announce needs build` puts a plain member behind
+/// a `then:` it has nothing to do with: build was demoted for being needed by
+/// somebody's continuation, so the gate published first and failed to build
+/// afterwards — the ending code 4 exists to name, produced by the code written
+/// to prevent it.
+List<Task> _seedOrder(XtaskFile file, List<Task> members) {
+  if (members.length < 2) {
+    return members;
+  }
+  final names = {for (final member in members) member.name};
+  final after = _runsAfter(file);
+  // Which other members each member has to be seeded ahead of, as edges and
+  // not as their closure: the pick below walks them down one at a time.
+  final ahead = {
+    for (final member in members)
+      member.name: _membersAfter(after, member.name, names),
+  };
+  // How many members are still waiting to go in front of this one.
+  final waiting = {for (final member in members) member.name: 0};
+  for (final MapEntry(key: before, value: after) in ahead.entries) {
+    for (final name in after) {
+      if (name != before) {
+        waiting[name] = waiting[name]! + 1;
+      }
     }
   }
-  return {
-    for (final member in members)
-      if (afterAThen.contains(member.name)) member.name,
-  };
+
+  final remaining = [...members];
+  final order = <Task>[];
+  while (remaining.isNotEmpty) {
+    // The earliest-written member nothing is still waiting to precede — and
+    // where every one of them is waiting on another, the earliest written of
+    // those. A ring of `then:` has no first task, and refusing the gate over
+    // one would refuse a file `xtask <member>` runs without complaint.
+    final at = remaining.indexWhere((task) => waiting[task.name]! <= 0);
+    final task = remaining.removeAt(at == -1 ? 0 : at);
+    order.add(task);
+    for (final name in ahead[task.name]!) {
+      if (name != task.name) {
+        waiting[name] = waiting[name]! - 1;
+      }
+    }
+  }
+  return order;
+}
+
+/// The members [from] reaches without passing through another one.
+///
+/// The walk is over [after], so it answers about order and nothing else. A
+/// member it does not reach is one the graph says nothing about, and the
+/// file's own order decides.
+///
+/// **It stops at a member rather than walking past one, and the caller is
+/// why.** What is wanted is an order, and an order needs the edges rather than
+/// their closure: `p` before `m1` and `m1` before `m2` already puts `p` before
+/// `m2`. Walking past `m1` answers the same question and writes down N² of
+/// them — half a second on a two-thousand-member chain, for a list the caller
+/// reduces to a count on the next line.
+Set<String> _membersAfter(
+  Map<String, List<String>> after,
+  String from,
+  Set<String> members,
+) {
+  final seen = <String>{};
+  final found = <String>{};
+  final pending = <String>[from];
+  while (pending.isNotEmpty) {
+    for (final next in after[pending.removeLast()] ?? const <String>[]) {
+      if (!seen.add(next)) {
+        continue;
+      }
+      if (members.contains(next)) {
+        found.add(next);
+        continue;
+      }
+      pending.add(next);
+    }
+  }
+  return found;
+}
+
+/// Every task the file says runs after each task: `then:` as written, and
+/// `needs:` read from the other end.
+///
+/// **Built once, because the reverse of `needs:` is not a field.** Asked per
+/// task it is a scan of every task in the file, and it is asked once per
+/// member per hop — which is the quadratic this module has already paid for
+/// twice, in `routeTo` and in `_opened`.
+///
+/// A dangling name gets an entry with nothing in it: §8 reports it, and a name
+/// with no task is not in anybody's way here.
+Map<String, List<String>> _runsAfter(XtaskFile file) {
+  final after = <String, List<String>>{};
+  for (final task in file.tasks.values) {
+    (after[task.name] ??= []).addAll(task.then);
+    for (final need in task.needs) {
+      (after[need] ??= []).add(task.name);
+    }
+  }
+  return after;
 }
 
 /// The plan for [name], whether it is a gate set or a task.
