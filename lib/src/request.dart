@@ -143,6 +143,11 @@ const modes = {
   '--version',
 };
 
+/// The modes that want a name after them, and refuse an empty one.
+///
+/// The rest take none, and the sentence for those is that they take none.
+const _modesTakingAName = {'--why', '--gate-members', '--dry-run'};
+
 /// How wide `-j auto` may go, whatever the machine is.
 ///
 /// **A job here is a whole toolchain.** One unit is a `dart test` or a `dart
@@ -280,10 +285,13 @@ Request parseArguments(
     if (joined.isNotEmpty) {
       written.add(joined);
       final value = argument.substring(joined.length + 1);
-      if (value.isEmpty) {
-        // As `--gate=` already answered. `--why=` became a request naming the
-        // empty string, and the reader was told there is no task called `` —
-        // a missing name reported where an argument is missing.
+      // **Only where a name is what belongs there.** `--why=` became a request
+      // naming the empty string, and the reader was told there is no task
+      // called `` — a missing name reported where an argument is missing. But
+      // said of every mode it told somebody who wrote `--validate=` to put a
+      // name after a flag that takes none, where the arm below already had the
+      // right sentence.
+      if (value.isEmpty && _modesTakingAName.contains(joined)) {
         return ShowUsage(
           '`$joined` needs a name after it, and there is nothing after the '
           '`=`',

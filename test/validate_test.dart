@@ -90,6 +90,24 @@ void main() {
       expect('$report', contains('/etc'));
     });
 
+    test('and a member composed into an argument, not only substituted', () {
+      // `_checkWorkingDirectory` composes for `in:` and this did not, so
+      // `args: ['out/\$each']` over a set holding `../../etc` was called clean
+      // and refused by the run as `out/../../etc`.
+      final report = validateFile(
+        parseXtaskFile(
+          'version: 1\n'
+          "sets:\n  s:\n    values: ['../../etc']\n"
+          'tasks:\n'
+          r'  c: {desc: x, do: remove, each: s, args: [out/$each]}'
+          '\n',
+        ),
+        knownVerbs: const {'remove'},
+      );
+      expect(report.ok, isFalse);
+      expect(report.problems.join('\n'), contains('out/../../etc'));
+    });
+
     test('and says nothing about arguments that stay inside', () {
       expect(check("['build', 'coverage']").ok, isTrue);
     });

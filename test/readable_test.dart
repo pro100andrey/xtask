@@ -137,9 +137,14 @@ void main() {
     // and `<<` was refused everywhere though it is a merge key only where a
     // key can be.
 
-    test('a hyphen inside a word does not make the next `&` an anchor', () {
+    test('an indicator inside a word does not make the next `&` an anchor', () {
+      // `-` was narrowed first and `,` and `:` left behind, which is the same
+      // refusal about punctuation for two of the four cases.
       expect(refusalOf('desc: fail-&-report'), isNull);
       expect(refusalOf('desc: x -*- y'), isNull);
+      expect(refusalOf('desc: red,&blue'), isNull);
+      expect(refusalOf('desc: a,*b'), isNull);
+      expect(refusalOf('desc: x:&y'), isNull);
     });
 
     test('and `<<` outside key position is ordinary text', () {
@@ -149,6 +154,8 @@ void main() {
 
     test('but the real ones are still refused', () {
       expect(refusalOf('sets: &base'), contains('anchor'));
+      expect(refusalOf('[&a]'), contains('anchor'));
+      expect(refusalOf('[a, &b]'), contains('anchor'));
       expect(refusalOf('- &item'), contains('anchor'));
       expect(refusalOf('needs: [*ref]'), contains('alias'));
       expect(refusalOf('  <<: *base'), contains('merge key'));

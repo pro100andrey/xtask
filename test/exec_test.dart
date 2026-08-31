@@ -2068,6 +2068,40 @@ void main() {
     });
   });
 
+  group('which failure answers for the run', () {
+    // Taken from the first to FINISH, the exit code depended on scheduling:
+    // under `-j`, two tasks failing with different codes answered whichever
+    // ended sooner, so the same file answered differently on a busier
+    // machine. A tool whose exit code is its shortest bug report cannot roll
+    // dice, and the plan's order is the one thing about a run that does not
+    // move.
+    test('is the first in the plan, not the first to end', () async {
+      starter = FakeStarter({'slow': 1});
+      starter.holds['slow'] = Completer<void>();
+      final run = runFile(
+        'version: 1\n'
+            'tasks:\n'
+            '  slow: {desc: a, run: [slow]}\n'
+            '  fast: {desc: b, run: [missingfast]}\n'
+            '  both: {desc: c, needs: [slow, fast]}\n',
+        'both',
+        keepGoing: true,
+        concurrency: 2,
+      );
+      // Long enough that `fast` has certainly finished and recorded its own
+      // failure first — which is the whole state this is about.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      starter.holds['slow']!.complete();
+      expect(
+        await run,
+        ExitCode.taskFailed,
+        reason:
+            '`slow` is first in the plan and answers for the run, though '
+            '`fast` failed with 3, the missing-tool code, and ended first',
+      );
+    });
+  });
+
   group('the real starter, against a real process', () {
     test('a byte that is not UTF-8 is passed through, not raised', () async {
       // The strict decoder throws from inside the stream's data handler, which

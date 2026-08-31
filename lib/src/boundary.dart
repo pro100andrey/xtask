@@ -66,10 +66,11 @@ String workingDirectoryLeavesRoot({
 /// should look like, and `--validate`.
 ///
 /// **Here and not beside the implementation.** `validate.dart` needs the name
-/// and nothing else, and reaching for it through `primitives.dart` brought
-/// `dart:io` and `package:glob` into the module whose promise is that it
-/// answers without a filesystem at all — so nothing then stops a later edit
-/// from calling the verb it is checking.
+/// and nothing else, and reaching for it through `primitives.dart` gave that
+/// module the verb it is checking — one import away from calling it. It is a
+/// smaller distance than it looks and not an airtight one: `sets.dart` brings
+/// `dart:io` there anyway, so this removes a reason to reach rather than the
+/// ability to.
 const removeVerbName = 'remove';
 
 /// Why `remove` refuses the argument [written].

@@ -99,7 +99,7 @@ final class ExecutableResolver {
       // directory — and re-walked `PATH` for a result that could not differ.
       // That is the per-member cost this cache was added to remove.
       _resolved.putIfAbsent(
-        (executable, _isAPath(executable) ? from : ''),
+        (executable, _needsTheDirectory(executable) ? from : ''),
         () => _find(executable, from),
       );
 
@@ -149,6 +149,15 @@ final class ExecutableResolver {
   /// key, the resolution and the message — and a change to it in two of them
   /// is a cache that disagrees with the answer it caches.
   bool _isAPath(String executable) => _paths.split(executable).length > 1;
+
+  /// Whether the answer for [executable] can depend on where the body runs.
+  ///
+  /// Only a RELATIVE path can: a bare name is looked up on `PATH` and an
+  /// absolute one is returned as written, and keying either on the directory
+  /// stored one entry per member of an `each:` for a lookup that cannot
+  /// differ — which is the cost the key was narrowed to remove.
+  bool _needsTheDirectory(String executable) =>
+      _isAPath(executable) && !_paths.isAbsolute(executable);
 
   /// Whether starting [resolvedPath] has to go through the system shell.
   ///

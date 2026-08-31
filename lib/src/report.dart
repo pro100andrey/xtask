@@ -328,13 +328,6 @@ List<String> workflow(CiReport report) {
   ];
 }
 
-/// [command] on one line, for a listing that is one line per step.
-///
-/// A `run: |` block keeps its newlines, which is right for a refusal quoting
-/// what it refused and wrong for a column of jobs.
-String _oneLine(String command) =>
-    command.replaceAll(RegExp(r'\s*\n\s*'), ' ; ');
-
 String _ran(String workflow, String job, String gate) =>
     '$workflow: job `$job` runs the gate set `$gate`';
 
@@ -343,7 +336,7 @@ String _asked(CiStep step, String mode) =>
     'rather than a gate set';
 
 String _exempted(CiStep step) =>
-    '${step.workflow}: job `${step.job}` exempts `${_oneLine(step.command)}` '
+    '${step.workflow}: job `${step.job}` exempts `${step.command}` '
     '— ${step.exemption}';
 
 /// `--check-ci`: why each step is not a job running a gate set.
@@ -360,7 +353,7 @@ String _about(CiStep step, String what) =>
 
 String _why(CiProblem problem) => switch (problem) {
   RunsACommand(:final step) =>
-    'runs `${_oneLine(step.command)}`. What runs belongs in the task file as '
+    'runs `${step.command}`. What runs belongs in the task file as '
         'a task in a gate set; a job runs the gate, so that the two cannot '
         'drift apart',
   // **The command line's own sentence, not a guess at it.** Such a step may
@@ -368,7 +361,7 @@ String _why(CiProblem problem) => switch (problem) {
   // "what runs belongs in the task file" about it sends the reader to move a
   // task that is already where it should be.
   RunsSomethingRefused(:final step, :final refusal) =>
-    'runs `${_oneLine(step.command)}`, which xtask refuses: $refusal',
+    'runs `${step.command}`, which xtask refuses: $refusal',
   RunsAnUndeclaredGate(:final gate, :final declared) =>
     'runs the gate set `$gate`, which this file does not declare — so the job '
         'runs nothing'
@@ -380,11 +373,11 @@ String _why(CiProblem problem) => switch (problem) {
   // a way of turning a red gate green and leaving nothing behind that says
   // who did it or what for.
   ExemptsWithoutSaying(:final step) =>
-    'exempts `${_oneLine(step.command)}` and gives no reason. Write it after '
+    'exempts `${step.command}` and gives no reason. Write it after '
         '`$exemptionMarker`: the reason is what someone reads before deleting '
         'the line, and what makes an exemption possible to weigh',
   ExemptsNothing(:final step, :final reaches) =>
-    'exempts `${_oneLine(step.command)}`, which reaches xtask as `$reaches` — '
+    'exempts `${step.command}`, which reaches xtask as `$reaches` — '
         'so the marker excuses '
         'nothing — the step was never going to be reported as a command. A '
         'marker that excuses nothing hides the findings under it and makes '

@@ -215,6 +215,12 @@ final class Executor {
     required bool concurrent,
   }) async {
     final waiting = [...plan.steps];
+    // Where each task sits in the plan, so a failure can be placed in it
+    // without an O(n) lookup per completion.
+    final order = {
+      for (var at = 0; at < plan.steps.length; at++)
+        plan.steps[at].task.name: at,
+    };
     final running = <String, Future<void>>{};
     final finished = <String>{};
     // **One set, kept as things stop.** This was rebuilt from two maps for
@@ -226,7 +232,12 @@ final class Executor {
     // then.** At one task in flight §5.2 holds unchanged: the lines go
     // straight out as they arrive, because there is no second task whose
     // output they could be confused with.
-    int? answer;
+    // **Which failure answers for the run, in the plan's order.** Taking the
+    // first to FINISH made the exit code depend on scheduling: under `-j`, two
+    // tasks failing with 3 and 1 answered whichever ended sooner, so the same
+    // file answered differently on a busier machine. The plan's order is the
+    // one thing about a run that does not move.
+    final failures = <int, int>{};
 
     while (waiting.isNotEmpty || running.isNotEmpty) {
       var began = false;
@@ -253,7 +264,7 @@ final class Executor {
           began = true;
           continue;
         }
-        if (answer != null && !keepGoing) {
+        if (failures.isNotEmpty && !keepGoing) {
           // Something has failed and this run is not keeping going: what has
           // not started must not start. What IS running is left alone.
           skipped[step.task.name] = const RunStopped();
@@ -310,9 +321,7 @@ final class Executor {
                 // after it did not", while an ordinary task failing later was
                 // buried in the summary. 4 is unrecoverable in the wrong
                 // direction, so a plain failure takes the answer from it.
-                if (answer == null || _worseThan(code, answer!)) {
-                  answer = code;
-                }
+                failures[order[name] ?? failures.length] = code;
                 if (!keepGoing) {
                   // **Reaching into what is running, but only where the file
                   // said it may.** A build killed half-way leaves whatever it
@@ -338,21 +347,30 @@ final class Executor {
         break;
       }
       if (running.isNotEmpty) {
-        await Future.any(running.values);
+        try {
+          await Future.any(running.values);
+        } on Object {
+          // **Nothing is reported while tasks are still running.** `_runOne`
+          // rethrows an `XtaskFormatException` for `cli.dart` to answer, and
+          // it arrives here through `Future.any` — so the summary printed on
+          // the way out was a mid-run snapshot, with the other tasks missing
+          // from it and their output still arriving after it. They are let
+          // finish first; each of them records its own outcome, so what is
+          // printed afterwards is the whole run.
+          await Future.wait(
+            running.values,
+          ).catchError((Object _) => const <void>[]);
+          rethrow;
+        }
       }
     }
 
-    return answer ?? ExitCode.success;
+    if (failures.isEmpty) {
+      return ExitCode.success;
+    }
+    final first = (failures.keys.toList()..sort()).first;
+    return failures[first]!;
   }
-
-  /// Whether [code] says something worse about a run than [than].
-  ///
-  /// Only [ExitCode.continuationFailed] is ordered against anything: it is the
-  /// narrow claim — a body ran and something after it did not — and every
-  /// other failure is wider, so any of them replaces it.
-  bool _worseThan(int code, int than) =>
-      than == ExitCode.continuationFailed &&
-      code != ExitCode.continuationFailed;
 
   /// One task, timed, and reported where the mode says to report it.
   Future<int?> _runOne(

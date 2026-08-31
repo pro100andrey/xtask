@@ -172,9 +172,17 @@ void _checkRemoveArguments(
   final substituted = file.sets[task.all ?? task.each];
   final written = [
     ...task.args,
-    if (substituted is ValueSet &&
-        task.args.any((a) => a == allMarker || a == eachMarker))
-      ...substituted.values,
+    if (substituted is ValueSet)
+      for (final argument in task.args)
+        // Composed, not only substituted whole. `_checkWorkingDirectory` does
+        // this for `in:` and this did not, so `args: ['out/$each']` over a
+        // `values:` set holding `../../etc` was called clean here and refused
+        // by the run as `out/../../etc`.
+        if (argument == allMarker || argument == eachMarker)
+          ...substituted.values
+        else if (argument.endsWith(eachMarker))
+          for (final value in substituted.values)
+            argument.substring(0, argument.length - eachMarker.length) + value,
   ];
 
   // Distinct, because the span is the task's: `args: ['/etc', 'x', '/etc']`

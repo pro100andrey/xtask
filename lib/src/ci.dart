@@ -46,11 +46,12 @@ final class CiStep {
 
   final String job;
 
-  /// The `run:` block, trimmed. A block written with `|` keeps its newlines:
-  /// GitHub writes the whole of it to one file and runs it as one script, so
-  /// splitting it into commands here would be this checker deciding what a
-  /// shell means — which is the second grammar [_readStep] exists not to
-  /// keep. A block this cannot read is a block to exempt.
+  /// One command line of a `run:`, trimmed, with any trailing comment off.
+  ///
+  /// A `run: |` block yields one step per line — GitHub writes the whole of it
+  /// to a file and runs it as a script, and a line is where a command begins.
+  /// That is the only thing this reads into a script: what a line MEANS is
+  /// still the shell's, and a line this misreads is a line to exempt.
   final String command;
 
   /// The reason written beside it, when a person said this step is not a gate.
@@ -261,7 +262,7 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   final problems = <CiProblem>[];
 
   for (final step in steps) {
-    final read = _readStep(step.command);
+    final read = _readStep(step.command, declared);
     final exemption = step.exemption;
 
     // **The exemption is asked last, and only of a step that would otherwise
@@ -326,8 +327,15 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   // deleted. That is precisely what this throw exists to prevent.
   if (invocations.isEmpty && problems.isEmpty) {
     throw XtaskFormatException(
-      'nothing under `$workflowDirectory` invokes xtask, so there is nothing '
-      'to check this file against',
+      questions.isEmpty
+          ? 'nothing under `$workflowDirectory` invokes xtask, so there is '
+                'nothing to check this file against'
+          // False as the sentence above, about a file whose `--check-ci` step
+          // is on the reader's screen: it sent them looking for an invocation
+          // they can see. What is missing is a job that RUNS a gate set.
+          : 'nothing under `$workflowDirectory` runs a gate set — the steps '
+                'there ask xtask questions, and a question checks nothing '
+                'against this file',
     );
   }
 
@@ -366,11 +374,22 @@ bool _namesXtask(String word) =>
 /// ordinary commands that happen to mention the binary, which a repository
 /// building its own copy of it does in the same workflow.
 ///
-/// A command starts a step, or follows the thing that runs it. Loose about
-/// WHICH runner, for the reason [_namesXtask] is loose about the spelling: the
-/// entry point is the project's, and `dart run`, `npx` and `pnpm exec` are all
-/// somebody's.
-int? _runsXtask(List<String> words) {
+/// **But position alone was the wrong depth.** Requiring word zero or one of a
+/// handful of runner names turned down `cd sub && ./xtask ci-web`, `timeout
+/// 600 ./xtask ci-web`, `xvfb-run ./xtask ci-web` and even `dart
+/// bin/xtask.dart ci-web` — a spelling [_namesXtask]'s own doc promises to
+/// accept — and told each of them to move a gate set that is already in the
+/// task file. Naming every prefix a workflow might use is a list that is never
+/// finished.
+///
+/// So position is one of two answers, and what the words say is the other: a
+/// step whose remaining words parse into a gate set THIS FILE DECLARES, or
+/// into a mode, is running xtask wherever the word sits. Nothing else can make
+/// those words by accident, and a mention as an operand — `/usr/local/bin`,
+/// `first"` — names no gate this file has, so it falls back to position and is
+/// the ordinary command it looks like.
+int? _runsXtask(List<String> words, Set<String> declared) {
+  int? mentioned;
   for (var at = 0; at < words.length; at++) {
     if (!_namesXtask(words[at])) {
       continue;
@@ -378,8 +397,16 @@ int? _runsXtask(List<String> words) {
     if (at == 0 || _runsWhatFollows(words[at - 1])) {
       return at;
     }
+    mentioned ??= at;
   }
-  return null;
+  if (mentioned == null) {
+    return null;
+  }
+  final read = _readWords(words.skip(mentioned + 1));
+  final names = read.gate ?? read.named;
+  return (names != null && declared.contains(names)) || read.mode != null
+      ? mentioned
+      : null;
 }
 
 /// Whether [word] is a thing whose next argument is a command to run.
@@ -463,17 +490,21 @@ StepReading _names(String mode, String what) => (
 /// the words instead missed every `--mode=value` spelling the parser accepts —
 /// `--why=check` reported a gate set named under an empty flag — and had
 /// nothing to say about `--help`, which is not in `modes`.
-StepReading _readStep(String command) {
+StepReading _readStep(String command, Set<String> declared) {
   final words = command.split(RegExp(r'\s+'));
-  final at = _runsXtask(words);
+  final at = _runsXtask(words, declared);
   if (at == null) {
     return _notAnInvocation;
   }
+  return _readWords(words.skip(at + 1));
+}
 
+/// What [arguments] make of themselves, read by the command line's own parser.
+StepReading _readWords(Iterable<String> arguments) {
   final request = parseArguments(
     // Quotes come off, because they are the shell's and not the parser's:
     // `-j "2"` is an ordinary thing to write and `2` is what the child sees.
-    words.skip(at + 1).map(_unquoted).toList(),
+    arguments.map(_unquoted).toList(),
     // The number is discarded — only whether it PARSES is being asked — and a
     // check that read this machine's width would vouch differently for one
     // workflow on two runners.
@@ -565,7 +596,7 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
         // the same duplicated command, hidden by being second. A line is
         // where a command begins, which is the only thing this needs to know
         // about a script, and a line it misreads is a line somebody exempts.
-        final written = command.split('\n');
+        final written = _commandLines(command);
         for (var at = 0; at < written.length; at++) {
           final line = written[at].trim();
           if (line.isEmpty || line.startsWith('#')) {
@@ -577,8 +608,15 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
             _withoutTrailingComment(line),
             exemption:
                 _exemptionIn(line) ??
+                // The line above counts only when it is nothing but a
+                // comment — the same rule the YAML comment above the block
+                // gets. Without it, a marker trailing one command exempted
+                // the command under it, which is the leak this rule was
+                // written for arriving one level in.
                 (at > 0
-                    ? _exemptionIn(written[at - 1])
+                    ? (written[at - 1].trimLeft().startsWith('#')
+                          ? _exemptionIn(written[at - 1])
+                          : null)
                     : _exemptionNear(lines, span, after: previousEnded)),
           );
         }
@@ -586,6 +624,30 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
       }
     }
   }
+}
+
+/// [command]'s lines, with a shell's line continuations joined.
+///
+/// A `\` at the end of a line means the next one is the same command, and
+/// splitting on the newline anyway read `dart run :xtask \` and `ci-analyze`
+/// as two — reporting an undeclared gate set named `\` and telling the reader
+/// their gate was unrun, about a workflow that runs it. Continuations are
+/// ubiquitous in a `run:` block, because that is what a long command line
+/// looks like.
+List<String> _commandLines(String command) {
+  final joined = <String>[];
+  for (final line in command.split('\n')) {
+    if (joined.isNotEmpty && joined.last.endsWith(r'\')) {
+      final held = joined.removeLast();
+      joined.add(
+        '${held.substring(0, held.length - 1).trimRight()} '
+        '${line.trim()}',
+      );
+      continue;
+    }
+    joined.add(line.trimRight());
+  }
+  return joined;
 }
 
 /// The reason written on [line] itself, if it carries the marker.
@@ -605,8 +667,29 @@ String? _exemptionIn(String line) {
 
 /// [line] without a trailing `#` comment, so a marker is not read as argv.
 String _withoutTrailingComment(String line) {
-  final hash = line.indexOf(' #');
-  return hash == -1 ? line : line.substring(0, hash).trimRight();
+  // **Not the first `#`, and not one inside quotes.** Cut blindly, `echo "a #
+  // b"` was reported as `echo "a` — a fragment nobody wrote — and `xtask
+  // check -- --tag "#fast"` became `xtask check -- --tag "`, which parses as
+  // a gate set handed arguments and was refused for it.
+  var single = false;
+  var double = false;
+  for (var i = 0; i < line.length - 1; i++) {
+    switch (line[i]) {
+      case "'":
+        if (!double) {
+          single = !single;
+        }
+      case '"':
+        if (!single) {
+          double = !double;
+        }
+      case ' ':
+        if (!single && !double && line[i + 1] == '#') {
+          return line.substring(0, i).trimRight();
+        }
+    }
+  }
+  return line;
 }
 
 /// The reason written beside the `run:` key at [span], if there is one.

@@ -408,6 +408,67 @@ jobs:
       );
     });
 
+    test(
+      'and a trailing marker in a block does not reach the line under it',
+      () {
+        workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: |
+          npm ci # xtask: not a gate — deps
+          dart analyze
+''');
+        expect(check().exempted, hasLength(1));
+        expect(said().single, contains('dart analyze'));
+      },
+    );
+
+    test('and a line continuation is one command, not two', () {
+      workflow('ci.yml', r'''
+jobs:
+  a:
+    steps:
+      - run: |
+          dart run :xtask \
+            ci-analyze
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.invocations.single.gate, 'ci-analyze');
+    });
+
+    test('and a prefix it has never heard of is still an invocation', () {
+      // Position was the only test, and a whitelist of six runner words is a
+      // list that is never finished: `timeout`, `xvfb-run`, `cd … &&` and even
+      // the plain `dart bin/xtask.dart` were each told to move a gate set that
+      // is already in the task file.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: timeout 600 ./xtask ci-analyze
+      - run: dart bin/xtask.dart ci-web
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+    });
+
+    test('but a mention that names no gate this file has is a command', () {
+      // The other half of the same rule: what makes a prefixed step an
+      // invocation is that the words after it name something real.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: cp ./xtask /usr/local/bin
+''');
+      expect(said().single, contains('belongs in the task file'));
+    });
+
     test('but an exemption with no reason is refused', () {
       // The reason is the whole price. Without it the marker is a way of
       // turning a red gate green that leaves nothing behind saying what for.

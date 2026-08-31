@@ -49,7 +49,21 @@ const _nodeStart = <int?>{null, 0x0A, 0x3A, 0x2D, 0x5B, 0x7B, 0x2C};
 /// `desc: x -*- y` went the same way. The others need no space: `[&a]` and
 /// `{&a: b}` are anchors as written.
 bool _startsANode(int? previous, bool afterSpace) =>
-    _nodeStart.contains(previous) && (previous != 0x2D || afterSpace);
+    _nodeStart.contains(previous) &&
+    (!_needsASpaceAfter.contains(previous) || afterSpace);
+
+/// The indicators that are only indicators when something follows them.
+///
+/// `-` opens a block sequence entry, `:` separates a key from its value, and
+/// `,` separates flow entries — each of them only when it is not simply part
+/// of the word it sits in. Applied to `-` alone at first, which left
+/// `desc: red,&blue` refused as an anchor and `desc: x:&y` with it: the same
+/// refusal about punctuation, for two of the four cases.
+///
+/// `[` and `{` are not here. `[&a]` and `{&a: b}` are an anchor as written,
+/// with nothing between.
+// - : ,
+const _needsASpaceAfter = <int?>{0x2D, 0x3A, 0x2C};
 
 /// Whether the first thing after [at] that is not a space is a `:`.
 bool _keySeparatorAfter(String source, int at) {

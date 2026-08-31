@@ -229,11 +229,16 @@ final class _Hop {
 
 /// How deep a chain of `needs:` or `then:` this engine walks.
 ///
-/// **A bound, because the walk is one stack frame per edge.** Without it a
-/// long enough chain ended `--validate` and `--dry-run` on a stack overflow
-/// and exit 255, which is not a code the table defines — a file answered with
-/// a crash by the modes whose job is to answer about files. Far past anything
-/// a person writes: the depth of a real graph is the length of its longest
+/// **A bound on the planner, because [_Planner.resolve] is one stack frame per
+/// edge.** Without it a long enough chain ended `--validate` and `--dry-run`
+/// on a stack overflow and exit 255, which is not a code the table defines —
+/// a file answered with a crash by the modes whose job is to answer about
+/// files.
+///
+/// It does not bound `routeTo`, which holds its own stack and walks as far as
+/// a file goes: a bound there had no honest answer, because a branch given up
+/// on is neither a route nor a proof there is none. Far past anything a person
+/// writes either way: the depth of a real graph is the length of its longest
 /// dependency chain, which is tens.
 const mostDepth = 1000;
 
