@@ -385,28 +385,66 @@ bool _namesXtask(String word) =>
 /// So position is one of two answers, and what the words say is the other: a
 /// step whose remaining words parse into a gate set THIS FILE DECLARES, or
 /// into a mode, is running xtask wherever the word sits. Nothing else can make
-/// those words by accident, and a mention as an operand — `/usr/local/bin`,
-/// `first"` — names no gate this file has, so it falls back to position and is
-/// the ordinary command it looks like.
-int? _runsXtask(List<String> words, Set<String> declared) {
-  int? mentioned;
+/// those words by accident, and a mention as an operand — `/usr/local/bin` —
+/// names no gate this file has, so it falls back to position and is the
+/// ordinary command it looks like.
+///
+/// **Every mention is tried, not the first one that is not in position.**
+/// Keeping only the first meant `cp ./xtask /tmp/x && ./xtask check` was read
+/// from the `cp` and reported as a command that belongs in the task file, with
+/// its gate counted as unrun — a false red about a workflow that runs the
+/// gate, and precisely the shape this reading was written to support.
+///
+/// **And a mention inside a quoted string is not tried at all.** The words
+/// have their quotes taken off before the parser sees them, because `-j "2"`
+/// is an ordinary thing to write — so `echo "run xtask check"` parsed into
+/// `check`, a declared gate set, and the job was reported as running a gate
+/// that nothing in it runs. That is the silent green this mode exists to
+/// prevent, and it is reachable from a banner line. Asked only of the
+/// fallback: a mention in command position is a command wherever the quotes
+/// are, which is what `sh -c "dart run :xtask check"` is.
+StepReading? _invocationIn(List<String> words, Set<String> declared) {
+  final quoted = _wordsInsideQuotes(words);
   for (var at = 0; at < words.length; at++) {
     if (!_namesXtask(words[at])) {
       continue;
     }
     if (at == 0 || _runsWhatFollows(words[at - 1])) {
-      return at;
+      return _readWords(words.skip(at + 1));
     }
-    mentioned ??= at;
+    if (quoted[at]) {
+      continue;
+    }
+    final read = _readWords(words.skip(at + 1));
+    final names = read.gate ?? read.named;
+    if ((names != null && declared.contains(names)) || read.mode != null) {
+      return read;
+    }
   }
-  if (mentioned == null) {
-    return null;
+  return null;
+}
+
+/// Which of [words] begin inside a quoted string.
+///
+/// Whitespace cannot open or close a quote, so the words in order carry the
+/// same quote state the line does. A `'` inside double quotes is a character
+/// and not an opener, which is what keeps `echo "don't" && ./xtask check` an
+/// invocation.
+List<bool> _wordsInsideQuotes(List<String> words) {
+  final inside = <bool>[];
+  var single = false;
+  var double = false;
+  for (final word in words) {
+    inside.add(single || double);
+    for (final unit in word.codeUnits) {
+      if (unit == 0x27 && !double) {
+        single = !single;
+      } else if (unit == 0x22 && !single) {
+        double = !double;
+      }
+    }
   }
-  final read = _readWords(words.skip(mentioned + 1));
-  final names = read.gate ?? read.named;
-  return (names != null && declared.contains(names)) || read.mode != null
-      ? mentioned
-      : null;
+  return inside;
 }
 
 /// Whether [word] is a thing whose next argument is a command to run.
@@ -490,14 +528,8 @@ StepReading _names(String mode, String what) => (
 /// the words instead missed every `--mode=value` spelling the parser accepts —
 /// `--why=check` reported a gate set named under an empty flag — and had
 /// nothing to say about `--help`, which is not in `modes`.
-StepReading _readStep(String command, Set<String> declared) {
-  final words = command.split(RegExp(r'\s+'));
-  final at = _runsXtask(words, declared);
-  if (at == null) {
-    return _notAnInvocation;
-  }
-  return _readWords(words.skip(at + 1));
-}
+StepReading _readStep(String command, Set<String> declared) =>
+    _invocationIn(command.split(RegExp(r'\s+')), declared) ?? _notAnInvocation;
 
 /// What [arguments] make of themselves, read by the command line's own parser.
 StepReading _readWords(Iterable<String> arguments) {
@@ -597,6 +629,13 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
         // where a command begins, which is the only thing this needs to know
         // about a script, and a line it misreads is a line somebody exempts.
         final written = _commandLines(command);
+        // **The marker beside `run:` is about the step, and a block is one
+        // step.** Read only for the block's first line, it excused `npm ci`
+        // and left `npm run build` under the same marker reported — so a
+        // multi-line setup script could not be exempted at all, and the place
+        // the author would obviously write the marker was the one place that
+        // half-worked.
+        final beside = _exemptionNear(lines, span, after: previousEnded);
         for (var at = 0; at < written.length; at++) {
           final line = written[at].trim();
           if (line.isEmpty || line.startsWith('#')) {
@@ -613,11 +652,10 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
                 // gets. Without it, a marker trailing one command exempted
                 // the command under it, which is the leak this rule was
                 // written for arriving one level in.
-                (at > 0
-                    ? (written[at - 1].trimLeft().startsWith('#')
-                          ? _exemptionIn(written[at - 1])
-                          : null)
-                    : _exemptionNear(lines, span, after: previousEnded)),
+                (at > 0 && written[at - 1].trimLeft().startsWith('#')
+                    ? _exemptionIn(written[at - 1])
+                    : null) ??
+                beside,
           );
         }
         previousEnded = span?.end.line ?? previousEnded;

@@ -17,6 +17,8 @@
 /// it now refuses with all of them at once.
 library;
 
+import 'package:source_span/source_span.dart';
+
 import 'errors.dart';
 import 'model.dart';
 
@@ -39,11 +41,24 @@ List<String> _argv(Task task) => switch (task.body) {
 ///
 /// Empty when they do not. Needs no filesystem, no graph and no other task —
 /// which is what makes it a list rather than a walk.
-List<XtaskFormatException> incoherences(Task task) => [
+/// [keySpan] answers where one of [task]'s keys is written, for a rule whose
+/// subject is a key rather than the task.
+///
+/// **A function rather than a field on [Task], and optional rather than
+/// required.** Most rules here are about a task as a whole — `all:` beside
+/// `each:` is neither key's fault — and point at its name for that reason. Two
+/// are not: `timeout:` on a `do:` is a sentence about `timeout:`, and it lost
+/// its caret when it moved here from the parser, so a reader was shown the
+/// task's name underlined and told something about a key eight lines down.
+/// The parser holds the document and can answer this; nothing else has to.
+List<XtaskFormatException> incoherences(
+  Task task, {
+  SourceSpan? Function(String key)? keySpan,
+}) => [
   ..._allMarker(task),
   ..._eachMarker(task),
   ..._markerInExclusive(task),
-  ..._bodyCannotHonourIt(task),
+  ..._bodyCannotHonourIt(task, keySpan),
 ];
 
 /// A deadline or a stop written on a body that cannot be given one.
@@ -61,8 +76,12 @@ List<XtaskFormatException> incoherences(Task task) => [
 /// reported one of the three, then the next, then the last — the three rounds
 /// of fix-and-rerun this module was made to end, inside the module's own
 /// subject.
-Iterable<XtaskFormatException> _bodyCannotHonourIt(Task task) sync* {
+Iterable<XtaskFormatException> _bodyCannotHonourIt(
+  Task task,
+  SourceSpan? Function(String key)? keySpan,
+) sync* {
   final name = task.name;
+  final at = keySpan ?? (_) => null;
   if (task.timeout != null) {
     if (task.body is DoBody) {
       yield XtaskFormatException(
@@ -70,14 +89,14 @@ Iterable<XtaskFormatException> _bodyCannotHonourIt(Task task) sync* {
         'honour it: a verb is a Dart function and nothing outside it can stop '
         'one, so the limit would pass while the verb kept running. Put the '
         'deadline inside the verb, which is where logic belongs',
-        task.span,
+        at('timeout') ?? task.span,
       );
     }
     if (task.body == null) {
       yield XtaskFormatException(
         'task `$name` has a `timeout:` and no body to spend it, so there is '
         'nothing for the limit to be a limit on',
-        task.span,
+        at('timeout') ?? task.span,
       );
     }
   }
@@ -89,7 +108,7 @@ Iterable<XtaskFormatException> _bodyCannotHonourIt(Task task) sync* {
       'task `$name` is `interruptible:` and its body is a verb. Stopping '
       'one means stopping a Dart function from outside, which cannot be done — '
       'the flag would be a promise nothing keeps',
-      task.span,
+      at('interruptible') ?? task.span,
     );
   }
   if (task.body == null) {
@@ -97,7 +116,7 @@ Iterable<XtaskFormatException> _bodyCannotHonourIt(Task task) sync* {
       'task `$name` is `interruptible:` and has no body to stop, so there '
       'is nothing for the flag to be about. Its `needs:` are their own tasks '
       'and say for themselves whether they may be stopped',
-      task.span,
+      at('interruptible') ?? task.span,
     );
   }
 }

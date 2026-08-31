@@ -110,6 +110,20 @@ void main() {
     );
   });
 
+  test("an empty pattern is the caller's own, not an invented variant", () {
+    // The empty variants are dropped on the way out because `**/` alone reads
+    // as one and `Glob` refuses it. That removal took a pattern somebody
+    // actually wrote with it: `include: ['']` contributed no glob at all and
+    // surfaced as "the set expands to nothing", about a cause the sentence
+    // does not name. Handed back, it reaches `Glob` and gets its own.
+    expect(zeroOrMoreDirectories(''), {''});
+    expect(
+      () => Glob('', context: p.posix),
+      throwsA(isA<FormatException>()),
+      reason: 'which is the refusal the reader is meant to get',
+    );
+  });
+
   test('and an alternative that is only a globstar is never emptied', () {
     // `{**/,b}` dropped to `{,b}`, which `package:glob` builds and then
     // throws `Bad state: No element` from at match time — a StateError, past

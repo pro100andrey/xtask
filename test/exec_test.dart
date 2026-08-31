@@ -658,6 +658,40 @@ void main() {
       );
     });
 
+    test('a plain failure answers for the run, not a continuation', () async {
+      // Keyed by plan position alone, the earliest failure won — and a
+      // continuation always sits before the unrelated tasks that come after
+      // its origin, so a run where an ordinary task ALSO failed answered 4:
+      // "the body succeeded and only a `then:` after it did not". That is the
+      // one code that must not be claimed loosely; the registry has already
+      // taken the upload it describes.
+      const both =
+          'version: 1\ntasks:\n'
+          '  a: {desc: a, run: [dart], then: [a_check]}\n'
+          '  a_check: {desc: b, run: [ruff]}\n'
+          '  b: {desc: c, run: [pytest]}\n'
+          '  all: {desc: d, needs: [a, b]}\n';
+      starter = FakeStarter({'ruff': 1, 'pytest': 1});
+      expect(
+        await runFile(both, 'all', keepGoing: true),
+        ExitCode.taskFailed,
+      );
+    });
+
+    test('and a continuation alone still answers 4', () async {
+      const both =
+          'version: 1\ntasks:\n'
+          '  a: {desc: a, run: [dart], then: [a_check]}\n'
+          '  a_check: {desc: b, run: [ruff]}\n'
+          '  b: {desc: c, run: [pytest]}\n'
+          '  all: {desc: d, needs: [a, b]}\n';
+      starter = FakeStarter({'ruff': 1});
+      expect(
+        await runFile(both, 'all', keepGoing: true),
+        ExitCode.continuationFailed,
+      );
+    });
+
     test('the summary lists what failed and what did not run', () async {
       starter = FakeStarter({'ruff': 1, 'pytest': 1});
       await runFile(three, 'all', keepGoing: true);

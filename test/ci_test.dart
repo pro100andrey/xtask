@@ -408,6 +408,29 @@ jobs:
       );
     });
 
+    test('a marker beside `run:` covers every line of its block', () {
+      // A block is one step, and the marker beside the key is about the step.
+      // Read only for the first line it exempted `npm ci` and reported `npm
+      // run build` under the same marker, so a multi-line setup script could
+      // not be exempted at all — in the one place the author would obviously
+      // write it.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: | # xtask: not a gate - the setup script
+          npm ci
+          npm run build
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.exempted.map((s) => s.command), [
+        'npm ci',
+        'npm run build',
+      ]);
+    });
+
     test('but a marker inside a quoted string exempts nothing', () {
       // The two readings of one `#` disagreed: the argv was cut by a scan that
       // tracked quotes and the exemption was found with `indexOf` over the raw
@@ -471,6 +494,56 @@ jobs:
     steps:
       - run: timeout 600 ./xtask ci-analyze
       - run: dart bin/xtask.dart ci-web
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+    });
+
+    test('and a mention that names one INSIDE quotes still is', () {
+      // Quotes come off before the parser sees the words, because `-j "2"` is
+      // ordinary — so `echo "run xtask check"` parsed into a declared gate set
+      // and the job was reported as running a gate that nothing in it runs.
+      // A banner line reaches this, and it is the silent green the whole mode
+      // exists to prevent.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: echo "run xtask ci-analyze"
+''');
+      final found = check();
+      expect(found.invocations, isEmpty);
+      expect(said().first, contains('belongs in the task file'));
+    });
+
+    test('while an invocation quoted as a whole command is one', () {
+      // The quote rule is asked only of a mention that is not in command
+      // position. `-c` hands the next word to a shell, and what is inside it
+      // is a command wherever the quotes are.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: sh -c "dart run :xtask ci-analyze"
+      - run: dart run :xtask ci-web
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+    });
+
+    test('and a second mention on one line is tried when the first fails', () {
+      // A repository that builds its own copy writes both on one line. Only
+      // the first non-positional mention was ever tried, so this was read from
+      // the `cp` and reported as a command belonging in the task file, with
+      // its gate counted as unrun — about a step that runs it.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: cp ./xtask /tmp/x && ./xtask ci-analyze
+      - run: dart run :xtask ci-web
 ''');
       final found = check();
       expect(found.problems, isEmpty, reason: refusals(found).join('\n'));

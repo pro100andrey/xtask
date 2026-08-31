@@ -249,6 +249,18 @@ final class SystemProcessStarter implements ProcessStarter {
 ///
 /// All of them mean the same thing to a writer: there is nowhere for this line
 /// to go, and that is an ordinary end rather than a fault.
+///
+/// **Asked per platform, because these are two numbering schemes and they
+/// collide.** One set for both meant `9` — POSIX `EBADF` — was also honoured
+/// on Windows, where it is `ERROR_INVALID_BLOCK`, and `32` is `EPIPE` on POSIX
+/// and `ERROR_SHARING_VIOLATION` on Windows. A write that failed for either of
+/// those reasons was read as "the reader went away": every remaining line was
+/// dropped and the run answered 0 with its report missing, which is the
+/// silence this tool is against, reached through the code written to remove a
+/// crash. Windows has no entry for the closed-descriptor case because none is
+/// known to arrive; the crash it was added for is a POSIX one.
 bool isAClosedPipe(Object error) =>
     error is FileSystemException &&
-    const {9, 32, 109, 232}.contains(error.osError?.errorCode);
+    (Platform.isWindows ? const {109, 232} : const {9, 32}).contains(
+      error.osError?.errorCode,
+    );

@@ -64,31 +64,44 @@ String withoutByteOrderMark(String source) =>
 // \n : - [ { ,
 const _nodeStart = <int?>{null, 0x0A, 0x3A, 0x2D, 0x5B, 0x7B, 0x2C};
 
-/// Whether a node can begin after [previous], with [afterSpace] between.
+/// Whether a node can begin after [previous], with [afterSpace] between and
+/// [flowDepth] brackets open.
 ///
 /// **`-` is an indicator only when something separates it from what follows.**
 /// It was taken as one wherever it appeared, and [previous] skips whitespace,
 /// so `desc: fail-&-report` read the `-` of a hyphenated word as the start of
 /// a block sequence and refused the `&` two characters later as an anchor —
 /// about a description, on punctuation the author has no reason to suspect.
-/// `desc: x -*- y` went the same way. The others need no space: `[&a]` and
+/// `desc: x -*- y` went the same way. `[` and `{` need no space: `[&a]` and
 /// `{&a: b}` are anchors as written.
-bool _startsANode(int? previous, bool afterSpace) =>
-    _nodeStart.contains(previous) &&
-    (!_needsASpaceAfter.contains(previous) || afterSpace);
+///
+/// **And `,` is not an indicator at all outside a flow collection, which is a
+/// different rule from needing a space.** Held to the space rule with the
+/// others, `[one,&x two]` passed the scan and `package:yaml` expanded the
+/// alias that used it — the one thing this module exists to stop, defeated by
+/// deleting a space. Inside brackets a comma separates entries and needs
+/// nothing after it; outside them it is a character in a word, which is what
+/// `desc: red,&blue` is and why the space rule was reached for.
+bool _startsANode(int? previous, bool afterSpace, int flowDepth) {
+  if (previous == 0x2C) {
+    return flowDepth > 0;
+  }
+  return _nodeStart.contains(previous) &&
+      (!_needsASpaceAfter.contains(previous) || afterSpace);
+}
 
 /// The indicators that are only indicators when something follows them.
 ///
-/// `-` opens a block sequence entry, `:` separates a key from its value, and
-/// `,` separates flow entries — each of them only when it is not simply part
-/// of the word it sits in. Applied to `-` alone at first, which left
-/// `desc: red,&blue` refused as an anchor and `desc: x:&y` with it: the same
-/// refusal about punctuation, for two of the four cases.
+/// `-` opens a block sequence entry and `:` separates a key from its value,
+/// each of them only when it is not simply part of the word it sits in.
+/// Applied to `-` alone at first, which left `desc: x:&y` refused as an anchor
+/// — the same refusal about punctuation, one case along.
 ///
-/// `[` and `{` are not here. `[&a]` and `{&a: b}` are an anchor as written,
-/// with nothing between.
-// - : ,
-const _needsASpaceAfter = <int?>{0x2D, 0x3A, 0x2C};
+/// `,` is not here: see [_startsANode], where it is asked a different
+/// question. `[` and `{` are not here either — `[&a]` and `{&a: b}` are an
+/// anchor as written, with nothing between.
+// - :
+const _needsASpaceAfter = <int?>{0x2D, 0x3A};
 
 /// Whether the first thing after [at] that is not a space is a `:`.
 bool _keySeparatorAfter(String source, int at) {
@@ -141,6 +154,11 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
   // Kept separately from [previous], which skips spaces on purpose: after
   // `a: ` it holds the colon, so it cannot answer this question.
   var afterSpace = true;
+
+  // **How many flow collections are open.** A `,` means "the next entry" only
+  // inside one; anywhere else it is a character in a word. Counted here rather
+  // than guessed at from [previous], which has already forgotten the bracket.
+  var flowDepth = 0;
 
   for (var i = 0; i < source.length; i++) {
     final c = source.codeUnitAt(i);
@@ -214,9 +232,18 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
         previous = 0x0A;
         afterSpace = true;
         continue;
+      case 0x5B: // [
+      case 0x7B: // {
+        flowDepth++;
+      case 0x5D: // ]
+      case 0x7D: // }
+        if (flowDepth > 0) {
+          flowDepth--;
+        }
     }
 
-    if ((c == 0x26 || c == 0x2A) && _startsANode(previous, afterSpace)) {
+    if ((c == 0x26 || c == 0x2A) &&
+        _startsANode(previous, afterSpace, flowDepth)) {
       final anchor = c == 0x26;
       refuse(
         i,
@@ -239,7 +266,7 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
         c == 0x3C &&
         i + 1 < source.length &&
         source.codeUnitAt(i + 1) == 0x3C &&
-        _startsANode(previous, afterSpace) &&
+        _startsANode(previous, afterSpace, flowDepth) &&
         _keySeparatorAfter(source, i + 2);
     if (mergeKey) {
       refuse(

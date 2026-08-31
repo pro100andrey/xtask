@@ -89,6 +89,18 @@ Set<String> _readings(String pattern) {
     );
   }
 
+  if (pattern.isEmpty) {
+    // **Answered before anything is invented, because the exit drops what
+    // this function invents.** `**/` alone reads as the empty pattern, which
+    // `Glob` refuses, so the empty variants are removed on the way out — and
+    // that removal took the caller's own empty pattern with it. `include:
+    // ['']` then contributed no glob at all and surfaced as "the set expands
+    // to nothing", about a cause the reader cannot see from that sentence.
+    // Handed back as written, it reaches `Glob` and gets the sentence naming
+    // the line it is on.
+    return {pattern};
+  }
+
   var readings = {''};
   var rest = pattern;
   var depth = 0;

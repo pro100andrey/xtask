@@ -905,6 +905,28 @@ tasks: {}
       expect(message, contains('no member for a marker to stand for'));
     });
 
+    test('and a deadline points at the key, not at the task', () {
+      // The rules moved out of the parser and left their carets behind: all
+      // four pointed at the task's name, so on a task with several keys the
+      // reader was told something about `timeout:` with the task name
+      // underlined eight lines above it. The parser holds the document and is
+      // the one place that can say where a key is written.
+      try {
+        parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  regen:\n'
+          '    desc: x\n'
+          '    do: regen\n'
+          '    timeout: 30\n',
+        );
+        fail('expected a refusal, got none');
+      } on XtaskFormatException catch (problem) {
+        expect(problem.span, isNotNull);
+        expect('$problem', contains('timeout: 30'));
+        expect('$problem', isNot(contains('regen:\n')));
+      }
+    });
+
     test('and one contradiction still reads as one sentence', () {
       // A single mistake must not grow a paragraph break just because several
       // of them now can.

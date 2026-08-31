@@ -314,13 +314,10 @@ final class Executor {
                 // `_runOne` has already written `failed[name]`; this is the
                 // same fact, kept where the admission pass reads it.
                 stopped.add(name);
-                // **The first failure, in the plan's order — not the first to
-                // finish.** Under `--keep-going` these are different: a
-                // continuation failing early pinned the answer to 4, which
-                // the table reads as "the body succeeded and only a `then:`
-                // after it did not", while an ordinary task failing later was
-                // buried in the summary. 4 is unrecoverable in the wrong
-                // direction, so a plain failure takes the answer from it.
+                // Kept by plan position rather than by the order they
+                // finish in: under `--keep-going` those differ, and which
+                // failure answers for the run must not depend on which
+                // machine ran it. What is done with them is below.
                 failures[order[name] ?? failures.length] = code;
                 if (!keepGoing) {
                   // **Reaching into what is running, but only where the file
@@ -368,8 +365,21 @@ final class Executor {
     if (failures.isEmpty) {
       return ExitCode.success;
     }
-    final first = (failures.keys.toList()..sort()).first;
-    return failures[first]!;
+    // **A plain failure takes the answer from a continuation, and the plan's
+    // order decides among failures of the same kind.** Keying these by plan
+    // position said only the second half, and the first half is the one that
+    // matters: a continuation always sits in the plan BEFORE the unrelated
+    // tasks that come after its origin, so `a`, `a then a_check`, `b` with
+    // both `a_check` and `b` failing answered 4 — "the body succeeded and only
+    // a `then:` after it did not", said of a run where an ordinary task failed
+    // too. 4 is unrecoverable in the wrong direction, and it is the one code
+    // that must not be claimed loosely.
+    final plain = failures.entries.where(
+      (failure) => failure.value != ExitCode.continuationFailed,
+    );
+    return (plain.isEmpty ? failures.entries : plain)
+        .reduce((a, b) => a.key <= b.key ? a : b)
+        .value;
   }
 
   /// One task, timed, and reported where the mode says to report it.

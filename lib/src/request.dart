@@ -285,16 +285,20 @@ Request parseArguments(
     if (joined.isNotEmpty) {
       written.add(joined);
       final value = argument.substring(joined.length + 1);
-      // **Only where a name is what belongs there.** `--why=` became a request
-      // naming the empty string, and the reader was told there is no task
-      // called `` — a missing name reported where an argument is missing. But
-      // said of every mode it told somebody who wrote `--validate=` to put a
-      // name after a flag that takes none, where the arm below already had the
-      // right sentence.
-      if (value.isEmpty && _modesTakingAName.contains(joined)) {
+      // **Refused here for every mode, in the mode's own terms.** `--why=`
+      // became a request naming the empty string, and the reader was told
+      // there is no task called `` — a missing name reported where an
+      // argument is missing. Narrowed to the modes that take a name, the
+      // others reached the arm below and were told they had been given ``:
+      // the same empty interpolation, one sentence along. An empty value is a
+      // mistake in both cases; what differs is which mistake.
+      if (value.isEmpty) {
         return ShowUsage(
-          '`$joined` needs a name after it, and there is nothing after the '
-          '`=`',
+          _modesTakingAName.contains(joined)
+              ? '`$joined` needs a name after it, and there is nothing after '
+                    'the `=`'
+              : '`$joined` takes no name, so there is nothing for the `=` to '
+                    'join to it',
         );
       }
       operands.add(value);

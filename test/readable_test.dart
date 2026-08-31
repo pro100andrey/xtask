@@ -25,6 +25,17 @@ void main() {
       expect(refusalOf('a:\n  <<: {b: c}\n'), contains('merge key'));
     });
 
+    test('including straight after a comma inside a flow collection', () {
+      // The one that got away. `,` was held to the same "needs a space" rule
+      // as `-` and `:`, which is true of them in block context and false of a
+      // comma inside brackets: YAML separates flow entries with it and needs
+      // nothing after it. So deleting one space walked past the only rule this
+      // module enforces, and `package:yaml` expanded the alias into a copy.
+      expect(refusalOf('a: [one,&x two]\n'), contains('anchor'));
+      expect(refusalOf('b: [three,*x]\n'), contains('alias'));
+      expect(refusalOf('a: {desc: red,&blue}\n'), contains('anchor'));
+    });
+
     test('including after the indicators that open a node', () {
       // `&` and `*` are indicators only where a node begins, and a node begins
       // after a newline, a colon, a dash, a bracket, a brace or a comma.
@@ -73,6 +84,13 @@ void main() {
         ),
         isNull,
       );
+    });
+
+    test('and a comma outside brackets is a character in a word', () {
+      // Which is what the space rule was reached for, and it still holds:
+      // `red,&blue` written as a block value is a plain scalar, `&` and all.
+      expect(refusalOf('desc: red,&blue\n'), isNull);
+      expect(refusalOf('desc: a,*b\n'), isNull);
     });
 
     test('a single `<` is not a merge key', () {

@@ -53,12 +53,22 @@ words parsing into a gate set this file declares, or into a mode — nothing
 writes those by accident, and naming the binary as an operand,
 `cp ./xtask /usr/local/bin`, names no gate this file has.
 
+Every mention on a line is tried, not only the first, so a repository that
+builds its own copy — `cp ./xtask /tmp/x && ./xtask check` — is read from the
+invocation and not from the `cp`. And a mention inside a quoted string is not
+one: the quotes come off before the parser sees the words, because `-j "2"` is
+ordinary, and `echo "run xtask check"` therefore parsed into a declared gate
+set and reported the job as running a gate that nothing in it runs. That rule
+is asked only where the mention is not already in command position, so
+`sh -c "dart run :xtask check"` stays an invocation.
+
 A `run: |` block is read line by line, with a shell's line continuations joined
 first, so `dart run :xtask \` and `ci-analyze` are one command and not two. The
-exemption marker follows the block in: at the end of a line it excuses that
-line, on a line of its own it excuses the line under it, and it no longer
-reaches out of one step's script into the next. A marker inside a quoted string
-is what the step prints rather than what the step claims, and excuses nothing —
+exemption marker follows the block in: beside the `run:` key it excuses the
+whole script under it, at the end of a line it excuses that line, on a line of
+its own it excuses the line under it, and it no longer reaches out of one
+step's script into the next. A marker inside a quoted string is what the step
+prints rather than what the step claims, and excuses nothing —
 `echo '# xtask: not a gate - pretend'` used to exempt itself.
 
 **Behaviour change:** a workflow whose exemption was written inside quotes, or
@@ -244,10 +254,13 @@ Measured on a synthetic repository of 15,000 files and a task file of 4,000:
 
 ### Also
 
-- A run's exit code is the first failure in the **plan's** order, not the first
-  to finish. Under `-j`, two tasks failing with 3 and 1 answered whichever
-  ended sooner, and `--keep-going` could pin a whole run to 4 — which the table
-  reads as "the body succeeded and only a `then:` after it did not".
+- A plain failure answers for the run ahead of a continuation, and among
+  failures of the same kind the **plan's** order decides — not the order they
+  finished in. Under `-j`, two tasks failing with 3 and 1 answered whichever
+  ended sooner; and a continuation always sits in the plan before the unrelated
+  tasks after its origin, so a run where an ordinary task also failed answered
+  4, which the table reads as "the body succeeded and only a `then:` after it
+  did not".
 - `xtask check | head -1` ran no tasks at all: the flush that orders this
   process's output against an inherited child threw before the first child
   started, and the failure was reported down the pipe that had just gone away.
@@ -270,6 +283,12 @@ Measured on a synthetic repository of 15,000 files and a task file of 4,000:
   three rather than four — and the README's arithmetic said so too.
 - `--emit-schema` says a name is one line and not empty, which the parser
   refuses and the schema accepted.
+- An empty pattern in a set is refused by name. It was dropped as though the
+  engine had invented it — the reading `**/` alone produces — so it reached no
+  glob at all and surfaced as "the set expands to nothing", about a cause that
+  sentence does not name.
+- A mode that takes no name says so when it is written `--validate=`, instead
+  of reporting that it was given ``.
 - Empty names are refused everywhere a name is written. `gates:` refused an
   empty one; tasks, sets and environment variables took the same key and kept
   it, so a task with no name validated clean and printed a blank column.

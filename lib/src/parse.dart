@@ -246,7 +246,9 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     interruptible: _flag(map, 'interruptible', 'task `$name`'),
     exclusive: _names(map, 'exclusive', name),
   );
-  _refuseIncoherent(task);
+  // The document is here and nowhere else, so this is where a rule whose
+  // subject is a key can be told where that key is written.
+  _refuseIncoherent(task, (key) => map.nodes[key]?.span);
   return task;
 }
 
@@ -260,8 +262,8 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
 /// This stays the only gate. A run does not validate first, and
 /// `BodyResolver._withMember` throws a `StateError` on a member that is not
 /// there, on the strength of the file having been refused here.
-void _refuseIncoherent(Task task) {
-  final wrong = incoherences(task);
+void _refuseIncoherent(Task task, SourceSpan? Function(String key) keySpan) {
+  final wrong = incoherences(task, keySpan: keySpan);
   if (wrong.isEmpty) {
     return;
   }

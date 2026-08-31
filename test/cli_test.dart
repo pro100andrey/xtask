@@ -105,6 +105,20 @@ void main() {
       );
     });
 
+    test("and an empty value is refused in the mode's own terms", () {
+      // `--why=` used to become a request naming the empty string, and the
+      // reader was told there is no task called ``. Narrowed to the modes that
+      // take a name, the rest reached the arm below it and were told they had
+      // been given `` — the same empty interpolation, one sentence along.
+      expect(
+        (parseArguments(['--why=']) as ShowUsage).problem,
+        contains('nothing after'),
+      );
+      final usage = parseArguments(['--validate=']) as ShowUsage;
+      expect(usage.problem, contains('takes no name'));
+      expect(usage.problem, isNot(contains('given ``')));
+    });
+
     test('and on its own it is refused, pointing at the other name', () {
       // `--gate` narrows `--list`; it is not a mode of its own. They used to
       // be `--gate` and `--gates`, one letter apart and meaning opposite
