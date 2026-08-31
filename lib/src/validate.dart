@@ -7,7 +7,6 @@ import 'errors.dart';
 import 'gates.dart';
 import 'graph.dart';
 import 'model.dart';
-import 'primitives.dart';
 import 'sets.dart';
 
 /// Everything wrong with a file, rather than the first thing.

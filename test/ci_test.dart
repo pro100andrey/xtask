@@ -325,7 +325,12 @@ jobs:
     steps:
       - run: dart run :xtask ci-analyze -j abc # xtask: not a gate — flaky
 ''');
-      expect(said().single, contains('is not a number of jobs'));
+      final lines = said();
+      expect(lines, hasLength(2));
+      expect(lines.first, contains('is not a number of jobs'));
+      // And the marker is answered too. Dropped silently, the person who
+      // wrote it is never told it excused nothing.
+      expect(lines.last, contains('excuses nothing'));
     });
 
     test('and it does not silence a misspelled gate set', () {

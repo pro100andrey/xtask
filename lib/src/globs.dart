@@ -73,10 +73,25 @@ const mostGlobstarSegments = 64;
 /// its first globstar as a segment start and its second as an ordinary comma,
 /// and the set matched every nested `.yaml` and no root one.
 Set<String> _readings(String pattern) {
+  // **Every occurrence, not every accepted one.** Counting inside the loop
+  // counted only the globstars that stand as a whole segment, and the ones the
+  // skip loop steps past cost the same walk: `,**/` repeated is rejected at
+  // every occurrence and was never refused — thirty-two thousand of them was
+  // a second and a half, and a megabyte was minutes. One pass over the text
+  // answers for all of them, before any of them is looked at.
+  final segments = '**/'.allMatches(pattern).length;
+  if (segments > mostGlobstarSegments) {
+    throw FormatException(
+      '`${_short(pattern)}` has $segments `**/` in it, which is more than the '
+      '$mostGlobstarSegments this engine will read. Each one is another pass '
+      'over the pattern, and a pattern this shape is not saying what its '
+      'author thinks it says. Name fewer of them, or split the set',
+    );
+  }
+
   var readings = {''};
   var rest = pattern;
   var depth = 0;
-  var segments = 0;
 
   while (true) {
     // Find the first `**` that stands as a WHOLE segment, skipping past any
@@ -95,15 +110,6 @@ Set<String> _readings(String pattern) {
         // surfacing as a crash on a pattern the library accepts.
       }..removeWhere((variant) => variant.isEmpty);
     }
-    if (++segments > mostGlobstarSegments) {
-      throw FormatException(
-        '`${_short(pattern)}` has more than $mostGlobstarSegments `**/` '
-        'segments. Each one is another pass over the pattern, and a pattern '
-        'this shape is not saying what its author thinks it says. Name fewer '
-        'of them, or split the set',
-      );
-    }
-
     final withStar = rest.substring(0, index + 3);
     final withoutStar = rest.substring(0, index);
     final tail = rest.substring(index + 3);

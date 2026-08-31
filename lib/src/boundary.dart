@@ -59,6 +59,19 @@ String workingDirectoryLeavesRoot({
     'that runs somewhere the repository does not own is not something this '
     'file can vouch for';
 
+/// The name `remove` is written under in `do:`.
+///
+/// Spelled once, because four things name it: the closed list of built-in
+/// verbs, the binding beside it, the diagnostics that say what a set fed to it
+/// should look like, and `--validate`.
+///
+/// **Here and not beside the implementation.** `validate.dart` needs the name
+/// and nothing else, and reaching for it through `primitives.dart` brought
+/// `dart:io` and `package:glob` into the module whose promise is that it
+/// answers without a filesystem at all — so nothing then stops a later edit
+/// from calling the verb it is checking.
+const removeVerbName = 'remove';
+
 /// Why `remove` refuses the argument [written].
 ///
 /// Beside [workingDirectoryLeavesRoot] and for the same reason, which now has

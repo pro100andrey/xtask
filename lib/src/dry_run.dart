@@ -2,6 +2,7 @@
 library;
 
 import 'bodies.dart';
+import 'boundary.dart';
 import 'errors.dart';
 import 'exit_codes.dart';
 import 'graph.dart';

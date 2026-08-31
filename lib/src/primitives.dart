@@ -26,13 +26,6 @@ import 'globs.dart';
 /// that no second list of these names exists anywhere (§8).
 const builtInVerbNames = <String>{removeVerbName};
 
-/// The name `remove` is written under in `do:`.
-///
-/// Spelled once, because three things name it: the closed list above, the
-/// binding below, and the diagnostics that say what a set fed to it should
-/// look like.
-const removeVerbName = 'remove';
-
 /// The built-in verbs, bound to the repository [root] they may act inside.
 Map<String, Verb> builtInVerbs({required String root}) => {
   removeVerbName: (context) => removeVerb(context, root: root),

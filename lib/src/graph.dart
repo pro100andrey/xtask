@@ -101,7 +101,6 @@ List<PlanEdge>? routeTo(
   required String from,
   required String to,
   Set<String>? hopeless,
-  void Function()? tooDeep,
 }) {
   // The path being walked, so a cycle does not hang it.
   final seen = <String>{};
@@ -133,66 +132,99 @@ List<PlanEdge>? routeTo(
   // deepest-first and are reversed at the end.
   final route = <PlanEdge>[];
 
-  bool walk(String at, [int depth = 0]) {
-    if (at == to) {
-      return true;
-    }
-    if (unreachable.contains(at)) {
-      return false;
-    }
-    // The same bound the planner keeps, and for the same reason: one frame per
-    // edge. **Said out loud rather than answered silently**: the two answers
-    // this walk gives are "here is the route" and "nothing reaches it", and
-    // the second is a lie about a branch that was never looked down. It is
-    // reported to the caller, which knows whether the answer depended on it —
-    // throwing from here refused a whole `--why` over a chain the question
-    // did not touch, which is the disagreement between modes it was meant to
-    // remove.
-    if (depth > mostDepth) {
-      cutShort = true;
-      tooDeep?.call();
-      return false;
-    }
-    // A cycle is `--validate`'s to report; here it must only not hang.
-    if (!seen.add(at)) {
-      cutShort = true;
-      return false;
-    }
-    // **Removed again on the way out.** Kept, it marked every task a dead
-    // branch had touched as unreachable for the rest of the search, so a route
-    // that existed down a later edge was answered "nothing reaches it" — the
-    // one answer §8 says this question exists to prevent. Cheap here and
-    // wrong-shaped everywhere: `seen` is the path, not the visited set.
-    void done({required bool reached}) {
-      seen.remove(at);
-      if (!reached && !cutShort) {
-        unreachable.add(at);
-      }
-    }
-
+  /// One task on the path, and how far through its edges the walk has got.
+  ///
+  /// **An explicit stack, because the recursion was one frame per edge.** A
+  /// `needs:` chain long enough overflowed it and ended `--why` at 255, and
+  /// bounding the depth instead only moved the problem: a branch given up on
+  /// is neither a route nor a proof there is none, so the answer was either
+  /// silently short or a refusal of a question the deep chain never touched.
+  /// A loop has no depth to bound.
+  List<(String, String)> edgesOf(String at) {
     final task = file.tasks[at];
     if (task == null) {
-      // Taken off the path on the way out, like every other return. Left on
-      // it, a second branch reaching the same dangling name read it as a ring
-      // and switched the memo off for the rest of the question.
-      seen.remove(at);
-      return false;
+      return const [];
     }
-    for (final (kind, next) in [
+    return [
       for (final need in task.needs) ('needs', need),
       for (final next in task.then) ('then', next),
-    ]) {
-      if (walk(next, depth + 1)) {
-        done(reached: true);
-        route.add(PlanEdge(at, kind, next));
+    ];
+  }
+
+  bool walk(String start) {
+    if (start == to) {
+      return true;
+    }
+    if (unreachable.contains(start) || file.tasks[start] == null) {
+      return false;
+    }
+    seen.add(start);
+    final path = <_Hop>[_Hop(start, edgesOf(start))];
+
+    while (path.isNotEmpty) {
+      final hop = path.last;
+      if (hop.cursor == hop.edges.length) {
+        // **Taken off the path on the way out.** Kept, it marked every task a
+        // dead branch had touched as unreachable for the rest of the search,
+        // so a route that existed down a later edge was answered "nothing
+        // reaches it" — the one answer §8 says this question exists to
+        // prevent. `seen` is the path, not the visited set.
+        seen.remove(hop.at);
+        if (!cutShort) {
+          unreachable.add(hop.at);
+        }
+        path.removeLast();
+        continue;
+      }
+
+      final (kind, next) = hop.edges[hop.cursor++];
+      if (next == to) {
+        route
+          ..clear()
+          ..addAll([
+            for (final entered in path.skip(1)) entered.enteredBy!,
+            PlanEdge(hop.at, kind, next),
+          ]);
+        for (final on in path) {
+          seen.remove(on.at);
+        }
         return true;
       }
+      if (unreachable.contains(next)) {
+        continue;
+      }
+      // A cycle is `--validate`'s to report; here it must only not hang.
+      if (!seen.add(next)) {
+        cutShort = true;
+        continue;
+      }
+      if (file.tasks[next] == null) {
+        // Taken off the path like every other end. Left on it, a second branch
+        // reaching the same dangling name read it as a ring and switched the
+        // memo off for the rest of the question.
+        seen.remove(next);
+        continue;
+      }
+      path.add(_Hop(next, edgesOf(next), PlanEdge(hop.at, kind, next)));
     }
-    done(reached: false);
     return false;
   }
 
-  return walk(from) ? route.reversed.toList() : null;
+  return walk(from) ? List.of(route) : null;
+}
+
+/// One task on the path a route walk is holding, and its unexplored edges.
+final class _Hop {
+  _Hop(this.at, this.edges, [this.enteredBy]);
+
+  final String at;
+  final List<(String, String)> edges;
+
+  /// The edge that led here, for the route to be read off the path.
+  final PlanEdge? enteredBy;
+
+  /// How many of [edges] have been taken.
+  var cursor = 0;
 }
 
 /// How deep a chain of `needs:` or `then:` this engine walks.
@@ -292,11 +324,7 @@ Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
   // One memo for the whole question: every call below asks about the same
   // target, and what cannot reach it cannot reach it from anywhere.
   final hopeless = <String>{};
-  // Whether any branch was given up on for being deeper than the engine
-  // walks. Only matters if nothing was found: a route that WAS found is the
-  // answer whatever some other branch would have said.
-  var cutByDepth = false;
-  void tooDeep() => cutByDepth = true;
+
   for (final gate in file.gates.keys) {
     for (final member in tasksInGate(file, gate)) {
       final route = routeTo(
@@ -304,7 +332,6 @@ Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
         from: member.name,
         to: task,
         hopeless: hopeless,
-        tooDeep: tooDeep,
       );
       if (route == null) {
         continue;
@@ -321,25 +348,10 @@ Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
     }
   }
   for (final entry in entryPoints(file)) {
-    final route = routeTo(
-      file,
-      from: entry,
-      to: task,
-      hopeless: hopeless,
-      tooDeep: tooDeep,
-    );
+    final route = routeTo(file, from: entry, to: task, hopeless: hopeless);
     if (route != null) {
       routes[entry] = route;
     }
-  }
-  if (routes.isEmpty && cutByDepth) {
-    // "Nothing reaches it" would be a claim about branches this gave up on.
-    throw XtaskFormatException(
-      'what reaches `$task` cannot be answered: a chain on the way to it is '
-      'more than $mostDepth tasks deep, which is further than this engine '
-      'walks',
-      file.tasks[task]?.span,
-    );
   }
   return routes;
 }
@@ -433,7 +445,13 @@ final class _Planner {
     if (_done.contains(name)) {
       return;
     }
-    if (depth > mostDepth) {
+    final task = file.tasks[name];
+    // **After the name is looked up, not before.** Asked first, a `needs:`
+    // naming a task that does not exist was reported as a chain too deep —
+    // with no line under it, because there is no such task to have a span —
+    // instead of as the missing name it is. Depth is about how far this walk
+    // has come; whether the next name exists is about the file.
+    if (task != null && depth > mostDepth) {
       // **A number the table has, rather than a stack overflow.** This walk
       // is one frame per edge, so a `needs:` chain long enough overflowed the
       // stack and ended the process at 255 — from `--validate`, whose whole
@@ -442,11 +460,10 @@ final class _Planner {
         'the chain reaching `$name` is more than $mostDepth tasks deep. That '
         'is deeper than a file anybody writes and deeper than this engine '
         'walks, so it is refused rather than run partway',
-        file.tasks[name]?.span,
+        task.span,
       );
     }
 
-    final task = file.tasks[name];
     if (task == null) {
       // **A declared gate set is not "no such task".** Said that way it was
       // false — the file declares the name — and `--validate` printed it

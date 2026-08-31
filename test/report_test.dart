@@ -205,10 +205,14 @@ tasks:
   group('--check-ci', () {
     CiReport report({
       List<({CiStep step, String gate})> invocations = const [],
+      List<({CiStep step, String mode})> questions = const [],
+      List<CiStep> exempted = const [],
       List<CiProblem> problems = const [],
       List<String> unrun = const [],
     }) => CiReport(
       invocations: invocations,
+      questions: questions,
+      exempted: exempted,
       problems: problems,
       unrun: unrun,
     );
@@ -264,6 +268,8 @@ tasks:
       final lines = refusals(
         const CiReport(
           invocations: [],
+          questions: [],
+          exempted: [],
           problems: [RunsACommand(step)],
           unrun: [],
         ),
@@ -279,6 +285,8 @@ tasks:
       final lines = refusals(
         const CiReport(
           invocations: [],
+          questions: [],
+          exempted: [],
           problems: [
             RunsSomethingRefused(step, '`-j abc` is not a number of jobs'),
           ],
@@ -293,6 +301,8 @@ tasks:
       final lines = refusals(
         const CiReport(
           invocations: [],
+          questions: [],
+          exempted: [],
           problems: [
             RunsAnUndeclaredGate(step, 'chekc', {'release', 'check'}),
           ],

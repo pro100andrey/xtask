@@ -384,23 +384,18 @@ tasks:
       );
     });
 
-    test('and `--why` refuses only where the cut changed the answer', () {
-      // Two ways to get this wrong, and both were tried. Returning false
-      // renders as `nothing reaches it`, about a branch never looked down.
-      // Throwing from the walk refused a whole question over a chain the
-      // question did not touch. So the cut is reported to the caller, which
-      // knows whether the answer depended on it.
-      final file = parseXtaskFile(chain(mostDepth + 50));
-      expect(() => routesTo(file, 't0'), returnsNormally);
+    test('and `--why` walks it without a bound at all', () {
+      // Two ways to get this wrong, and both were tried. Returning false where
+      // the branch was cut renders as `nothing reaches it`, about a branch
+      // never looked down; refusing instead turned down questions the deep
+      // chain never touched. The walk holds its own stack now, so there is no
+      // depth to bound and neither answer has to be invented.
+      final file = parseXtaskFile(chain(mostDepth * 4));
+      expect(routesTo(file, 't0').keys, ['t0']);
       expect(
-        () => routesTo(file, 't${mostDepth + 20}'),
-        throwsA(
-          isA<XtaskFormatException>().having(
-            (e) => e.message,
-            'message',
-            contains('further than this engine walks'),
-          ),
-        ),
+        routesTo(file, 't${mostDepth * 3}').keys,
+        ['t0'],
+        reason: 'a route four thousand hops long is still a route',
       );
     });
 

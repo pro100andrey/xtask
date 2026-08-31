@@ -163,8 +163,11 @@ final class CiReport {
     required this.invocations,
     required this.problems,
     required this.unrun,
-    this.questions = const [],
-    this.exempted = const [],
+    // Required, like the rest. Defaulted, a construction that forgets them
+    // reports no exemptions at all — which is the "exempted its way to green
+    // and nobody saw" state `exempted` exists to make visible.
+    required this.questions,
+    required this.exempted,
   });
 
   /// Every shell step that is a well-formed invocation, by gate set.
@@ -262,6 +265,12 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     // about exactly one of the outcomes below.
     if (read.refused case final refusal?) {
       problems.add(RunsSomethingRefused(step, refusal));
+      // Said as well, not instead. The refusal is the finding; that a marker
+      // was written over it and excused nothing is a second fact, and the
+      // reader who wrote the marker is the one who needs to hear it.
+      if (exemption != null) {
+        problems.add(ExemptsNothing(step, 'a step the command line refuses'));
+      }
       continue;
     }
     if (read.gate case final gate?) {
@@ -301,11 +310,13 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     problems.add(RunsACommand(step));
   }
 
-  // Exemptions are deliberately NOT counted here. A step somebody marked as
-  // not a gate is a step that does not invoke xtask, so a workflow of nothing
-  // but those invokes it nowhere — and answering 0 is what this throw exists
-  // to prevent: `--check-ci` passing after the invocation was deleted.
-  if (invocations.isEmpty && questions.isEmpty && problems.isEmpty) {
+  // **Only a run or a finding counts as something to check against.** Neither
+  // an exemption nor a question is: a step somebody marked as not a gate does
+  // not invoke xtask, and a step that asks xtask a question runs no gate — so
+  // a workflow of nothing but `- run: xtask --check-ci`, which is the step
+  // §7.1 asks every project to add, would pass with its actual invocation
+  // deleted. That is precisely what this throw exists to prevent.
+  if (invocations.isEmpty && problems.isEmpty) {
     throw XtaskFormatException(
       'nothing under `$workflowDirectory` invokes xtask, so there is nothing '
       'to check this file against',
@@ -351,16 +362,38 @@ bool _namesXtask(String word) =>
 /// WHICH runner, for the reason [_namesXtask] is loose about the spelling: the
 /// entry point is the project's, and `dart run`, `npx` and `pnpm exec` are all
 /// somebody's.
-int? _runsXtask(List<String> words) {
+int? _runsXtask(List<String> words, Set<int> lineStarts) {
   for (var at = 0; at < words.length; at++) {
     if (!_namesXtask(words[at])) {
       continue;
     }
-    if (at == 0 || _runsWhatFollows(words[at - 1])) {
+    if (lineStarts.contains(at) || _runsWhatFollows(words[at - 1])) {
       return at;
     }
   }
   return null;
+}
+
+/// Which of [command]'s words begin a line of it.
+///
+/// **A `run: |` block is a script, and a script's lines each start a
+/// command.** Accepting only word zero read `echo hi` then `xtask check` as
+/// one command line and reported a step that does run the gate as a
+/// duplicated command list. This is not splitting the block into commands —
+/// nothing here reads what those lines mean — it is knowing where one could
+/// begin, which is the same thing a shell knows before it reads anything.
+Set<int> _lineStarts(String command) {
+  final starts = <int>{};
+  var at = 0;
+  for (final line in command.split('\n')) {
+    final words = line.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+    if (words.isEmpty) {
+      continue;
+    }
+    starts.add(at);
+    at += words.length;
+  }
+  return starts;
 }
 
 /// Whether [word] is a thing whose next argument is a command to run.
@@ -373,15 +406,62 @@ bool _runsWhatFollows(String word) => const {
   'dlx',
 }.contains(word);
 
-/// Whether splitting on whitespace cut [word] out of a quoted string.
-///
-/// An odd count is what says so. A balanced pair is a quoted argument that
-/// survived the split whole, and `-j "2"` is a thing somebody writes.
-bool _cutThroughAQuote(String word) =>
-    '"'.allMatches(word).length.isOdd || "'".allMatches(word).length.isOdd;
-
 /// [word] without the quotes a shell would take off it.
 String _unquoted(String word) => word.replaceAll('"', '').replaceAll("'", '');
+
+/// What one shell step turns out to be.
+typedef StepReading = ({
+  /// The gate set it runs, if it runs one.
+  String? gate,
+
+  /// Why the command line itself would turn it away.
+  String? refused,
+
+  /// The mode it asks for, if it asks a question rather than running a gate.
+  String? mode,
+
+  /// The gate set a mode names without running it.
+  String? named,
+});
+
+/// A step that is not an xtask invocation at all.
+///
+/// **Named once.** The record was spelled out at five sites with the fields in
+/// three different orders, which is how a null ends up in the wrong slot.
+const StepReading _notAnInvocation = (
+  gate: null,
+  refused: null,
+  mode: null,
+  named: null,
+);
+
+StepReading _gate(String name) => (
+  gate: name,
+  refused: null,
+  mode: null,
+  named: null,
+);
+
+StepReading _refused(String why) => (
+  gate: null,
+  refused: why,
+  mode: null,
+  named: null,
+);
+
+StepReading _question(String mode) => (
+  gate: null,
+  refused: null,
+  mode: mode,
+  named: null,
+);
+
+StepReading _names(String mode, String what) => (
+  gate: null,
+  refused: null,
+  mode: mode,
+  named: what,
+);
 
 /// What shell step [command] turns out to be.
 ///
@@ -392,117 +472,60 @@ String _unquoted(String word) => word.replaceAll('"', '').replaceAll("'", '');
 /// twice. Both copies had already been wrong: `-j4` swallowed the gate set
 /// after it, and a lone `-` raised a `RangeError` out of `--check-ci`.
 ///
-/// So the words go to the parser the command line uses, and what comes back is
-/// asked a question. A mode names a gate set without running it; anything the
-/// command line refuses is a step that exits before it does anything; and
-/// arguments after `--` have nothing to reach, because a gate set has no body.
-/// Each of those is a [Request] that is not a bare [RunTask], and none of them
-/// is spelled out here.
-({String? gate, String? refused, String? mode, String? named}) _readStep(
-  String command,
-) {
-  const notAnInvocation = (
-    gate: null,
-    refused: null,
-    mode: null,
-    named: null,
-  );
+/// So the words go to the parser the command line uses, and the answer's TYPE
+/// is what says which of the four outcomes this is. Reading the mode back off
+/// the words instead missed every `--mode=value` spelling the parser accepts —
+/// `--why=check` reported a gate set named under an empty flag — and had
+/// nothing to say about `--help`, which is not in `modes`.
+StepReading _readStep(String command) {
   final words = command.split(RegExp(r'\s+'));
-  final at = _runsXtask(words);
+  final at = _runsXtask(words, _lineStarts(command));
   if (at == null) {
-    return notAnInvocation;
-  }
-
-  // **Only the words this is about to parse, and only unbalanced quotes.**
-  // Splitting on whitespace is not what a shell does, so a word may still be
-  // wearing half of the quote it was written inside: `echo "install xtask
-  // first"` gives `first"` after the xtask word, and reading on from it
-  // reported `first"` as a gate set the file does not declare. An odd number
-  // of quotes is what says the split cut through a string.
-  //
-  // Judged on these words rather than on the whole step, because a step may
-  // quote something before reaching xtask — a `run: |` block that echoes a
-  // line and then runs the gate — and a balanced pair is an ordinary argument
-  // that survives the split whole.
-  final arguments = words.skip(at + 1).toList();
-  if (arguments.any(_cutThroughAQuote)) {
-    return notAnInvocation;
+    return _notAnInvocation;
   }
 
   final request = parseArguments(
-    arguments.map(_unquoted).toList(),
+    // Quotes come off, because they are the shell's and not the parser's:
+    // `-j "2"` is an ordinary thing to write and `2` is what the child sees.
+    words.skip(at + 1).map(_unquoted).toList(),
     // The number is discarded — only whether it PARSES is being asked — and a
     // check that read this machine's width would vouch differently for one
     // workflow on two runners.
     processors: () => 1,
   );
   return switch (request) {
-    RunTask(:final task, arguments: []) => (
-      gate: task,
-      refused: null,
-      mode: null,
-      named: null,
-    ),
+    RunTask(:final task, arguments: []) => _gate(task),
     // A gate set has no body, so the arguments reach nothing and the step
     // exits 2. The command line does not refuse this — only the file can say
     // whether the name has a body — so the sentence is written here.
-    RunTask() => (
-      gate: null,
-      mode: null,
-      named: null,
-      refused:
-          'a gate set gathers tasks and runs nothing of its own, so there is '
-          'nothing for the arguments after `--` to be arguments to',
+    RunTask() => _refused(
+      'a gate set gathers tasks and runs nothing of its own, so there is '
+      'nothing for the arguments after `--` to be arguments to',
     ),
     // Everything the command line itself would turn away, in its own words.
-    ShowUsage(problem: final problem?) => (
-      gate: null,
-      mode: null,
-      named: null,
-      refused: problem,
-    ),
-    // **A mode that names a gate set is a job that does not run it.** The
-    // step reads as though the gate is covered and nothing of it happens, so
-    // this stays a finding — but its own, because "what runs belongs in the
-    // task file" tells a reader to move a gate that is already there.
-    DryRunTask(:final task) => _names(task, words, at),
-    GateMembers(:final gate) => _names(gate, words, at),
-    WhyTask(:final task) => _names(task, words, at),
-    ListTasks(gate: final gate?) => _names(gate, words, at),
-    // **A mode that names nothing is a question, not a broken step.** This
-    // said so in a comment and then answered `notAnInvocation`, which the
-    // caller cannot tell from "no xtask here at all" — so `- run: xtask
-    // --validate` was filed under "what runs belongs in the task file", and
-    // so was `--check-ci`, the step §7.1 asks a project to add.
-    _ => (
-      gate: null,
-      refused: null,
-      named: null,
-      mode: _modeIn(words.skip(at + 1)),
-    ),
+    ShowUsage(problem: final problem?) => _refused(problem),
+
+    // **The one mode that reads as a run and is not one.** `--dry-run
+    // ci-analyze`, in a job called `ci-analyze`, is the shape a step takes
+    // when somebody was debugging and left the flag in — and the green tick
+    // after it is the whole problem. Its siblings are not: `--gate-members`
+    // and `--list` and `--why` are inspection, and a job that reports on a
+    // gate set never claimed to run it.
+    DryRunTask(:final task) => _names('--dry-run', task),
+
+    // **A step that asks xtask a question is not a broken one.** This said so
+    // in a comment and answered otherwise, so `- run: xtask --validate` was
+    // filed under "what runs belongs in the task file" — and so was
+    // `--check-ci`, the step §7.1 asks a project to add.
+    ShowUsage() => _question('--help'),
+    ListTasks() => _question('--list'),
+    GateMembers() => _question('--gate-members'),
+    WhyTask() => _question('--why'),
+    Validate() => _question('--validate'),
+    CheckCi() => _question('--check-ci'),
+    ShowVersion() => _question('--version'),
+    EmitSchema() => _question('--emit-schema'),
   };
-}
-
-/// A mode that names [what], for the finding to quote both.
-({String? gate, String? refused, String? mode, String? named}) _names(
-  String what,
-  List<String> words,
-  int at,
-) => (
-  gate: null,
-  refused: null,
-  mode: _modeIn(words.skip(at + 1)),
-  named: what,
-);
-
-/// The mode flag among [arguments], for the report to name.
-String? _modeIn(Iterable<String> arguments) {
-  for (final argument in arguments) {
-    if (modes.contains(argument)) {
-      return argument;
-    }
-  }
-  return null;
 }
 
 Iterable<CiStep> _shellSteps(File workflow, String name) sync* {

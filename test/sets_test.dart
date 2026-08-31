@@ -66,7 +66,10 @@ void main() {
     // right and the count is checked at each step, so a pattern like this one
     // is refused having built thirty-three strings, not 2^50000.
     final root = tempRepo('vast');
-    final vast = '${'**/x/' * 50000}*.dart';
+    // Eight, which is inside the segment bound and well past the readings
+    // one: 2^8 is 256. The two limits are different questions and this is
+    // about the second.
+    final vast = '${'**/x/' * 8}*.dart';
     expect(
       () => SetExpander(root: root.path).expand(
         's',
@@ -96,7 +99,7 @@ void main() {
         isA<FormatException>().having(
           (e) => e.message,
           'message',
-          contains('`**/` segments'),
+          contains('`**/` in it'),
         ),
       ),
     );
