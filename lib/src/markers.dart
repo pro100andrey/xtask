@@ -76,6 +76,16 @@ final class GitHubMarkers extends LogMarkers {
 
   /// GitHub reads a workflow command up to the end of its line, so a newline
   /// inside one truncates the annotation and prints the rest as plain output.
-  static String _escaped(String message) =>
-      message.replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+  ///
+  /// **`%` first, and the order is the whole rule.** The runner decodes the
+  /// percent escapes it reads back, so leaving `%` alone meant a message that
+  /// already contained `%0A` — a URL-encoded path, a `--name a%0Ab` quoted
+  /// back out of the argv `describe` prints — was decoded into exactly the
+  /// newline this exists to remove, and the annotation stopped there. Escaped
+  /// after the others instead, it would re-escape their own `%` and the reader
+  /// would be shown the text `%0A`.
+  static String _escaped(String message) => message
+      .replaceAll('%', '%25')
+      .replaceAll('\r', '%0D')
+      .replaceAll('\n', '%0A');
 }

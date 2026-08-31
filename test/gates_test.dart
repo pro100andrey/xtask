@@ -138,6 +138,69 @@ tasks:
       expect(planGate(file, 'check').names, hasLength(3));
     });
 
+    test('a member another member continues into waits for it', () {
+      // Seeded in declaration order, `verify` went first because it was
+      // WRITTEN first — ahead of the task whose `then:` reaches it, and with
+      // no continuation on it, so a failed verification answered 1 rather
+      // than §5.3's code and a failed publish was announced anyway. `planRun`
+      // had the order right the whole time, which left `xtask publish` and
+      // `xtask release` describing two different runs of the same tasks.
+      final file = parseXtaskFile('''
+version: 1
+gates: [release]
+tasks:
+  verify: {desc: check what went out, gate: [release], run: [dart]}
+  publish: {desc: upload, gate: [release], then: [verify], run: [dart]}
+''');
+      expect(planGate(file, 'release').names, ['publish', 'verify']);
+      expect(planGate(file, 'release').names, planRun(file, 'publish').names);
+      expect(planGate(file, 'release').steps.last.continuationOf, 'publish');
+    });
+
+    test('and it waits through a chain of them, however it was written', () {
+      final file = parseXtaskFile('''
+version: 1
+gates: [release]
+tasks:
+  announce: {desc: say so, gate: [release], run: [dart]}
+  verify: {desc: check, gate: [release], then: [announce], run: [dart]}
+  publish: {desc: upload, gate: [release], then: [verify], run: [dart]}
+''');
+      expect(planGate(file, 'release').names, [
+        'publish',
+        'verify',
+        'announce',
+      ]);
+    });
+
+    test('a member reached only through `needs:` keeps declaration order', () {
+      // The deferral is about `then:` alone. A member something else needs
+      // comes out in front of it either way, so moving it would overrule the
+      // order §4.3 says the author chose.
+      final file = parseXtaskFile('''
+version: 1
+gates: [check]
+tasks:
+  install: {desc: fetch, gate: [check], run: [dart]}
+  a: {desc: x, gate: [check], needs: [install], run: [dart]}
+''');
+      expect(planGate(file, 'check').names, ['install', 'a']);
+    });
+
+    test('a ring of `then:` among members is planned, not refused', () {
+      // Every member defers to another, so nothing is left to seed first.
+      // `xtask a` runs this file without complaint; a gate set holding the
+      // same tasks must not be the one thing that cannot.
+      final file = parseXtaskFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, gate: [check], then: [b], run: [dart]}
+  b: {desc: y, gate: [check], then: [a], run: [dart]}
+''');
+      expect(planGate(file, 'check').names, ['a', 'b']);
+    });
+
     test('a gate set nothing is in plans nothing', () {
       // `--validate` refuses this file; the planner still has to answer
       // rather than throw, because `--gate-members` reads the same data.
@@ -190,6 +253,15 @@ tasks:
       final lines = markers.error('first\nsecond');
       expect(lines.last, '::error::first%0Asecond');
       expect(lines.last, isNot(contains('\n')));
+    });
+
+    test('and a message that already reads as an escape is escaped too', () {
+      // The runner DECODES what it reads back. A message quoting an argument
+      // — `--name a%0Ab`, which `describe` prints verbatim — was handed over
+      // untouched, decoded into the newline the escaping exists to remove,
+      // and truncated at exactly the point it was written to survive.
+      final lines = markers.error('run dart test --name a%0Ab');
+      expect(lines.last, '::error::run dart test --name a%250Ab');
     });
   });
 

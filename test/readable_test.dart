@@ -104,6 +104,19 @@ void main() {
       expect(refusalOf("a: 'a\u00A0b'\n"), isNull);
     });
 
+    test('and not inside a comment, where YAML reads no structure at all', () {
+      // Both halves of the refusal are false about a comment: nothing there is
+      // indentation, and YAML would not have complained about the structure
+      // several lines down because it does not read one. A narrow no-break
+      // space pasted into a line of prose — which is where prose gets pasted —
+      // refused the whole file and explained it in terms of indentation.
+      expect(
+        refusalOf('version: 1\n# a note with a\u00A0nbsp\ntasks: {}\n'),
+        isNull,
+      );
+      expect(refusalOf('a: b # note\u2003here\n'), isNull);
+    });
+
     test('and a non-printable character has no meaning at all', () {
       expect(refusalOf('a: b\n\u0000\n'), contains('non-printable'));
       expect(
@@ -111,6 +124,27 @@ void main() {
         isNull,
         reason: 'tab, carriage return and newline are ordinary',
       );
+    });
+  });
+
+  group('a byte-order mark at the start of the file is not a stray one', () {
+    test('it is removed rather than refused', () {
+      // It is what Notepad and older Visual Studio write, on a project whose
+      // own CI runs windows-latest.
+      expect(withoutByteOrderMark('\uFEFFversion: 1\n'), 'version: 1\n');
+    });
+
+    test(
+      'and only at the start, because anywhere else it is a stray space',
+      () {
+        expect(withoutByteOrderMark('version: 1\n'), 'version: 1\n');
+        expect(withoutByteOrderMark('a: \uFEFFb\n'), 'a: \uFEFFb\n');
+        expect(refusalOf('a: \uFEFFb\n'), contains('U+FEFF'));
+      },
+    );
+
+    test('and an empty file is left alone', () {
+      expect(withoutByteOrderMark(''), '');
     });
   });
 

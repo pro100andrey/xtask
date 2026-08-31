@@ -189,6 +189,32 @@ tasks: {}
       expect((expanded['third'] as YamlMap)['desc'], 'shared');
     });
 
+    test('a byte-order mark is removed before either reader sees it', () {
+      // What Notepad and older Visual Studio write, on a project whose own CI
+      // runs windows-latest. The scan refused it as whitespace pasted from a
+      // document, about a character no editor shows; passed through instead it
+      // would be worse, because `package:yaml` does not skip one either and
+      // the column it occupies puts the first key one column in — so the
+      // second top-level key is less indented than the first and the file
+      // comes back as `Only expected one document`.
+      final file = parseXtaskFile(
+        '\uFEFFversion: 1\ntasks:\n  a: {desc: x, run: [dart]}\n',
+      );
+      expect(file.tasks.keys, ['a']);
+    });
+
+    test('and the span still points at the line it points at', () {
+      // Every offset is into the string the document is parsed from, so the
+      // mark cannot put the scan and the parser one character out of step.
+      final message = refusalOf(
+        () => parseXtaskFile(
+          '\uFEFFversion: 1\ntasks:\n  base: &b {desc: shared}\n',
+        ),
+      );
+      expect(message, contains('anchor'));
+      expect(message, contains('line 3'));
+    });
+
     test('a merge key is refused as itself, not as an unknown key', () {
       final message = refusalOf(
         () => parseXtaskFile(
@@ -765,6 +791,59 @@ tasks: {}
     });
   });
 
+  group('a name is one line, exactly as the `desc:` beside it is', () {
+    // `desc:` was refused for running past one line because `--list` prints it
+    // beside the name; the name itself was not, so a task could be called
+    // `a\nb`. `--gate-members` writes one name per line, `--list` pads a
+    // column with it, and a `::group::` is a workflow command GitHub reads to
+    // the end of ITS line — so §7.1's fold opened on `a` and the runner
+    // printed `b` as a stray line of output.
+    String refusalOf(String yaml) {
+      try {
+        parseXtaskFile(yaml);
+      } on XtaskFormatException catch (e) {
+        return e.message;
+      }
+      fail('expected a refusal, got none');
+    }
+
+    test('a task name that runs to two is refused', () {
+      final message = refusalOf(
+        'version: 1\ntasks:\n  "a\\nb": {desc: d, run: [echo]}\n',
+      );
+      expect(message, contains('a task name'));
+      expect(message, contains('more than one line'));
+    });
+
+    test('and so are the other three names read the same way', () {
+      expect(
+        refusalOf('version: 1\ngates: ["a\\nb"]\ntasks: {}\n'),
+        contains('a gate name'),
+      );
+      expect(
+        refusalOf('version: 1\nsets:\n  "a\\nb": [x]\ntasks: {}\n'),
+        contains('a set name'),
+      );
+      expect(
+        refusalOf(
+          'version: 1\ntasks:\n'
+          '  a: {desc: d, run: [echo], env: {"A\\nB": v}}\n',
+        ),
+        contains('an environment variable name'),
+      );
+    });
+
+    test(
+      'and a carriage return counts, because a host reads to the line end',
+      () {
+        expect(
+          refusalOf('version: 1\ntasks:\n  "a\\rb": {desc: d, run: [echo]}\n'),
+          contains('more than one line'),
+        );
+      },
+    );
+  });
+
   group('a task whose keys contradict each other', () {
     String refusalOf(String yaml) {
       try {
@@ -808,6 +887,22 @@ tasks: {}
       expect(message, contains(r'never writes `$all`'));
       expect(message, contains('both `each:` and `all:`'));
       expect(message, contains(r'never writes `$each`'));
+    });
+
+    test('and a deadline on a body that cannot honour one is too', () {
+      // These two were the last cross-key rules still throwing one at a time,
+      // ahead of the collector: a `timeout:` on a `do:`, an `interruptible:`
+      // beside it and a stray marker cost three rounds of fix-and-rerun for
+      // three mistakes of the same kind.
+      final message = refusalOf(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, do: regen, timeout: 5, interruptible: true,'
+        r' exclusive: [lock-$each]}'
+        '\n',
+      );
+      expect(message, contains('inside the verb'));
+      expect(message, contains('a promise nothing keeps'));
+      expect(message, contains('no member for a marker to stand for'));
     });
 
     test('and one contradiction still reads as one sentence', () {

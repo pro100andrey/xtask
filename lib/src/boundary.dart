@@ -59,6 +59,26 @@ String workingDirectoryLeavesRoot({
     'that runs somewhere the repository does not own is not something this '
     'file can vouch for';
 
+/// Why a verb's own working directory is refused on task [task].
+///
+/// **The third place a written string becomes a path, and the one that had no
+/// guard.** [leavesRoot] says of itself that every such place calls it; `in:`
+/// calls it twice, once when a run reaches the task and once from
+/// `--validate`. A verb asking to start a program somewhere — the escape hatch
+/// added so that a verb which runs a program keeps §5.4's answers — joined its
+/// argument onto the root and asked nothing, so `../../..` started the child
+/// at the filesystem root and the run answered 0.
+///
+/// A verb is Dart rather than YAML, so this names the task and quotes what the
+/// verb asked for: the person reading it has to find a call, not a key.
+String verbDirectoryLeavesRoot({
+  required String task,
+  required String written,
+}) =>
+    'task `$task` runs a verb that asked to start a program in `$written`, '
+    'which reaches outside the repository. A working directory is relative to '
+    'the root and stays there, whether the file wrote it or a verb did';
+
 /// The name `remove` is written under in `do:`.
 ///
 /// Spelled once, because four things name it: the closed list of built-in

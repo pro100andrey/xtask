@@ -43,7 +43,64 @@ List<XtaskFormatException> incoherences(Task task) => [
   ..._allMarker(task),
   ..._eachMarker(task),
   ..._markerInExclusive(task),
+  ..._bodyCannotHonourIt(task),
 ];
+
+/// A deadline or a stop written on a body that cannot be given one.
+///
+/// **A `run:` body only, for both keys.** A verb is a Dart function and Dart
+/// cannot stop one from outside: a `timeout:` would pass while the verb went
+/// on writing to the disk, and `interruptible:` would be a promise nothing
+/// keeps. A composite has no body at all, so neither key has anything to be
+/// about — its `needs:` are their own tasks and answer for themselves.
+///
+/// **Here rather than in the parser, which is the whole of what changed.**
+/// These are two keys read against a third, which is the shape of every rule
+/// in this file, and written as throws they hid the rest: a task with a
+/// `timeout:` on a `do:`, an `interruptible:` beside it and a stray `$each`
+/// reported one of the three, then the next, then the last — the three rounds
+/// of fix-and-rerun this module was made to end, inside the module's own
+/// subject.
+Iterable<XtaskFormatException> _bodyCannotHonourIt(Task task) sync* {
+  final name = task.name;
+  if (task.timeout != null) {
+    if (task.body is DoBody) {
+      yield XtaskFormatException(
+        'task `$name` puts a `timeout:` on a `do:`, and the engine cannot '
+        'honour it: a verb is a Dart function and nothing outside it can stop '
+        'one, so the limit would pass while the verb kept running. Put the '
+        'deadline inside the verb, which is where logic belongs',
+        task.span,
+      );
+    }
+    if (task.body == null) {
+      yield XtaskFormatException(
+        'task `$name` has a `timeout:` and no body to spend it, so there is '
+        'nothing for the limit to be a limit on',
+        task.span,
+      );
+    }
+  }
+  if (!task.interruptible) {
+    return;
+  }
+  if (task.body is DoBody) {
+    yield XtaskFormatException(
+      'task `$name` is `interruptible:` and its body is a verb. Stopping '
+      'one means stopping a Dart function from outside, which cannot be done — '
+      'the flag would be a promise nothing keeps',
+      task.span,
+    );
+  }
+  if (task.body == null) {
+    yield XtaskFormatException(
+      'task `$name` is `interruptible:` and has no body to stop, so there '
+      'is nothing for the flag to be about. Its `needs:` are their own tasks '
+      'and say for themselves whether they may be stopped',
+      task.span,
+    );
+  }
+}
 
 /// A marker written in `exclusive:`, where nothing can substitute it.
 ///

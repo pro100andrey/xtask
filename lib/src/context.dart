@@ -94,10 +94,19 @@ final class VerbContext {
   /// batch shim, and the exit code that says a tool is missing rather than
   /// broken. Half an escape hatch is not one.
   ///
-  /// The [workingDirectory] parameter defaults to the context's own, which
-  /// under `each:` is already the member's.
+  /// [workingDirectory] is a path from the repository root, written the way
+  /// the file writes one — and left as null it is the task's own, which under
+  /// `each:` is already the member's.
+  ///
+  /// **Passed through as written, not defaulted here.** Filling it in with
+  /// [workingDirectory] made every call arrive at the engine holding an
+  /// absolute path it had already resolved, which is indistinguishable from a
+  /// verb that wrote one — so the boundary the engine draws around the root
+  /// could not be drawn at all without refusing the ordinary call. The engine
+  /// applies the same default one layer down, where it can still tell the two
+  /// apart.
   Future<int> run(List<String> argv, {String? workingDirectory}) =>
-      start(argv, workingDirectory: workingDirectory ?? this.workingDirectory);
+      start(argv, workingDirectory: workingDirectory);
 }
 
 /// Starting a process, as a seam.

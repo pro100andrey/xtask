@@ -14,16 +14,21 @@ import 'readable.dart';
 /// `graph` and `sets`, and keeping them out of here is what stops this
 /// function from quietly becoming the whole engine.
 XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
+  // Ahead of both readers, so that the scan and the parser are looking at the
+  // same string — a mark left in for one of them is a span the other cannot
+  // place.
+  final text = withoutByteOrderMark(source);
+
   // Before the parser, because afterwards there is nothing left to see: by the
   // time an [XtaskFile] exists, `package:yaml` has already expanded every
   // alias into a copy and the evidence is gone. §8 specifies this as a scan of
   // the raw text for exactly that reason, and this is the only function that
   // ever holds the raw text.
-  refuseUnreadableSyntax(source, sourceUrl);
+  refuseUnreadableSyntax(text, sourceUrl);
 
   final YamlNode document;
   try {
-    document = loadYamlNode(source, sourceUrl: sourceUrl);
+    document = loadYamlNode(text, sourceUrl: sourceUrl);
   } on YamlException catch (e) {
     // The underlying parser's own complaint, kept with its span rather than
     // re-worded: it knows better than this layer what it could not read.
@@ -225,7 +230,7 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     span: keySpan,
     desc: _description(desc, name),
     body: body,
-    timeout: _timeout(map, name, body),
+    timeout: _timeout(map, name),
     args: List.unmodifiable(_optionalStringList(map, 'args', name)),
     all: _optionalString(map, 'all', name),
     each: _optionalString(map, 'each', name),
@@ -238,7 +243,7 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     then: _names(map, 'then', name),
     gate: _names(map, 'gate', name),
     serial: _flag(map, 'serial', 'task `$name`'),
-    interruptible: _interruptible(map, name, body),
+    interruptible: _flag(map, 'interruptible', 'task `$name`'),
     exclusive: _names(map, 'exclusive', name),
   );
   _refuseIncoherent(task);
@@ -276,34 +281,6 @@ void _refuseIncoherent(Task task) {
 /// **A `run:` body only, for `timeout:`'s reason.** Stopping a verb means
 /// stopping a Dart function from outside, which Dart cannot do — the flag
 /// would read as a promise and the verb would carry on writing to the disk.
-bool _interruptible(YamlMap map, String taskName, Body? body) {
-  final asked = _flag(map, 'interruptible', 'task `$taskName`');
-  if (!asked) {
-    return asked;
-  }
-  if (body is DoBody) {
-    throw XtaskFormatException(
-      'task `$taskName` is `interruptible:` and its body is a verb. Stopping '
-      'one means stopping a Dart function from outside, which cannot be done — '
-      'the flag would be a promise nothing keeps',
-      map.nodes['interruptible']!.span,
-    );
-  }
-  if (body == null) {
-    // **The same refusal `timeout:` gives, which this was missing.** Twelve
-    // lines below, on the identical argument, a `timeout:` with no body is
-    // refused as a limit on nothing. A composite has no body to stop either,
-    // so the key read as a guarantee that was being made and was not.
-    throw XtaskFormatException(
-      'task `$taskName` is `interruptible:` and has no body to stop, so there '
-      'is nothing for the flag to be about. Its `needs:` are their own tasks '
-      'and say for themselves whether they may be stopped',
-      map.nodes['interruptible']!.span,
-    );
-  }
-  return asked;
-}
-
 /// A boolean key, refused rather than coerced.
 ///
 /// `serial: yes` is a string in YAML 1.2 and would be truthy in a language
@@ -324,14 +301,12 @@ bool _flag(YamlMap map, String key, String owner) {
   );
 }
 
-/// `timeout:` in seconds, refused where it cannot be honoured.
+/// `timeout:` in seconds — the number itself.
 ///
-/// **A `run:` body only, and refused rather than half-applied on a verb.** A
-/// verb is a Dart function, and Dart cannot stop one from outside: a deadline
-/// would report a timeout while the verb carried on writing to the disk. A
-/// verb that wants a deadline is the place to implement one — R1 put the logic
-/// there deliberately.
-int? _timeout(YamlMap map, String taskName, Body? body) {
+/// Which body may carry one is `coherence.dart`'s question, asked with the
+/// rest of them: it reads `timeout:` against `do:`, which is a key against a
+/// key, and this module answers about types.
+int? _timeout(YamlMap map, String taskName) {
   final node = map.nodes['timeout'];
   if (node == null) {
     return null;
@@ -349,22 +324,6 @@ int? _timeout(YamlMap map, String taskName, Body? body) {
     throw XtaskFormatException(
       '`timeout:` of task `$taskName` is $value, which is not a length of '
       'time. Leave it out to run without a limit',
-      node.span,
-    );
-  }
-  if (body is DoBody) {
-    throw XtaskFormatException(
-      'task `$taskName` puts a `timeout:` on a `do:`, and the engine cannot '
-      'honour it: a verb is a Dart function and nothing outside it can stop '
-      'one, so the limit would pass while the verb kept running. Put the '
-      'deadline inside the verb, which is where logic belongs',
-      node.span,
-    );
-  }
-  if (body == null) {
-    throw XtaskFormatException(
-      'task `$taskName` has a `timeout:` and no body to spend it, so there is '
-      'nothing for the limit to be a limit on',
       node.span,
     );
   }
@@ -537,6 +496,22 @@ String _name(YamlNode key, String what) {
       'the file has $what that is empty. A name is what a report prints and '
       'what something else writes to reach it, and neither works with nothing '
       'there',
+      key.span,
+    );
+  }
+  if (value.contains('\n') || value.contains('\r')) {
+    // **The same rule `desc:` is held to, on the other half of the same
+    // line.** A description is refused for running past one line because
+    // `--list` prints it beside the name; the name was not, so
+    // `"a\nb": {…}` parsed. `--gate-members` writes one name per line and
+    // `--list` pads a column with it, and a `::group::` is a workflow command
+    // GitHub reads to the end of ITS line — so §7.1's fold opened on `a` and
+    // the runner printed `b` as a stray line of output.
+    throw XtaskFormatException(
+      'the file has $what that runs to more than one line. A name is printed '
+      'on one and typed on one — `--list` pads a column with it and a CI host '
+      'reads a section marker to the end of the line — so it is one line by '
+      'contract, exactly as the `desc:` beside it is',
       key.span,
     );
   }

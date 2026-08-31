@@ -1995,6 +1995,39 @@ void main() {
       );
     });
 
+    test('and a directory outside the repository is refused', () async {
+      // `boundary.dart` says the fence is one function, and that every place
+      // turning a written string into a path calls it. This was the third such
+      // place and the only one that called nothing: `p.join` walks straight up
+      // a `..`, so the child started at the filesystem root and the run
+      // answered 0. Code 2 for the reason `remove` answers 2 on the same
+      // question — the project is wrong about what it owns.
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) =>
+              context.run(['ruff'], workingDirectory: '../../..'),
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(starter.started, isEmpty);
+      expect(logged.join('\n'), contains('outside the repository'));
+    });
+
+    test('and so is an absolute one', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) =>
+              context.run(['ruff'], workingDirectory: '/etc'),
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(starter.started, isEmpty);
+    });
+
     test('and a program it cannot find is still code 3', () async {
       final code = await runFile(
         'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',

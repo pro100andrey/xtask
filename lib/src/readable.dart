@@ -31,8 +31,33 @@ const _invisibleSpace = {
   0x202F, // narrow no-break space
   0x205F, // medium mathematical space
   0x3000, // ideographic space
-  0xFEFF, // zero-width no-break space, i.e. a stray byte-order mark
+  0xFEFF, // zero-width no-break space, i.e. a byte-order mark adrift
 };
+
+/// U+FEFF, which is a byte-order mark at the start of a file and a stray
+/// zero-width space anywhere else.
+const _byteOrderMark = 0xFEFF;
+
+/// [source] without a leading byte-order mark.
+///
+/// **Removed rather than refused, and rather than allowed.** A BOM is what
+/// Notepad and older Visual Studio write, on a project whose own CI runs
+/// `windows-latest`, so the file that carries one is an ordinary file. Refused
+/// as invisible whitespace it was a sentence about text pasted from a
+/// document, about a character no editor shows. Passed through untouched it
+/// was worse: `package:yaml` does not skip one either, and the column it
+/// occupies puts the first key one column in — so a second top-level key is
+/// then less indented than the first, and a two-key file comes back as
+/// `Only expected one document`, pointing at the line after the mistake.
+///
+/// Every offset downstream is into the string this returns, which is the
+/// string the document is parsed from too, so nothing can disagree about a
+/// span. It is one column adrift from the bytes on disk, on the first line
+/// only, and no editor draws that column anyway.
+String withoutByteOrderMark(String source) =>
+    source.isNotEmpty && source.codeUnitAt(0) == _byteOrderMark
+    ? source.substring(1)
+    : source;
 
 /// Where a YAML node begins, and therefore where `&` and `*` are indicators
 /// rather than ordinary characters.
@@ -120,15 +145,10 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
   for (var i = 0; i < source.length; i++) {
     final c = source.codeUnitAt(i);
 
-    if (_invisibleSpace.contains(c) && !inSingle && !inDouble) {
-      refuse(
-        i,
-        'this is U+${c.toRadixString(16).toUpperCase().padLeft(4, '0')}, not a '
-        'space — it was almost certainly pasted from a document. YAML would '
-        'have complained about the structure several lines from here instead',
-      );
-    }
     if (c < 0x20 && c != 0x09 && c != 0x0A && c != 0x0D) {
+      // Asked everywhere, comments and quotes included. A control character is
+      // not text in any of them, and this sentence promises nothing about what
+      // YAML would have said in its place.
       refuse(i, 'a non-printable character has no meaning in this file');
     }
 
@@ -153,6 +173,22 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
         inDouble = false;
       }
       continue;
+    }
+
+    // **After the comment and the quotes, not before them.** The rule is that
+    // an invisible space is indentation nobody can see, and the sentence it
+    // refuses with promises YAML would have complained about the structure
+    // instead. Inside a `#` comment neither half is true — YAML reads no
+    // structure there at all — so a narrow no-break space in a line of prose,
+    // which is exactly where prose gets pasted, refused the whole file and
+    // explained itself in terms of indentation that was never in question.
+    if (_invisibleSpace.contains(c)) {
+      refuse(
+        i,
+        'this is U+${c.toRadixString(16).toUpperCase().padLeft(4, '0')}, not a '
+        'space — it was almost certainly pasted from a document. YAML would '
+        'have complained about the structure several lines from here instead',
+      );
     }
 
     switch (c) {

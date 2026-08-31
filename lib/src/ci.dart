@@ -658,22 +658,37 @@ List<String> _commandLines(String command) {
 /// shellcheck's findings against the `run:` key rather than the line. The
 /// text is enough, because the marker is in it.
 String? _exemptionIn(String line) {
-  final marker = line.indexOf(exemptionMarker);
-  if (marker == -1) {
-    return null;
+  if (_commentOpensAt(line) case final opens?) {
+    final comment = line.substring(opens);
+    final marker = comment.indexOf(exemptionMarker);
+    if (marker != -1) {
+      return _reasonAfter(comment.substring(marker + exemptionMarker.length));
+    }
   }
-  return _reasonAfter(line.substring(marker + exemptionMarker.length));
+  return null;
 }
 
-/// [line] without a trailing `#` comment, so a marker is not read as argv.
-String _withoutTrailingComment(String line) {
-  // **Not the first `#`, and not one inside quotes.** Cut blindly, `echo "a #
-  // b"` was reported as `echo "a` — a fragment nobody wrote — and `xtask
-  // check -- --tag "#fast"` became `xtask check -- --tag "`, which parses as
-  // a gate set handed arguments and was refused for it.
+/// Where a `#` comment opens on [line], or null if none does.
+///
+/// **One reading of one `#`, because two of them disagreed.** The exemption
+/// was looked for with `indexOf` over the whole line while the argv beside it
+/// was cut by a scan that tracked quotes, so the same `#` on the same line was
+/// a comment to one and text to the other — and the disagreement resolved in
+/// the direction that turns a finding into a pass: `run: echo '# xtask: not a
+/// gate - pretend'` exempted the step that was printing it. [ExemptsNothing]
+/// and [ExemptsWithoutSaying] are both about a marker that does not mean what
+/// it looks like; this was the third way, and it looked like a green job.
+///
+/// **Not the first `#`, and not one inside quotes.** Cut blindly, `echo "a #
+/// b"` was reported as `echo "a` — a fragment nobody wrote — and `xtask
+/// check -- --tag "#fast"` became `xtask check -- --tag "`, which parses as
+/// a gate set handed arguments and was refused for it. A comment opens where
+/// the line does or after whitespace, which is the rule a shell and YAML both
+/// use: `red#1` is one word to either of them.
+int? _commentOpensAt(String line) {
   var single = false;
   var double = false;
-  for (var i = 0; i < line.length - 1; i++) {
+  for (var i = 0; i < line.length; i++) {
     switch (line[i]) {
       case "'":
         if (!double) {
@@ -683,14 +698,21 @@ String _withoutTrailingComment(String line) {
         if (!single) {
           double = !double;
         }
-      case ' ':
-        if (!single && !double && line[i + 1] == '#') {
-          return line.substring(0, i).trimRight();
+      case '#':
+        final opens = i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t';
+        if (!single && !double && opens) {
+          return i;
         }
     }
   }
-  return line;
+  return null;
 }
+
+/// [line] without a trailing `#` comment, so a marker is not read as argv.
+String _withoutTrailingComment(String line) => switch (_commentOpensAt(line)) {
+  final opens? => line.substring(0, opens).trimRight(),
+  null => line,
+};
 
 /// The reason written beside the `run:` key at [span], if there is one.
 ///

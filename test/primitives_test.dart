@@ -261,6 +261,28 @@ void main() {
     });
   });
 
+  group('the answer is sorted, whatever the arguments look like', () {
+    test('literals alone come back in order, not in written order', () {
+      // The invariant is stated where the walk sorts — everything sorts,
+      // literals included — and the early answer for a call with no glob in it
+      // was the one place it did not hold. So `remove` printed one order for
+      // `[coverage, build]` and another for `[coverage, build, '**/*.tmp']`,
+      // and a `--dry-run` of one block could not be compared with another's.
+      expect(pathsMatchingAll(['coverage', 'build'], root: root.path), [
+        'build',
+        'coverage',
+      ]);
+    });
+
+    test('and a glob beside them does not change the order of the rest', () {
+      given(['a.tmp']);
+      expect(
+        pathsMatchingAll(['coverage', 'build', '**/*.tmp'], root: root.path),
+        ['a.tmp', 'build', 'coverage'],
+      );
+    });
+  });
+
   group('a pattern that will not compile is a sentence, not a stack trace', () {
     test('the verb says which argument and why', () async {
       // Uncaught, `[` left the verb as a raw `FormatException` whose "line 1,

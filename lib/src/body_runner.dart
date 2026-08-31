@@ -196,7 +196,7 @@ final class BodyRunner {
   Future<int> _startForVerb(
     Resolved body,
     List<String> argv,
-    String workingDirectory,
+    String? written,
     void Function(String line)? sink,
   ) {
     if (argv.isEmpty) {
@@ -205,6 +205,7 @@ final class BodyRunner {
         'verb of task `${body.task.name}` asked to run nothing',
       );
     }
+    final workingDirectory = _verbDirectory(body, written);
     final executable = bodies.resolver.resolve(
       argv.first,
       from: workingDirectory,
@@ -238,6 +239,32 @@ final class BodyRunner {
     );
   }
 
+  /// Where a verb's own process starts, refusing what the root does not own.
+  ///
+  /// Relative to the repository root, as every other path in the file is —
+  /// `in: packages/a` and this must mean one thing. Against the process's own
+  /// directory it worked from the root and quietly targeted somewhere else
+  /// from a subdirectory, which is a supported way to run xtask.
+  ///
+  /// **And asked [leavesRoot], which is the half that was missing.** Joining
+  /// onto the root is not a fence: `p.join` walks straight up a `..`, so a
+  /// verb could start a child anywhere on the machine and the run answered 0.
+  /// Code 2 rather than 1, for the reason `remove` answers 2 on the same
+  /// question — a path outside the repository is the project being wrong
+  /// about what it owns, not a task that ran and failed.
+  String _verbDirectory(Resolved body, String? written) {
+    if (written == null) {
+      return body.workingDirectory;
+    }
+    if (leavesRoot(written)) {
+      throw RunFailure(
+        ExitCode.invalidFile,
+        verbDirectoryLeavesRoot(task: body.task.name, written: written),
+      );
+    }
+    return underRoot(bodies.root, written);
+  }
+
   /// Does what [body] resolved to, and answers with its exit code.
   Future<int> _perform(Resolved body, void Function(String line)? sink) {
     final say = sink ?? log;
@@ -253,19 +280,8 @@ final class BodyRunner {
             // The same resolution and the same starter a `run:` body gets, so
             // a verb that runs a program keeps §5.4's answers rather than
             // reaching for `Process.start` and losing them.
-            start: (argv, {workingDirectory}) => _startForVerb(
-              body,
-              argv,
-              // Relative to the repository root, as every other path in the
-              // file is — `in: packages/a` and this must mean one thing.
-              // Against the process's own directory it worked from the root
-              // and quietly targeted somewhere else from a subdirectory,
-              // which is a supported way to run xtask.
-              workingDirectory == null
-                  ? body.workingDirectory
-                  : underRoot(bodies.root, workingDirectory),
-              sink,
-            ),
+            start: (argv, {workingDirectory}) =>
+                _startForVerb(body, argv, workingDirectory, sink),
           ),
         );
 

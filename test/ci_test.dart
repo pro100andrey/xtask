@@ -408,6 +408,27 @@ jobs:
       );
     });
 
+    test('but a marker inside a quoted string exempts nothing', () {
+      // The two readings of one `#` disagreed: the argv was cut by a scan that
+      // tracked quotes and the exemption was found with `indexOf` over the raw
+      // line, so a step could exempt itself by PRINTING the marker — and the
+      // disagreement resolved in the direction that turns a finding into a
+      // pass. `ExemptsNothing` and `ExemptsWithoutSaying` are both about a
+      // marker that does not mean what it looks like; this was the third way.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: |
+          echo '# xtask: not a gate - pretend'
+''');
+      final found = check();
+      expect(found.exempted, isEmpty);
+      expect(found.problems, isNotEmpty);
+      expect(said().single, contains('pretend'));
+    });
+
     test(
       'and a trailing marker in a block does not reach the line under it',
       () {

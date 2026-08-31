@@ -129,7 +129,13 @@ List<String> pathsMatchingAll(
     (_looksLikeGlob(argument) ? patterns : literals).add(argument);
   }
   if (patterns.isEmpty) {
-    return literals;
+    // Sorted here too. The invariant is stated at the `..sort()` below —
+    // everything sorts, literals included — and this early answer was the one
+    // place it did not hold: `remove` printed `coverage, build` in written
+    // order, and `coverage, build, '**/*.tmp'` sorted, so whether one
+    // `remove` block's `--dry-run` could be compared with another's turned on
+    // an unrelated argument having a `*` in it.
+    return literals..sort();
   }
 
   // **Read the same way `sets:` reads it.** This compiled the argument raw,
