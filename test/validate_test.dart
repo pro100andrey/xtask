@@ -71,6 +71,25 @@ void main() {
       expect(report.problems, hasLength(3));
     });
 
+    test('and the members of a set those arguments stand for', () {
+      // `$all` and `$each` stand for what a set holds, and a `values:` set is
+      // exempt from the boundary everywhere else — its members are not paths.
+      // Fed to the one verb that deletes they are, and this answered "nothing
+      // wrong" about a file `--dry-run` and the run both refuse.
+      final report = validateFile(
+        parseXtaskFile(
+          'version: 1\n'
+          "sets:\n  danger:\n    values: ['/etc', 'build']\n"
+          'tasks:\n'
+          r'  wipe: {desc: x, do: remove, all: danger, args: [$all]}'
+          '\n',
+        ),
+        knownVerbs: const {'remove'},
+      );
+      expect(report.ok, isFalse);
+      expect('$report', contains('/etc'));
+    });
+
     test('and says nothing about arguments that stay inside', () {
       expect(check("['build', 'coverage']").ok, isTrue);
     });

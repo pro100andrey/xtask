@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -211,5 +212,49 @@ void main() {
         expect(await runXtask(['a'], workingDirectory: root.path), 2);
       },
     );
+  });
+
+  group('a reader that goes away is an ordinary end', () {
+    // `xtask check | head -1` ran no tasks at all and exited non-zero without
+    // a word: the flush that orders this process's output against an inherited
+    // child threw `EPIPE` before the first child was started, the fan-out
+    // caught it as the body having thrown, and the failure went down the
+    // stdout that had just closed. `xtask check | head` is an ordinary thing
+    // to type.
+    late Directory root;
+
+    setUp(() {
+      root = tempRepo('epipe');
+      File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
+        'version: 1\n'
+        'gates: [check]\n'
+        'tasks:\n'
+        '  one: {desc: a, gate: [check], run: [sh, -c, "touch ran-one"]}\n'
+        '  two: {desc: b, gate: [check], run: [sh, -c, "touch ran-two"]}\n',
+      );
+    });
+
+    Future<int> piped(List<String> args) async {
+      final xtask = await Process.start(
+        Platform.resolvedExecutable,
+        ['run', p.join(Directory.current.path, 'bin', 'xtask.dart'), ...args],
+        workingDirectory: root.path,
+      );
+      final head = await Process.start('head', const ['-1']);
+      unawaited(xtask.stdout.pipe(head.stdin).catchError((Object _) {}));
+      unawaited(xtask.stderr.drain<void>().catchError((Object _) {}));
+      unawaited(head.stdout.drain<void>());
+      await head.exitCode;
+      return xtask.exitCode;
+    }
+
+    bool ran(String marker) => File(p.join(root.path, marker)).existsSync();
+
+    test('every task still runs, and the run still answers 0', () async {
+      final code = await piped(['check']);
+      expect(ran('ran-one'), isTrue, reason: 'the first task never started');
+      expect(ran('ran-two'), isTrue, reason: 'the run stopped at the pipe');
+      expect(code, 0);
+    }, testOn: '!windows');
   });
 }

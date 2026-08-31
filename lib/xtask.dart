@@ -99,7 +99,7 @@ void Function(String line) _writing(IOSink sink) {
       (Object error) => closed = true,
       // Only a closed pipe is claimed; everything else stays unhandled and as
       // loud as it was.
-      test: _isAClosedPipe,
+      test: isAClosedPipe,
     ),
   );
 
@@ -110,19 +110,10 @@ void Function(String line) _writing(IOSink sink) {
     try {
       sink.writeln(line);
     } on FileSystemException catch (error) {
-      if (!_isAClosedPipe(error)) {
+      if (!isAClosedPipe(error)) {
         rethrow;
       }
       closed = true;
     }
   };
 }
-
-/// Whether [error] is the reader having gone away.
-///
-/// `EPIPE` on POSIX; `ERROR_BROKEN_PIPE` and `ERROR_NO_DATA` are what Windows
-/// reports for the same event, and a pipe closed on either is an ordinary end
-/// rather than a fault.
-bool _isAClosedPipe(Object error) =>
-    error is FileSystemException &&
-    const {32, 109, 232}.contains(error.osError?.errorCode);

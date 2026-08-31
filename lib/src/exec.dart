@@ -162,22 +162,31 @@ final class Executor {
     }
 
     final began = now();
-    final code = await _walk(
-      plan,
-      took,
-      failed,
-      skipped,
-      concurrent: concurrent,
-    );
-    timing(
-      took,
-      now().difference(began),
-      _work,
-      concurrent: concurrent,
-    ).forEach(log);
-    // Last, because it is the part somebody has to act on and the terminal
-    // scrolls. The timing above is background; this is the work.
-    summary(failed, skipped).forEach(log);
+    final int code;
+    try {
+      code = await _walk(
+        plan,
+        took,
+        failed,
+        skipped,
+        concurrent: concurrent,
+      );
+    } finally {
+      // **Printed on the way out, whichever way that is.** `_runOne` rethrows
+      // an `XtaskFormatException` for `cli.dart` to answer, and under `-j` it
+      // arrives through `Future.any` and unwinds the walk — so the run left
+      // without a word about the tasks that had already finished, failed or
+      // been skipped, which the summary is the only place that mentions.
+      timing(
+        took,
+        now().difference(began),
+        _work,
+        concurrent: concurrent,
+      ).forEach(log);
+      // Last, because it is the part somebody has to act on and the terminal
+      // scrolls. The timing above is background; this is the work.
+      summary(failed, skipped).forEach(log);
+    }
     return code;
   }
 
@@ -282,15 +291,28 @@ final class Executor {
             ).then((
               code,
             ) {
-              // `removeWhere`, not `remove`: the map's values are futures, so
-              // `remove` hands one back and dropping it is a discarded future.
-              running.removeWhere((running, _) => running == name);
+              // A statement, so the future `remove` hands back is not an
+              // expression to discard. `removeWhere` avoided that too and
+              // paid a scan of the in-flight map per completion for it — and
+              // shadowed the map with its own parameter, which is how the
+              // `written`/`asked` mix-up in `request.dart` happened once
+              // already.
+              unawaited(running.remove(name));
               finished.add(name);
               if (code != null) {
                 // `_runOne` has already written `failed[name]`; this is the
                 // same fact, kept where the admission pass reads it.
                 stopped.add(name);
-                answer ??= code;
+                // **The first failure, in the plan's order — not the first to
+                // finish.** Under `--keep-going` these are different: a
+                // continuation failing early pinned the answer to 4, which
+                // the table reads as "the body succeeded and only a `then:`
+                // after it did not", while an ordinary task failing later was
+                // buried in the summary. 4 is unrecoverable in the wrong
+                // direction, so a plain failure takes the answer from it.
+                if (answer == null || _worseThan(code, answer!)) {
+                  answer = code;
+                }
                 if (!keepGoing) {
                   // **Reaching into what is running, but only where the file
                   // said it may.** A build killed half-way leaves whatever it
@@ -322,6 +344,15 @@ final class Executor {
 
     return answer ?? ExitCode.success;
   }
+
+  /// Whether [code] says something worse about a run than [than].
+  ///
+  /// Only [ExitCode.continuationFailed] is ordered against anything: it is the
+  /// narrow claim — a body ran and something after it did not — and every
+  /// other failure is wider, so any of them replaces it.
+  bool _worseThan(int code, int than) =>
+      than == ExitCode.continuationFailed &&
+      code != ExitCode.continuationFailed;
 
   /// One task, timed, and reported where the mode says to report it.
   Future<int?> _runOne(

@@ -238,8 +238,16 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     );
   }
 
+  // **Sorted, because `listSync` answers in the filesystem's order.** Two
+  // workflows with findings printed in one order on one machine and the other
+  // on the next, so any diff or golden of `--check-ci` was unstable for a
+  // reason nothing in the repository explains. `sets.dart` sorts its own walk
+  // and says why: a walk that descends in that order is a walk whose failure
+  // messages arrive in it too.
+  final files = present.whereType<File>().toList()
+    ..sort((a, b) => a.path.compareTo(b.path));
   final steps = <CiStep>[];
-  for (final workflow in present.whereType<File>()) {
+  for (final workflow in files) {
     final name = p.basename(workflow.path);
     if (!name.endsWith('.yml') && !name.endsWith('.yaml')) {
       continue;
@@ -362,38 +370,16 @@ bool _namesXtask(String word) =>
 /// WHICH runner, for the reason [_namesXtask] is loose about the spelling: the
 /// entry point is the project's, and `dart run`, `npx` and `pnpm exec` are all
 /// somebody's.
-int? _runsXtask(List<String> words, Set<int> lineStarts) {
+int? _runsXtask(List<String> words) {
   for (var at = 0; at < words.length; at++) {
     if (!_namesXtask(words[at])) {
       continue;
     }
-    if (lineStarts.contains(at) || _runsWhatFollows(words[at - 1])) {
+    if (at == 0 || _runsWhatFollows(words[at - 1])) {
       return at;
     }
   }
   return null;
-}
-
-/// Which of [command]'s words begin a line of it.
-///
-/// **A `run: |` block is a script, and a script's lines each start a
-/// command.** Accepting only word zero read `echo hi` then `xtask check` as
-/// one command line and reported a step that does run the gate as a
-/// duplicated command list. This is not splitting the block into commands —
-/// nothing here reads what those lines mean — it is knowing where one could
-/// begin, which is the same thing a shell knows before it reads anything.
-Set<int> _lineStarts(String command) {
-  final starts = <int>{};
-  var at = 0;
-  for (final line in command.split('\n')) {
-    final words = line.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
-    if (words.isEmpty) {
-      continue;
-    }
-    starts.add(at);
-    at += words.length;
-  }
-  return starts;
 }
 
 /// Whether [word] is a thing whose next argument is a command to run.
@@ -479,7 +465,7 @@ StepReading _names(String mode, String what) => (
 /// nothing to say about `--help`, which is not in `modes`.
 StepReading _readStep(String command) {
   final words = command.split(RegExp(r'\s+'));
-  final at = _runsXtask(words, _lineStarts(command));
+  final at = _runsXtask(words);
   if (at == null) {
     return _notAnInvocation;
   }
@@ -572,16 +558,55 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
       }
       if (step['run'] case final String command) {
         final span = step.nodes['run']?.span;
-        yield CiStep(
-          name,
-          '${entry.key}',
-          command.trim(),
-          exemption: _exemptionNear(lines, span, after: previousEnded),
-        );
+        // **One step per line of the block.** GitHub writes the whole `run:`
+        // to a file and runs it as a script, and taking it as one opaque
+        // string made the answer depend on the order inside it: `echo start`
+        // then the gate was refused, the gate then `dart analyze` passed —
+        // the same duplicated command, hidden by being second. A line is
+        // where a command begins, which is the only thing this needs to know
+        // about a script, and a line it misreads is a line somebody exempts.
+        final written = command.split('\n');
+        for (var at = 0; at < written.length; at++) {
+          final line = written[at].trim();
+          if (line.isEmpty || line.startsWith('#')) {
+            continue;
+          }
+          yield CiStep(
+            name,
+            '${entry.key}',
+            _withoutTrailingComment(line),
+            exemption:
+                _exemptionIn(line) ??
+                (at > 0
+                    ? _exemptionIn(written[at - 1])
+                    : _exemptionNear(lines, span, after: previousEnded)),
+          );
+        }
         previousEnded = span?.end.line ?? previousEnded;
       }
     }
   }
+}
+
+/// The reason written on [line] itself, if it carries the marker.
+///
+/// The block's own lines are read here rather than through a span: a block
+/// scalar's indentation is stripped by the parse, so where one of its lines
+/// began in the source is not recoverable — which is why actionlint reports
+/// shellcheck's findings against the `run:` key rather than the line. The
+/// text is enough, because the marker is in it.
+String? _exemptionIn(String line) {
+  final marker = line.indexOf(exemptionMarker);
+  if (marker == -1) {
+    return null;
+  }
+  return _reasonAfter(line.substring(marker + exemptionMarker.length));
+}
+
+/// [line] without a trailing `#` comment, so a marker is not read as argv.
+String _withoutTrailingComment(String line) {
+  final hash = line.indexOf(' #');
+  return hash == -1 ? line : line.substring(0, hash).trimRight();
 }
 
 /// The reason written beside the `run:` key at [span], if there is one.
@@ -624,16 +649,16 @@ String? _exemptionNear(
         lines[at - 1].trimLeft().startsWith('#'))
       lines[at - 1],
   ]) {
-    final marker = line.indexOf(exemptionMarker);
-    if (marker != -1) {
-      // The dash or colon somebody writes between the marker and the reason
-      // is punctuation, and the report supplies its own — kept, it renders as
-      // `exempts \u0060x\u0060 — — the reason`.
-      return line
-          .substring(marker + exemptionMarker.length)
-          .replaceFirst(RegExp(r'^[\s\u2014\u2013:,-]+'), '')
-          .trim();
+    if (_exemptionIn(line) case final reason?) {
+      return reason;
     }
   }
   return null;
 }
+
+/// What somebody wrote after the marker, as the report should print it.
+///
+/// The dash or colon between the marker and the reason is punctuation, and the
+/// report supplies its own — kept, it renders as `exempts `x` — — the reason`.
+String _reasonAfter(String written) =>
+    written.replaceFirst(RegExp(r'^[\s\u2014\u2013:,-]+'), '').trim();

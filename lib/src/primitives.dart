@@ -199,9 +199,12 @@ List<String> pathsMatchingAll(
   if (Directory(root).existsSync()) {
     walk(Directory(root), '');
   }
-  // Sorted, so that what a failure reports is the same on every machine.
-  // Literals keep their place in it, which is what a set's own order already
-  // decided for them.
+  // Sorted, so that what a failure reports and what `--dry-run` printed are
+  // the same on every machine — a walk answers in the filesystem's order, and
+  // this is the one verb where the reader is checking a list against what they
+  // meant. Everything sorts, literals included: the comment here used to claim
+  // they kept the order they were written in, which is what `sets.dart` does
+  // for a list set and is not what this line does.
   return found..sort();
 }
 

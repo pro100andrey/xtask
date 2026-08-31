@@ -279,7 +279,17 @@ Request parseArguments(
     );
     if (joined.isNotEmpty) {
       written.add(joined);
-      operands.add(argument.substring(joined.length + 1));
+      final value = argument.substring(joined.length + 1);
+      if (value.isEmpty) {
+        // As `--gate=` already answered. `--why=` became a request naming the
+        // empty string, and the reader was told there is no task called `` —
+        // a missing name reported where an argument is missing.
+        return ShowUsage(
+          '`$joined` needs a name after it, and there is nothing after the '
+          '`=`',
+        );
+      }
+      operands.add(value);
       continue;
     }
 

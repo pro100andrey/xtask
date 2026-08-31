@@ -39,6 +39,30 @@ const _invisibleSpace = {
 // \n : - [ { ,
 const _nodeStart = <int?>{null, 0x0A, 0x3A, 0x2D, 0x5B, 0x7B, 0x2C};
 
+/// Whether a node can begin after [previous], with [afterSpace] between.
+///
+/// **`-` is an indicator only when something separates it from what follows.**
+/// It was taken as one wherever it appeared, and [previous] skips whitespace,
+/// so `desc: fail-&-report` read the `-` of a hyphenated word as the start of
+/// a block sequence and refused the `&` two characters later as an anchor —
+/// about a description, on punctuation the author has no reason to suspect.
+/// `desc: x -*- y` went the same way. The others need no space: `[&a]` and
+/// `{&a: b}` are anchors as written.
+bool _startsANode(int? previous, bool afterSpace) =>
+    _nodeStart.contains(previous) && (previous != 0x2D || afterSpace);
+
+/// Whether the first thing after [at] that is not a space is a `:`.
+bool _keySeparatorAfter(String source, int at) {
+  for (var i = at; i < source.length; i++) {
+    final c = source.codeUnitAt(i);
+    if (c == 0x20 || c == 0x09) {
+      continue;
+    }
+    return c == 0x3A;
+  }
+  return false;
+}
+
 /// Refuses the syntax §8 names, reading [source] as text.
 ///
 /// Two rules, and both are about a reader being able to trust a task:
@@ -142,7 +166,7 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
         continue;
     }
 
-    if ((c == 0x26 || c == 0x2A) && _nodeStart.contains(previous)) {
+    if ((c == 0x26 || c == 0x2A) && _startsANode(previous, afterSpace)) {
       final anchor = c == 0x26;
       refuse(
         i,
@@ -156,8 +180,17 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
                   'beginning with `*` as an alias, whatever you meant',
       );
     }
+    // **A merge key, and not every `<<`.** Refused wherever it appeared, an
+    // ordinary shift or redirect in a description — `desc: shift a << b` —
+    // was answered with a sentence about inheritance and precedence rules.
+    // `<<` is the merge key only where a key can be, and only when a `:`
+    // follows it; anywhere else YAML reads it as the plain text it is.
     final mergeKey =
-        c == 0x3C && i + 1 < source.length && source.codeUnitAt(i + 1) == 0x3C;
+        c == 0x3C &&
+        i + 1 < source.length &&
+        source.codeUnitAt(i + 1) == 0x3C &&
+        _startsANode(previous, afterSpace) &&
+        _keySeparatorAfter(source, i + 2);
     if (mergeKey) {
       refuse(
         i,

@@ -347,23 +347,65 @@ jobs:
       expect(check().exempted, isEmpty);
     });
 
-    test('and a step that only quotes something still runs its gate', () {
-      // The quote guard was asked of every word in the step, so a block that
-      // echoes a line before running the gate was reported as a duplicated
-      // command list — about a gate already in the task file. It is asked of
-      // the words being parsed, and only of unbalanced quotes.
+    test('a block is read a line at a time, whichever order it is in', () {
+      // Taken as one string, the answer depended on where the gate sat: a
+      // block that echoed first was refused whole, and one that echoed AFTER
+      // the gate passed — the same duplicated command, hidden by being
+      // second. A line is where a command begins, which is all this needs to
+      // know about a script.
       workflow('ci.yml', '''
 jobs:
   a:
     steps:
       - run: |
-          echo "running the gates"
+          echo starting
           dart run :xtask ci-analyze
-      - run: dart run :xtask ci-web -j "2"
+      - run: |
+          dart run :xtask ci-web
+          dart analyze
 ''');
       final found = check();
-      expect(found.problems, isEmpty, reason: '${refusals(found)}');
       expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+      expect(
+        said(),
+        [
+          contains('runs `echo starting`'),
+          contains('runs `dart analyze`'),
+        ],
+        reason: 'both non-gate lines, in either order',
+      );
+    });
+
+    test('and a marker inside a block exempts the line under it', () {
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: |
+          # xtask: not a gate — the banner CI logs are read by
+          echo starting
+          dart run :xtask ci-analyze
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.exempted.single.command, 'echo starting');
+    });
+
+    test('and a marker at the end of a line exempts that line', () {
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: npm ci # xtask: not a gate — deps
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(
+        found.exempted.single.command,
+        'npm ci',
+        reason: 'the marker is a comment, not part of the command',
+      );
     });
 
     test('but an exemption with no reason is refused', () {

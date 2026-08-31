@@ -54,7 +54,23 @@ final class SystemProcessStarter implements ProcessStarter {
     // Concurrency is the only way to have both at once, and concurrency is
     // exactly when nobody inherits.
     if (inherits) {
-      await stdout.flush();
+      try {
+        await stdout.flush();
+      } on FileSystemException catch (error) {
+        // **The reader going away is not this task failing.** Unguarded, the
+        // first flush after `xtask check | head -1` threw `EPIPE`, which the
+        // fan-out catches as the body having thrown — so the gate answered
+        // "task failed" having started no child at all, and said so down the
+        // stdout that had just gone away. A run behind a pipe that closes
+        // early ran nothing and reported nothing.
+        //
+        // There is no ordering left to buy here: ordering matters because the
+        // child writes to this stdout too, and nobody is reading either of
+        // them.
+        if (!isAClosedPipe(error)) {
+          rethrow;
+        }
+      }
     }
 
     // **Held, not dropped.** The two subscriptions below outlive the process:
@@ -74,12 +90,6 @@ final class SystemProcessStarter implements ProcessStarter {
       workingDirectory: workingDirectory,
       environment: environment,
       runInShell: runInShell,
-      // **Streaming, by not being in the way.** §5.2 requires a task's output
-      // to pass through as it arrives and never be buffered to the end,
-      // because a long test run has to be watchable. Inheriting the streams
-      // gives that for nothing: the child writes to this process's own stdout,
-      // with no copy, no line buffer and nothing to get the ordering of two
-      // streams wrong.
       // **Streaming by not being in the way, unless somebody asked for
       // parallelism.** Inheriting gives §5.2's promise for nothing: the child
       // writes to this process's own stdout, with no copy, no line buffer and
@@ -89,6 +99,17 @@ final class SystemProcessStarter implements ProcessStarter {
       // by not seeing anything until the task ends.
       mode: inherits ? ProcessStartMode.inheritStdio : ProcessStartMode.normal,
     );
+
+    if (!inherits) {
+      // **Closed, because nobody is ever going to write to it.** A piped child
+      // gets a pipe for stdin that this process holds open and never fills, so
+      // a program that reads stdin when it is not a terminal — a prompt, a
+      // `read`, a tool taking a patch — waits for input that cannot come while
+      // `await process.exitCode` waits for it. Without a `timeout:` that is
+      // the whole run stopped with nothing to read afterwards. Inherited, the
+      // child has the real stdin and this does not apply.
+      unawaited(process.stdin.close().catchError((Object _) {}));
+    }
 
     if (output != null) {
       // Both streams into one buffer, in arrival order, because that is what
@@ -216,3 +237,18 @@ final class SystemProcessStarter implements ProcessStarter {
   /// did not fail, it was not allowed to finish.
   static const interrupted = 130;
 }
+
+/// Whether [error] is the reader having gone away.
+///
+/// `EPIPE` on POSIX; `ERROR_BROKEN_PIPE` and `ERROR_NO_DATA` are what Windows
+/// reports for the same event. `EBADF` is the neighbouring case — a descriptor
+/// that was closed rather than piped, which is what `xtask check >&-` and some
+/// service managers hand a process — and it arrived as an unhandled exception
+/// and exit 255 from inside the run's own failure reporting, which is the one
+/// place that cannot afford to throw.
+///
+/// All of them mean the same thing to a writer: there is nowhere for this line
+/// to go, and that is an ordinary end rather than a fault.
+bool isAClosedPipe(Object error) =>
+    error is FileSystemException &&
+    const {9, 32, 109, 232}.contains(error.osError?.errorCode);

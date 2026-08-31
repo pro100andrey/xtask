@@ -54,7 +54,7 @@ ValidationReport validateFile(
     _checkVerb(task, knownVerbs, problems);
     _checkSetReferences(task, file, problems);
     _checkWorkingDirectory(task, file, problems);
-    _checkRemoveArguments(task, problems);
+    _checkRemoveArguments(task, file, problems);
   }
 
   _checkGraph(file, problems);
@@ -149,15 +149,38 @@ void _checkWorkingDirectory(
 ///
 /// Literal arguments only, which is all this can see without a filesystem —
 /// a member a glob finds is the resolver's to check, and it does.
-void _checkRemoveArguments(Task task, List<XtaskFormatException> problems) {
+void _checkRemoveArguments(
+  Task task,
+  XtaskFile file,
+  List<XtaskFormatException> problems,
+) {
   final body = task.body;
   if (body is! DoBody || body.verb != removeVerbName) {
     return;
   }
+
+  // **The set's members too, where they are known here.** `$all` and `$each`
+  // stand for what a set holds, and a `values:` set is deliberately exempt
+  // from the boundary everywhere else — its members are not paths. Fed to
+  // this verb they are: `values: ['/etc']` with `args: [$all]` was called
+  // clean here and refused by the run, which is the gap this check was added
+  // to close, reopened one substitution along. Literal and sitting in the
+  // file, so composing them costs nothing and needs no filesystem.
+  //
+  // A glob set's members are the resolver's to check and it does; a list
+  // set's went through `_refuseUnrooted` when the file was read.
+  final substituted = file.sets[task.all ?? task.each];
+  final written = [
+    ...task.args,
+    if (substituted is ValueSet &&
+        task.args.any((a) => a == allMarker || a == eachMarker))
+      ...substituted.values,
+  ];
+
   // Distinct, because the span is the task's: `args: ['/etc', 'x', '/etc']`
   // printed the same sentence twice under the same underlined line, which
   // reads as the validator repeating itself rather than as two facts.
-  for (final argument in task.args.toSet()) {
+  for (final argument in written.toSet()) {
     if (!leavesRoot(argument)) {
       continue;
     }

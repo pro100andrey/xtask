@@ -129,4 +129,29 @@ void main() {
       expect('$e', contains('line 3'));
     }
   });
+
+  group('and it refuses the syntax, not the punctuation', () {
+    // The scan claims to be exact rather than approximate, and was not: `-`
+    // was read as a block-sequence indicator wherever it appeared, though
+    // YAML makes it one only when something separates it from what follows,
+    // and `<<` was refused everywhere though it is a merge key only where a
+    // key can be.
+
+    test('a hyphen inside a word does not make the next `&` an anchor', () {
+      expect(refusalOf('desc: fail-&-report'), isNull);
+      expect(refusalOf('desc: x -*- y'), isNull);
+    });
+
+    test('and `<<` outside key position is ordinary text', () {
+      expect(refusalOf('desc: shift a << b'), isNull);
+      expect(refusalOf('args: [--x=a<<b]'), isNull);
+    });
+
+    test('but the real ones are still refused', () {
+      expect(refusalOf('sets: &base'), contains('anchor'));
+      expect(refusalOf('- &item'), contains('anchor'));
+      expect(refusalOf('needs: [*ref]'), contains('alias'));
+      expect(refusalOf('  <<: *base'), contains('merge key'));
+    });
+  });
 }

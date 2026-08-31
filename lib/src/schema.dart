@@ -193,15 +193,15 @@ const _strings = <String, Object?>{
 // engine's own order, and writing this one in the engine's order too would
 // make the test that says so pass whether it did or not.
 const _taskKeys = <String, Map<String, Object?>>{
-  'args': {
-    ..._strings,
-    'description': 'Extra arguments appended to the body.',
-  },
   'all': {
     'type': 'string',
     'description':
         r'A set whose members replace the `$all` marker in `run:` or `args:`, '
         'in one invocation. The marker is a whole argument and appears once.',
+  },
+  'args': {
+    ..._strings,
+    'description': 'Extra arguments appended to the body.',
   },
   'desc': {
     'type': 'string',
@@ -239,25 +239,6 @@ const _taskKeys = <String, Map<String, Object?>>{
         'Variables that must already be set. Checked before the body runs; '
         'the engine installs nothing, it only says which one is missing.',
   },
-  'serial': {
-    'type': 'boolean',
-    'description':
-        "Whether this task's `each:` members must not overlap. `-j` says how "
-        'much may happen at once; this says whether these particular members '
-        'may happen together at all — one shared `pub` cache, one git index. '
-        'Getting it wrong makes a run flaky rather than slow, which is why it '
-        'is in the file and the number is not.',
-  },
-  'interruptible': {
-    'type': 'boolean',
-    'description':
-        'Whether a failure elsewhere may stop this task where it stands. A '
-        'run does not reach into what is already running, because a build '
-        'killed half-way leaves whatever it was doing in whatever state that '
-        'half is — this is the author saying a read-only check leaves '
-        'nothing. A `do:` cannot carry it: stopping a Dart function from '
-        'outside is not something Dart can do.',
-  },
   'exclusive': {
     ..._strings,
     'description':
@@ -278,6 +259,16 @@ const _taskKeys = <String, Map<String, Object?>>{
         r'`$each`, which stands for the current member of `each:` — as the '
         r'whole value, or composed: `packages/$each`.',
   },
+  'interruptible': {
+    'type': 'boolean',
+    'description':
+        'Whether a failure elsewhere may stop this task where it stands. A '
+        'run does not reach into what is already running, because a build '
+        'killed half-way leaves whatever it was doing in whatever state that '
+        'half is — this is the author saying a read-only check leaves '
+        'nothing. A `do:` cannot carry it: stopping a Dart function from '
+        'outside is not something Dart can do.',
+  },
   'needs': {
     ..._strings,
     'description':
@@ -293,6 +284,22 @@ const _taskKeys = <String, Map<String, Object?>>{
         'its own entry. Never a command line — nothing splits a string here, '
         'and no shell sees it.',
   },
+  'serial': {
+    'type': 'boolean',
+    'description':
+        "Whether this task's `each:` members must not overlap. `-j` says how "
+        'much may happen at once; this says whether these particular members '
+        'may happen together at all — one shared `pub` cache, one git index. '
+        'Getting it wrong makes a run flaky rather than slow, which is why it '
+        'is in the file and the number is not.',
+  },
+  'then': {
+    ..._strings,
+    'description':
+        "Continuations, run after this task's body rather than before it. A "
+        'body that succeeded and a continuation that failed is its own '
+        'outcome, with its own exit code.',
+  },
   'timeout': {
     'type': 'integer',
     'minimum': 1,
@@ -301,13 +308,6 @@ const _taskKeys = <String, Map<String, Object?>>{
         'carry one: a verb is a Dart function and nothing outside it can stop '
         'one, so the limit would pass while the verb kept running. Under '
         '`each:` it is a limit per member.',
-  },
-  'then': {
-    ..._strings,
-    'description':
-        "Continuations, run after this task's body rather than before it. A "
-        'body that succeeded and a continuation that failed is its own '
-        'outcome, with its own exit code.',
   },
 };
 
