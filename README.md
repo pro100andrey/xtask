@@ -353,7 +353,9 @@ comment and not this file's.
 
 A `run: |` block is read the way a shell reads it: line by line, with a `\` at
 the end of one joining it to the next, so a long command line is one step and
-not two. The same two placements hold inside a block — a marker at the end of a
+not two — and a line is cut again at `&&`, `||`, `;` and `|`, because those are
+the other places a command begins. A separator inside quotes is text, and a
+segment that only moves the shell (`cd`, `export`) runs nothing. The same two placements hold inside a block — a marker at the end of a
 line excuses that line, and a marker on a line of its own excuses the command
 under it — and it has to be a comment where it stands. A marker inside a quoted
 string is what the step prints, not what the step claims, and excuses

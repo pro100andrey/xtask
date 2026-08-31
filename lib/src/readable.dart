@@ -234,7 +234,15 @@ void refuseUnreadableSyntax(String source, Uri? sourceUrl) {
         continue;
       case 0x5B: // [
       case 0x7B: // {
-        flowDepth++;
+        // **Only where a node may begin, which is the same test the anchors
+        // get.** Counted wherever it appeared, a bracket inside an ordinary
+        // block scalar — `desc: emit an opening bracket [` — opened a flow
+        // collection that never closed, and every `,` in the rest of the file
+        // was then read as an entry separator. One description refused the
+        // next one, on the very case this rule exists to allow.
+        if (_startsANode(previous, afterSpace, flowDepth)) {
+          flowDepth++;
+        }
       case 0x5D: // ]
       case 0x7D: // }
         if (flowDepth > 0) {

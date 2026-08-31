@@ -114,7 +114,7 @@ Future<int> dryRun({
     // In the run's own words, and in the run's own place: this used to render
     // as "nothing of these is on disk", which told a reader that a `remove`
     // aimed outside the repository was harmless.
-    return (lines: ['error: ${_about(body, refusal)}'], refused: true);
+    return (lines: ['error: $refusal'], refused: true);
   }
   final paths = would.paths;
   if (paths.isEmpty) {
@@ -137,7 +137,3 @@ Future<int> dryRun({
     ],
   );
 }
-
-/// A refusal, named for the task it is about, the way a run names it.
-String _about(Resolved body, String refusal) =>
-    'task `${body.task.name}`: $refusal';

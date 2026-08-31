@@ -86,6 +86,32 @@ void main() {
       );
     });
 
+    test('and a bracket inside a plain scalar opens no collection', () {
+      // The counter that tells the two apart is itself a rule: counted for
+      // every `[`, one written in a description opened a flow collection that
+      // never closed, and every comma in the rest of the file was then read as
+      // an entry separator — so one description refused the next one, on the
+      // very case the comma rule exists to allow.
+      expect(
+        refusalOf(
+          'tasks:\n'
+          '  t:\n'
+          '    desc: emit an opening bracket [\n'
+          '    run: [echo, x]\n'
+          '  u:\n'
+          '    desc: red,&blue\n'
+          '    run: [echo, y]\n',
+        ),
+        isNull,
+      );
+      expect(refusalOf('desc: a { b\nother: red,*blue\n'), isNull);
+      expect(
+        refusalOf('a: {b: [one,*x]}\n'),
+        contains('alias'),
+        reason: 'and a real collection still counts, however deep',
+      );
+    });
+
     test('and a comma outside brackets is a character in a word', () {
       // Which is what the space rule was reached for, and it still holds:
       // `red,&blue` written as a block value is a plain scalar, `&` and all.

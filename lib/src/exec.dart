@@ -318,7 +318,13 @@ final class Executor {
                 // finish in: under `--keep-going` those differ, and which
                 // failure answers for the run must not depend on which
                 // machine ran it. What is done with them is below.
-                failures[order[name] ?? failures.length] = code;
+                // A key outside the plan's own range where a step somehow
+                // has no position, so that a made-up key cannot collide with
+                // a real one and quietly overwrite the failure it belongs to
+                // — the map is keyed by plan position, and `failures.length`
+                // is a value from that same space.
+                failures[order[name] ?? plan.steps.length + failures.length] =
+                    code;
                 if (!keepGoing) {
                   // **Reaching into what is running, but only where the file
                   // said it may.** A build killed half-way leaves whatever it
@@ -357,6 +363,16 @@ final class Executor {
           await Future.wait(
             running.values,
           ).catchError((Object _) => const <void>[]);
+          // **And what never started is named too.** Letting the running
+          // tasks finish gave the summary their outcomes and left everything
+          // still queued out of it entirely — in neither `failed` nor
+          // `skipped` — so the report this unwind exists to complete still
+          // said nothing about the tasks the refusal stopped. The ordinary
+          // give-up path fills these in for exactly this reason.
+          for (final step in waiting) {
+            skipped[step.task.name] = const RunStopped();
+          }
+          waiting.clear();
           rethrow;
         }
       }

@@ -173,8 +173,22 @@ bool _emptiesAnAlternative(String reading, String tail) =>
 /// The pattern is quoted so a reader can see which line of the file this is
 /// about, and a pathological one is exactly the pattern that reaches here: a
 /// thousand globstars printed whole is a refusal nobody can read.
-String _short(String pattern) =>
-    pattern.length <= 120 ? pattern : '${pattern.substring(0, 117)}...';
+String _short(String pattern) {
+  if (pattern.length <= 120) {
+    return pattern;
+  }
+  // **Backed off a code unit where the cut lands inside a character.** Dart
+  // counts UTF-16 units, so a pattern holding an emoji or a CJK extension at
+  // the cut was truncated between its two halves and the refusal carried a
+  // lone surrogate — a replacement character on the reader's terminal, or an
+  // encoding error in anything that re-encodes the diagnostic, in the one
+  // sentence whose job is to show which line of the file is wrong.
+  final at = _isHighSurrogate(pattern.codeUnitAt(116)) ? 116 : 117;
+  return '${pattern.substring(0, at)}...';
+}
+
+/// Whether [unit] is the first half of a surrogate pair.
+bool _isHighSurrogate(int unit) => unit >= 0xD800 && unit <= 0xDBFF;
 
 /// How many brace groups the first [upTo] characters of [pattern] open.
 int _depthOf(String pattern, int upTo) {

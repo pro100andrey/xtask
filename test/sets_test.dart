@@ -110,6 +110,26 @@ void main() {
     );
   });
 
+  test('a pattern too long to print is cut between characters', () {
+    // The refusal quotes the pattern so a reader can see which line of the
+    // file it is about, and cut on UTF-16 units it split an astral character
+    // in half — a lone surrogate in the one sentence whose job is to be read.
+    // The emoji sits across units 116 and 117, which is exactly where the cut
+    // used to land.
+    final tail = '{a,**/}' * (mostGlobstarSegments + 10);
+    final pattern = '${'a' * 116}\u{1F600}$tail';
+    expect(
+      () => zeroOrMoreDirectories(pattern),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message.runes.every((r) => r < 0xD800 || r > 0xDFFF),
+          'no unpaired surrogate in the message',
+          isTrue,
+        ),
+      ),
+    );
+  });
+
   test("an empty pattern is the caller's own, not an invented variant", () {
     // The empty variants are dropped on the way out because `**/` alone reads
     // as one and `Glob` refuses it. That removal took a pattern somebody

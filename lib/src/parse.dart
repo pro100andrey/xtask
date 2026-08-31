@@ -278,15 +278,14 @@ void _refuseIncoherent(Task task, SourceSpan? Function(String key) keySpan) {
   );
 }
 
-/// `interruptible:`, refused where it cannot be honoured.
-///
-/// **A `run:` body only, for `timeout:`'s reason.** Stopping a verb means
-/// stopping a Dart function from outside, which Dart cannot do — the flag
-/// would read as a promise and the verb would carry on writing to the disk.
 /// A boolean key, refused rather than coerced.
 ///
 /// `serial: yes` is a string in YAML 1.2 and would be truthy in a language
 /// that guessed. This file does not guess.
+///
+/// It knows nothing about which key it is reading. Whether a body can honour
+/// an `interruptible:` is `coherence.dart`'s question, because it is this key
+/// read against another one.
 bool _flag(YamlMap map, String key, String owner) {
   final node = map.nodes[key];
   if (node == null) {

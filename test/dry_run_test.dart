@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/bodies.dart';
+import 'package:xtask/src/boundary.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/dry_run.dart';
 import 'package:xtask/src/executables.dart';
@@ -300,6 +301,14 @@ void main() {
       );
       expect(output(), contains('outside the repository'));
       expect(output(), contains('../outside'));
+      // Word for word what the run logs, which is why the sentence lives in
+      // `boundary.dart` at all. This one carried a `task `clean`:` prefix the
+      // run does not write, so a diff of the two was not comparable — in the
+      // one place a reader compares them.
+      expect(
+        output(),
+        contains('error: ${removeLeavesRoot(written: '../outside')}'),
+      );
       expect(output(), isNot(contains('nothing of these is on disk')));
       expect(
         output(),

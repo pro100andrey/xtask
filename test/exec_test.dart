@@ -2130,6 +2130,27 @@ void main() {
       );
     });
 
+    test('and the summary still names what never started', () async {
+      // The unwind lets the running tasks finish so the summary is the whole
+      // run rather than a mid-run snapshot — and left everything still queued
+      // out of it entirely, in neither `failed` nor `skipped`. A task that
+      // silently did not happen is indistinguishable from one that passed,
+      // which is the failure this tool is about.
+      await expectLater(
+        runFile(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, do: boom}\n'
+              '  c: {desc: z, run: [pytest]}\n'
+              '  all: {desc: w, needs: [a, c]}\n',
+          'all',
+          verbs: {'boom': (_) => throw XtaskFormatException('nope')},
+        ),
+        throwsA(isA<XtaskFormatException>()),
+      );
+      expect(logged.join('\n'), contains('skipped  c'));
+      expect(logged.join('\n'), contains('skipped  all'));
+    });
+
     test('is a task failure, not exit 255', () async {
       final code = await runFile(
         'version: 1\ntasks:\n  a: {desc: x, do: boom}\n',

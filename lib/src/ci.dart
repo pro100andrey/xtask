@@ -39,7 +39,13 @@ const workflowDirectory = '.github/workflows';
 
 /// One shell step of one job.
 final class CiStep {
-  const CiStep(this.workflow, this.job, this.command, {this.exemption});
+  const CiStep(
+    this.workflow,
+    this.job,
+    this.command, {
+    this.exemption,
+    this.exemptionIsShared = false,
+  });
 
   /// The file it came from, relative to the repository root.
   final String workflow;
@@ -58,6 +64,17 @@ final class CiStep {
   ///
   /// Null unless the step carries [exemptionMarker].
   final String? exemption;
+
+  /// Whether that reason was written for more than this one command.
+  ///
+  /// **Because "it excuses nothing" is a sentence about a marker, not about
+  /// each command under one.** A marker beside `run: |` covers the script, and
+  /// one at the end of a line covers the commands chained on it — so a line
+  /// like `cp ./xtask /tmp/x && ./xtask check # …` has a marker that is right
+  /// about its first half and necessarily idle over its second. Reported per
+  /// command, the author was told their marker excused nothing, about a marker
+  /// that excused the command they wrote it for.
+  final bool exemptionIsShared;
 }
 
 /// What a person writes beside a `run:` step that is not a gate set.
@@ -272,36 +289,57 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     // passed, which is the silent green this mode exists to prevent. What the
     // marker says is "this step is not a gate set", and that is a sentence
     // about exactly one of the outcomes below.
+    // **Said wherever it is true, not only where nothing else is.** The
+    // reason is the whole price of the marker, and the test for it lived in
+    // the last branch — so a marker with nothing after it was reported as
+    // missing its reason only on the steps this mode already passes. On a
+    // step that reaches xtask the reader was told the marker excuses nothing
+    // and never that it says nothing, which are two facts and not one.
+    if (exemption != null && exemption.isEmpty && !step.exemptionIsShared) {
+      problems.add(ExemptsWithoutSaying(step));
+    }
+
     if (read.refused case final refusal?) {
       problems.add(RunsSomethingRefused(step, refusal));
       // Said as well, not instead. The refusal is the finding; that a marker
       // was written over it and excused nothing is a second fact, and the
       // reader who wrote the marker is the one who needs to hear it.
-      if (exemption != null) {
+      if (exemption != null && !step.exemptionIsShared) {
         problems.add(ExemptsNothing(step, 'a step the command line refuses'));
       }
       continue;
     }
     if (read.gate case final gate?) {
-      if (exemption != null) {
-        problems.add(ExemptsNothing(step, gate));
-      } else if (!declared.contains(gate)) {
+      // The same policy, on the branch that did not have it: a marker used to
+      // REPLACE the undeclared-gate finding, so a misspelled `ci-analyse`
+      // under one was diagnosed as a marker-placement mistake and the reader
+      // was never told the name is not a gate set this file has — about a job
+      // that runs nothing.
+      final undeclared = !declared.contains(gate);
+      if (undeclared) {
         problems.add(RunsAnUndeclaredGate(step, gate, declared));
-      } else {
+      }
+      if (exemption != null && !step.exemptionIsShared) {
+        problems.add(ExemptsNothing(step, gate));
+      } else if (!undeclared) {
         invocations.add((step: step, gate: gate));
       }
       continue;
     }
-    if (read.named case final named?) {
+    // Both at once, because `named` is only ever set beside the mode that
+    // named it — `_names` is its one producer. Read as two questions it
+    // carried a `?? ''` for a case that cannot arise, which a reader has to
+    // check every construction site to find out.
+    if ((read.named, read.mode) case (final named?, final mode?)) {
       problems.add(
-        exemption != null
+        exemption != null && !step.exemptionIsShared
             ? ExemptsNothing(step, named)
-            : NamesAGateWithoutRunningIt(step, read.mode ?? '', named),
+            : NamesAGateWithoutRunningIt(step, mode, named),
       );
       continue;
     }
     if (read.mode case final mode?) {
-      if (exemption != null) {
+      if (exemption != null && !step.exemptionIsShared) {
         problems.add(ExemptsNothing(step, mode));
       } else {
         questions.add((step: step, mode: mode));
@@ -309,9 +347,7 @@ CiReport checkCi(XtaskFile file, {required String root}) {
       continue;
     }
     if (exemption != null) {
-      if (exemption.isEmpty) {
-        problems.add(ExemptsWithoutSaying(step));
-      } else {
+      if (exemption.isNotEmpty) {
         exempted.add(step);
       }
       continue;
@@ -636,32 +672,126 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
         // the author would obviously write the marker was the one place that
         // half-worked.
         final beside = _exemptionNear(lines, span, after: previousEnded);
+        // Read in full before any of it is yielded, because whether a marker
+        // covers more than one command is a fact about the block and not
+        // about the line it is written on.
+        final read = <({String? own, List<String> commands})>[];
+        var inTheBlock = 0;
         for (var at = 0; at < written.length; at++) {
           final line = written[at].trim();
           if (line.isEmpty || line.startsWith('#')) {
             continue;
           }
-          yield CiStep(
-            name,
-            '${entry.key}',
-            _withoutTrailingComment(line),
-            exemption:
-                _exemptionIn(line) ??
-                // The line above counts only when it is nothing but a
-                // comment — the same rule the YAML comment above the block
-                // gets. Without it, a marker trailing one command exempted
-                // the command under it, which is the leak this rule was
-                // written for arriving one level in.
-                (at > 0 && written[at - 1].trimLeft().startsWith('#')
-                    ? _exemptionIn(written[at - 1])
-                    : null) ??
-                beside,
-          );
+          final own =
+              _exemptionIn(line) ??
+              // The line above counts only when it is nothing but a comment —
+              // the same rule the YAML comment above the block gets. Without
+              // it, a marker trailing one command exempted the command under
+              // it, which is the leak this rule was written for arriving one
+              // level in.
+              (at > 0 && written[at - 1].trimLeft().startsWith('#')
+                  ? _exemptionIn(written[at - 1])
+                  : null);
+          // The marker is the line's, so it is every command on it: cutting a
+          // line into commands must not leave the ones before the marker
+          // unexcused.
+          final commands = _commandsOn(_withoutTrailingComment(line));
+          inTheBlock += commands.length;
+          read.add((own: own, commands: commands));
+        }
+        for (final line in read) {
+          final exemption = line.own ?? beside;
+          for (final one in line.commands) {
+            yield CiStep(
+              name,
+              '${entry.key}',
+              one,
+              exemption: exemption,
+              exemptionIsShared:
+                  exemption != null &&
+                  (line.own != null ? line.commands.length : inTheBlock) > 1,
+            );
+          }
         }
         previousEnded = span?.end.line ?? previousEnded;
       }
     }
   }
+}
+
+/// The commands written on one line of a script.
+///
+/// **The same argument the newline gets, and the same shallow rule.** A block
+/// is read a line at a time because a line is where a command begins; `&&`,
+/// `||`, `;` and `|` are the other places one begins, and reading past them
+/// made the answer depend on the order inside the line. `dart analyze &&
+/// dart run :xtask check` passed green with the duplicated `dart analyze`
+/// never mentioned, while the same two commands the other way round were
+/// refused for the operands after the gate — one line, two answers, decided by
+/// which half came first. That is the defect the line-splitting was written to
+/// remove, one level in.
+///
+/// This is not reading the script. Nothing here asks what a command means, and
+/// a separator inside quotes is text: `echo "a && b"` is one command, as a
+/// shell has it.
+///
+/// A segment that only moves the shell is dropped, and [_movesTheShell] is
+/// where that list is argued for.
+List<String> _commandsOn(String line) {
+  final commands = <String>[];
+  var single = false;
+  var double = false;
+  var began = 0;
+  void take(int end) {
+    final one = line.substring(began, end).trim();
+    if (one.isNotEmpty && !_movesTheShell(one)) {
+      commands.add(one);
+    }
+  }
+
+  for (var i = 0; i < line.length; i++) {
+    switch (line[i]) {
+      case "'":
+        if (!double) {
+          single = !single;
+        }
+      case '"':
+        if (!single) {
+          double = !double;
+        }
+      case '&' || '|' || ';':
+        if (single || double) {
+          continue;
+        }
+        take(i);
+        // `&&` and `||` are two characters and `;`, `&` and `|` are one. Which
+        // it is does not matter here — every one of them ends a command — so
+        // the second character is only skipped over.
+        final doubled =
+            i + 1 < line.length && line[i + 1] == line[i] && line[i] != ';';
+        i += doubled ? 1 : 0;
+        began = i + 1;
+    }
+  }
+  take(line.length);
+  return commands;
+}
+
+/// Whether [command] only moves the shell it runs in.
+///
+/// **A closed list, and that is why it may exist at all.** The doc on
+/// [_invocationIn] argues against naming the prefixes a workflow might put in
+/// front of xtask, because any program can run another and the list is never
+/// finished. This is the opposite kind of set: a shell builtin that changes
+/// the shell's own state and does no work, of which there are these. Without
+/// it, cutting a line into commands turned `cd sub && ./xtask ci-web` — the
+/// shape this checker's own history says it must accept — into a report about
+/// `cd sub` belonging in the task file.
+bool _movesTheShell(String command) {
+  final word = command.split(RegExp(r'\s+')).first;
+  return const {'cd', 'export', 'set', 'unset', 'source', '.', ':'}.contains(
+    word,
+  );
 }
 
 /// [command]'s lines, with a shell's line continuations joined.

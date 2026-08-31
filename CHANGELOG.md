@@ -63,7 +63,14 @@ is asked only where the mention is not already in command position, so
 `sh -c "dart run :xtask check"` stays an invocation.
 
 A `run: |` block is read line by line, with a shell's line continuations joined
-first, so `dart run :xtask \` and `ci-analyze` are one command and not two. The
+first, so `dart run :xtask \` and `ci-analyze` are one command and not two —
+and a line is cut again at `&&`, `||`, `;` and `|`, which are the other places
+a command begins. Read whole, a line's answer depended on the order inside it:
+`dart analyze && dart run :xtask check` passed green with the duplicated `dart
+analyze` never mentioned, while the same two the other way round were refused
+for the operands after the gate. A separator inside quotes is text, and a
+segment that only moves the shell — `cd`, `export` and the rest of what a shell
+does to itself — runs nothing and is not reported. The
 exemption marker follows the block in: beside the `run:` key it excuses the
 whole script under it, at the end of a line it excuses that line, on a line of
 its own it excuses the line under it, and it no longer reaches out of one
@@ -283,6 +290,17 @@ Measured on a synthetic repository of 15,000 files and a task file of 4,000:
   three rather than four — and the README's arithmetic said so too.
 - `--emit-schema` says a name is one line and not empty, which the parser
   refuses and the schema accepted.
+- A marker with no reason is answered wherever it is written. The test for it
+  sat in the last branch, so a marker on a step that reaches xtask was reported
+  as excusing nothing and never as saying nothing.
+- An exemption over a misspelled gate set no longer replaces the sentence that
+  names the misspelling. The reader was told about marker placement and never
+  that the name is not a gate set this file has, about a job that runs nothing.
+- A marker written for several commands is not reported as excusing nothing
+  when it is idle over one of them. It is a sentence about a marker, not about
+  each command under one.
+- `--dry-run` prints a refused `remove` in the run's own words, without the
+  task-name prefix the run does not write.
 - An empty pattern in a set is refused by name. It was dropped as though the
   engine had invented it — the reading `**/` alone produces — so it reached no
   glob at all and surfaced as "the set expands to nothing", about a cause that

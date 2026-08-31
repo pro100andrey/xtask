@@ -85,20 +85,78 @@ jobs:
       expect(said().single, contains('job `analyze`'));
     });
 
-    test('and so is a step that runs a gate and then something else', () {
-      // A step doing two things is a step this cannot vouch for. Both halves
-      // are real gate sets on purpose: a checker that only looked at the LAST
-      // word would call this fine, and the version that did was caught by a
-      // mutation rather than by the first form of this test.
+    test('and a step that chains two gate sets runs both of them', () {
+      // A chain is more commands on one line, and each of these is a gate set
+      // this file declares — there is no second list of what runs anywhere in
+      // it, which is the whole of what the rule protects. Read as one opaque
+      // command the answer depended on the order: the gate first meant the
+      // rest became its operands and the step was refused, the gate last meant
+      // the first half was never looked at.
       workflow('ci.yml', '''
 jobs:
   analyze:
     steps:
       - run: dart run :xtask ci-analyze && dart run :xtask ci-web
 ''');
-      final report = check();
-      expect(report.ok, isFalse);
-      expect(said().single, contains('&&'));
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+    });
+
+    test('but a command chained beside a gate set is still reported', () {
+      // The silent green this cutting removes, and the order-dependence with
+      // it: `dart analyze` is in the gate set already, and reading the line
+      // whole meant it was never mentioned when it came first and reported as
+      // stray operands when it came second.
+      for (final step in [
+        'dart analyze && dart run :xtask ci-analyze',
+        'dart run :xtask ci-analyze && dart analyze',
+        'npm ci; dart run :xtask ci-analyze',
+      ]) {
+        workflow('ci.yml', '''
+jobs:
+  analyze:
+    steps:
+      - run: $step
+''');
+        final found = check();
+        expect(found.invocations.single.gate, 'ci-analyze', reason: step);
+        expect(
+          said().single,
+          contains('belongs in the task file'),
+          reason: step,
+        );
+      }
+    });
+
+    test('and a separator inside quotes is text, not a new command', () {
+      workflow('ci.yml', '''
+jobs:
+  analyze:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: echo "a && b" # xtask: not a gate - a banner
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.exempted.single.command, 'echo "a && b"');
+    });
+
+    test('and a step that only moves the shell runs nothing', () {
+      // Cutting on `&&` would otherwise turn the shape this checker's own
+      // history says it must accept into a report about `cd sub`. The list is
+      // closed because it is what a shell does to itself, not what a program
+      // might do — which is the list the invocation rule refuses to keep.
+      workflow('ci.yml', '''
+jobs:
+  analyze:
+    steps:
+      - run: cd sub && dart run :xtask ci-analyze
+      - run: export CI=1 && dart run :xtask ci-web
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
     });
 
     test('flags after the name are allowed; a second operand is not', () {
@@ -343,8 +401,30 @@ jobs:
       - run: dart run :xtask ci-analyze
       - run: dart run :xtask ci-analyse # xtask: not a gate — legacy
 ''');
-      expect(said().single, contains('excuses nothing'));
+      // Both facts, not one. The marker used to REPLACE the undeclared-gate
+      // finding, so the reader was told about marker placement and never that
+      // `ci-analyse` is not a gate set this file has — about a job that runs
+      // nothing.
+      final said_ = said();
+      expect(said_.any((s) => s.contains('does not declare')), isTrue);
+      expect(said_.any((s) => s.contains('excuses nothing')), isTrue);
       expect(check().exempted, isEmpty);
+    });
+
+    test('and a marker with no reason is answered wherever it is written', () {
+      // The reason is the whole price, and the test for it lived in the last
+      // branch — so on a step that reaches xtask the reader was told the
+      // marker excuses nothing and never that it says nothing.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: dart run :xtask ci-web # xtask: not a gate
+''');
+      final said_ = said();
+      expect(said_.any((s) => s.contains('gives no reason')), isTrue);
+      expect(said_.any((s) => s.contains('excuses nothing')), isTrue);
     });
 
     test('a block is read a line at a time, whichever order it is in', () {
@@ -542,12 +622,16 @@ jobs:
 jobs:
   a:
     steps:
-      - run: cp ./xtask /tmp/x && ./xtask ci-analyze
+      - run: cp ./xtask /tmp/x && ./xtask ci-analyze # xtask: not a gate - built here
       - run: dart run :xtask ci-web
 ''');
       final found = check();
       expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
       expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+      // The `cp` is a command like any other and wants the marker a `cp` as
+      // its own step already wants; what must not happen is the gate beside it
+      // being counted unrun.
+      expect(found.exempted.single.command, 'cp ./xtask /tmp/x');
     });
 
     test('but a mention that names no gate this file has is a command', () {
