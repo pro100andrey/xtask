@@ -15,7 +15,7 @@ const _marks = ['one', 'two', 'three', 'four'];
 /// One of them, as the file writes it.
 String _aTask(String name) =>
     '  $name: {desc: $name, gate: [check], '
-    'run: [sh, -c, "touch ran-$name"]}\n';
+    'run: [sh, -c, "sleep 0.3; touch ran-$name"]}\n';
 
 void main() {
   group('dart run :xtask', () {
@@ -250,7 +250,10 @@ void main() {
     /// WHY is exactly what a reader needs and is the thing being thrown away.
     /// It failed on two CI runners and passed everywhere else, and there was
     /// nothing in the report to work from.
-    Future<({int code, String errors})> piped(List<String> args) async {
+    Future<({int code, String errors, Duration took})> piped(
+      List<String> args,
+    ) async {
+      final began = DateTime.now();
       final xtask = await Process.start(
         Platform.resolvedExecutable,
         ['run', p.join(Directory.current.path, 'bin', 'xtask.dart'), ...args],
@@ -261,7 +264,18 @@ void main() {
       unawaited(xtask.stdout.pipe(head.stdin).catchError((Object _) {}));
       unawaited(head.stdout.drain<void>());
       await head.exitCode;
-      return (code: await xtask.exitCode, errors: await errors);
+      final code = await xtask.exitCode;
+      // **How long it took, which is the one thing still observable.** What
+      // the run writes after the reader goes is lost by construction — that
+      // is the scenario — so its side effects are all there is, and its
+      // duration is one of them. Each task sleeps; four of them take four
+      // times as long as one. A run that stops after the first is short, and
+      // a run that finishes with its markers missing is not.
+      return (
+        code: code,
+        errors: await errors,
+        took: DateTime.now().difference(began),
+      );
     }
 
     /// The same run with nobody closing the pipe: the control this test had
@@ -301,7 +315,8 @@ void main() {
       final run = await piped(['check']);
       final said =
           'reached: <<${reached()}>>, exit ${run.code}, '
-          'stderr: <<${run.errors.trim()}>>';
+          'took ${run.took.inMilliseconds}ms for ${_marks.length} tasks '
+          'sleeping 300ms each, stderr: <<${run.errors.trim()}>>';
       expect(reached(), _marks.join(', '), reason: said);
       expect(run.code, 0, reason: said);
     }, testOn: '!windows');
