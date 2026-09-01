@@ -2226,6 +2226,28 @@ void main() {
   });
 
   group('the real starter, against a real process', () {
+    test('a child still runs when nobody is reading this process', () async {
+      // The coupling this removes: with a reader, the engine flushes its own
+      // stdout before an inheriting child and hands that descriptor down. With
+      // none, both are for nobody — and a run whose tasks depend on who is
+      // listening is a run that answers differently down a pipe. `xtask check
+      // | head -1` started the first task of a gate set and answered 0 with
+      // the rest never run, on CI and on no machine that could reproduce it.
+      final marker = File(
+        p.join(Directory.systemTemp.createTempSync('xtask_gone').path, 'ran'),
+      );
+      addTearDown(() => marker.parent.deleteSync(recursive: true));
+      final code = await SystemProcessStarter(readerGone: () => true).start(
+        '/bin/sh',
+        ['-c', 'echo out; touch ${marker.path}'],
+        workingDirectory: Directory.current.path,
+        environment: const {},
+        runInShell: false,
+      );
+      expect(code, 0);
+      expect(marker.existsSync(), isTrue, reason: 'the child never ran');
+    }, testOn: '!windows');
+
     test('a byte that is not UTF-8 is passed through, not raised', () async {
       // The strict decoder throws from inside the stream's data handler, which
       // reaches the root zone as an UNCAUGHT error rather than as something

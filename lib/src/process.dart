@@ -15,7 +15,29 @@ import 'context.dart';
 
 /// The starter that runs real processes.
 final class SystemProcessStarter implements ProcessStarter {
-  const SystemProcessStarter({this.grace = const Duration(seconds: 5)});
+  const SystemProcessStarter({
+    this.grace = const Duration(seconds: 5),
+    this.readerGone = _nobodyLeft,
+  });
+
+  /// Whether the process this run writes to has stopped reading.
+  ///
+  /// **Because a run's decisions must not depend on who is listening.** Two
+  /// things here reach for this process's own stdout: the flush that orders
+  /// the engine's lines against an inheriting child, and handing that same
+  /// descriptor down with [ProcessStartMode.inheritStdio]. Both are for a
+  /// reader. With none, the flush buys an ordering nobody will see and the
+  /// child inherits a descriptor that is gone — and the module's own comment
+  /// below already says the first of those; it simply did not act on it, and
+  /// said nothing about the second.
+  ///
+  /// `xtask check | head -1` ran the first task of a gate set and then
+  /// answered 0 with the rest never started — on two CI runners, and on no
+  /// machine where it could be reproduced. Whatever that turns out to be, a
+  /// child that neither flushes nor inherits a dead descriptor cannot be it.
+  final bool Function() readerGone;
+
+  static bool _nobodyLeft() => false;
 
   /// How long a process that has been asked to stop is given to do it.
   ///
@@ -37,7 +59,12 @@ final class SystemProcessStarter implements ProcessStarter {
   }) async {
     // One question, asked once: it decides the flush above and the mode below,
     // and two spellings of it are two things that can disagree.
-    final inherits = output == null;
+    // **And only while somebody is reading.** Inheriting is worth having for
+    // a reader; with none it hands the child a descriptor that is closed and
+    // this process a flush with nothing to order. The child is piped and
+    // drained instead, which is what a run that nobody is watching wants
+    // anyway.
+    final inherits = output == null && !readerGone();
 
     // **Flushed before the child starts, and only when the child inherits.**
     // Dart's `stdout` is asynchronous when it is a pipe, which is what it is
@@ -111,7 +138,11 @@ final class SystemProcessStarter implements ProcessStarter {
       unawaited(process.stdin.close().catchError((Object _) {}));
     }
 
-    if (output != null) {
+    // Drained, not left to fill. A piped child whose output nobody collects
+    // blocks on a full pipe once it has written 64K, which is a run stopped by
+    // its own buffer.
+    final collect = output ?? (readerGone() ? _nowhere : null);
+    if (collect != null) {
       // Both streams into one buffer, in arrival order, because that is what
       // a terminal would have shown. Kept as futures so the collecting is not
       // waited on before the process is.
@@ -127,7 +158,7 @@ final class SystemProcessStarter implements ProcessStarter {
           stream
               .transform(const Utf8Decoder(allowMalformed: true))
               .transform(const LineSplitter())
-              .listen(output),
+              .listen(collect),
         );
       }
       collecting = Future.wait([
@@ -237,6 +268,9 @@ final class SystemProcessStarter implements ProcessStarter {
   /// did not fail, it was not allowed to finish.
   static const interrupted = 130;
 }
+
+/// Where the output of a child goes when nobody is reading this process.
+void _nowhere(String line) {}
 
 /// Whether [error] is the reader having gone away.
 ///

@@ -46,29 +46,38 @@ Future<int> runXtask(
   List<String> args, {
   Map<String, Verb> verbs = const {},
   String? workingDirectory,
-}) => runCli(
-  args,
-  // **A default, not a reading.** The file is looked for from here upwards,
-  // and for a command that is what the process was started in. It is a
-  // parameter because `Directory.current` is one thing for a whole process:
-  // anything wanting to point xtask at a directory — an embedding CLI, or a
-  // test — otherwise has to assign to it and hand every other isolate in the
-  // process a directory it did not ask for. That is not hypothetical. It cost
-  // this suite a flaky failure that read `dartdev embedder initialization
-  // failed: Error determining current directory`, from a temporary directory
-  // deleted by one test while another was starting a process in it.
-  workingDirectory: workingDirectory ?? Directory.current.path,
-  environment: Platform.environment,
-  // The engine's own reports go to stdout, with the bodies' output rather
-  // than beside it: GitHub's grouping markers only fold what is on the same
-  // stream, and on GitHub an `::error::` written to stderr is not an
-  // annotation, it is a line of red text.
-  out: _writing(stdout),
-  err: _writing(stderr),
-  resolver: ExecutableResolver.forHost(),
-  starter: const SystemProcessStarter(),
-  verbs: verbs,
-);
+}) {
+  // Made once and asked twice: the engine writes through it, and the starter
+  // asks it whether there is still anybody to write for.
+  final out = _writing(stdout);
+  return runCli(
+    args,
+    // **A default, not a reading.** The file is looked for from here upwards,
+    // and for a command that is what the process was started in. It is a
+    // parameter because `Directory.current` is one thing for a whole process:
+    // anything wanting to point xtask at a directory — an embedding CLI, or a
+    // test — otherwise has to assign to it and hand every other isolate in the
+    // process a directory it did not ask for. That is not hypothetical. It cost
+    // this suite a flaky failure that read `dartdev embedder initialization
+    // failed: Error determining current directory`, from a temporary directory
+    // deleted by one test while another was starting a process in it.
+    workingDirectory: workingDirectory ?? Directory.current.path,
+    environment: Platform.environment,
+    // The engine's own reports go to stdout, with the bodies' output rather
+    // than beside it: GitHub's grouping markers only fold what is on the same
+    // stream, and on GitHub an `::error::` written to stderr is not an
+    // annotation, it is a line of red text.
+    out: out.write,
+    err: _writing(stderr).write,
+    resolver: ExecutableResolver.forHost(),
+    // Given the same fact the writer has, so that a run behind a reader that
+    // went away stops writing AND stops handing that descriptor to its
+    // children. Two answers to "is anybody reading" is two things that can
+    // disagree, and this is the one place that has the answer.
+    starter: SystemProcessStarter(readerGone: () => out.gone),
+    verbs: verbs,
+  );
+}
 
 /// Writing a line to [sink], and stopping quietly when nobody is reading.
 ///
@@ -80,40 +89,55 @@ Future<int> runXtask(
 /// arrived exactly as asked. Every well-behaved command answers a closed pipe
 /// by stopping, and this is how it stops: the remaining lines go nowhere,
 /// because there is nowhere for them to go.
-void Function(String line) _writing(IOSink sink) {
-  var closed = false;
+_Writer _writing(IOSink sink) => _Writer(sink);
 
-  // **Claimed up front, because the write is not where it surfaces.** An
-  // `IOSink` is asynchronous: `writeln` returns before the bytes reach the
-  // pipe, so a `try` around it catches nothing and the failure arrives later
-  // as an unhandled error that ends the process at 255. Claiming `done` is
-  // what makes a closed pipe ours to ignore.
-  //
-  // **And only a closed pipe.** Marking every sink error handled would swallow
-  // the ones that matter: `xtask check > report.txt` on a full disk would
-  // write a truncated report and answer 0, with nothing on stderr — a green
-  // result nobody checked, which is the failure this whole tool is against.
-  // Anything else is left unhandled, exactly as loud as it was.
-  unawaited(
-    sink.done.catchError(
-      (Object error) => closed = true,
-      // Only a closed pipe is claimed; everything else stays unhandled and as
-      // loud as it was.
-      test: isAClosedPipe,
-    ),
-  );
+/// Writing a line to a sink, and the one place that knows whether anybody is
+/// still reading it.
+///
+/// **A value rather than a closure, because the fact outlives the write.** The
+/// writer stops when the reader goes away; so must the starter, which
+/// otherwise flushes a descriptor nobody reads and hands it to every child it
+/// inherits into. Asked twice, in two places, that becomes two answers to one
+/// question — which is how the ordering and the inheriting came to disagree
+/// about whether there was anything left to order.
+final class _Writer {
+  _Writer(this._sink) {
+    // **Claimed up front, because the write is not where it surfaces.** An
+    // `IOSink` is asynchronous: `writeln` returns before the bytes reach the
+    // pipe, so a `try` around it catches nothing and the failure arrives later
+    // as an unhandled error that ends the process at 255. Claiming `done` is
+    // what makes a closed pipe ours to ignore.
+    //
+    // **And only a closed pipe.** Marking every sink error handled would
+    // swallow the ones that matter: `xtask check > report.txt` on a full disk
+    // would write a truncated report and answer 0, with nothing on stderr — a
+    // green result nobody checked, which is the failure this whole tool is
+    // against. Anything else is left unhandled, exactly as loud as it was.
+    unawaited(
+      _sink.done.catchError(
+        (Object error) => _closed = true,
+        test: isAClosedPipe,
+      ),
+    );
+  }
 
-  return (line) {
-    if (closed) {
+  final IOSink _sink;
+  var _closed = false;
+
+  /// Whether the reader has gone away.
+  bool get gone => _closed;
+
+  void write(String line) {
+    if (_closed) {
       return;
     }
     try {
-      sink.writeln(line);
+      _sink.writeln(line);
     } on FileSystemException catch (error) {
       if (!isAClosedPipe(error)) {
         rethrow;
       }
-      closed = true;
+      _closed = true;
     }
-  };
+  }
 }
