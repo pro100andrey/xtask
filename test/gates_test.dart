@@ -295,6 +295,14 @@ tasks:
       expect(lines.last, isNot(contains('\n')));
     });
 
+    test('and a group is escaped for the reason an annotation is', () {
+      // A task name is a name somebody wrote, and `::group::` is read to the
+      // end of its line like any other workflow command — so the escaping
+      // added to the annotation and not to this could open a fold on half a
+      // name and print the rest beside it as stray output.
+      expect(markers.open('report%0Astep'), ['::group::report%250Astep']);
+    });
+
     test('and a message that already reads as an escape is escaped too', () {
       // The runner DECODES what it reads back. A message quoting an argument
       // — `--name a%0Ab`, which `describe` prints verbatim — was handed over

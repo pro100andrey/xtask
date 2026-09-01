@@ -261,6 +261,16 @@ void main() {
     });
   });
 
+  group('a path named twice is one path', () {
+    test('a literal and a glob that both reach it', () {
+      // `found` was seeded with the literals and then appended to by the walk,
+      // so `--dry-run` printed `del build` twice and the verb issued a second
+      // delete of a path it had just removed.
+      given(['build/out.js']);
+      expect(pathsMatchingAll(['build', 'build*'], root: root.path), ['build']);
+    });
+  });
+
   group('the answer is sorted, whatever the arguments look like', () {
     test('literals alone come back in order, not in written order', () {
       // The invariant is stated where the walk sorts — everything sorts,

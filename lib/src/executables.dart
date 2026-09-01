@@ -122,6 +122,16 @@ final class ExecutableResolver {
     // back. `Process.start` resolves a relative executable against the
     // directory it is handed, so this is the check agreeing with the run it is
     // checking rather than a rule of its own.
+    //
+    // **What comes back is the resolved path, and that is deliberate.** It
+    // reaches `--dry-run` and every echoed command line, so those become
+    // checkout-dependent for a `run: ['./tool/gen']` — raised twice as a
+    // reproducibility defect, and it is not one. `--dry-run` answers "what
+    // would happen on THIS machine", a name found on `PATH` has always
+    // rendered as `/usr/bin/dart` for the same reason, and printing one of
+    // them as written while the other resolves would be two rules where §5.4
+    // has one. A transcript that compares across machines is not a thing this
+    // mode ever promised: `PATH` differs, and so does the answer.
     if (_isAPath(executable)) {
       final candidate = _paths.isAbsolute(executable)
           ? executable

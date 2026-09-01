@@ -163,7 +163,12 @@ List<String> pathsMatchingAll(
   }
   final reach = Reach(patterns);
 
-  final found = <String>[...literals];
+  // A set, because the two halves can name the same path: `['build',
+  // 'build*']` had the literal put in here and the walk match it again, so
+  // `--dry-run` printed `del build` twice and the verb deleted a path it had
+  // just removed — on the one verb whose plan a reader checks line by line
+  // against what they meant.
+  final found = <String>{...literals};
   // The relative path is carried down, as `sets` carries it: deriving it from
   // the absolute one is a third of what a walk costs.
   void walk(Directory directory, String at) {
@@ -211,7 +216,7 @@ List<String> pathsMatchingAll(
   // meant. Everything sorts, literals included: the comment here used to claim
   // they kept the order they were written in, which is what `sets.dart` does
   // for a list set and is not what this line does.
-  return found..sort();
+  return found.toList()..sort();
 }
 
 bool _looksLikeGlob(String argument) =>

@@ -129,6 +129,61 @@ jobs:
       }
     });
 
+    test('and a redirection is not a separator at all', () {
+      // `2>&1` is one of the most ordinary lines in a workflow. Split on the
+      // `&`, it became `dart run :xtask check 2>` and `1` — a gate counted
+      // unrun and a command nobody wrote.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze 2>&1
+      - run: dart run :xtask ci-web > out.txt
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+    });
+
+    test('and a mention inside quotes is data, however it is written', () {
+      // Three shapes of one banner, each of which used to answer differently:
+      // the quote on the word before the mention, on the mention itself, and a
+      // bare `run` inside the string putting the next word in command
+      // position. None of them runs a gate.
+      for (final step in [
+        'echo "run xtask ci-analyze"',
+        'echo "./xtask ci-analyze"',
+        'echo "now run xtask ci-analyze to reproduce"',
+      ]) {
+        workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: $step
+''');
+        final found = check();
+        expect(found.invocations, isEmpty, reason: step);
+        expect(
+          said().single,
+          contains('belongs in the task file'),
+          reason: step,
+        );
+      }
+    });
+
+    test('and a backslash escape does not open a quote', () {
+      workflow('ci.yml', r'''
+jobs:
+  a:
+    steps:
+      - run: echo don\'t # xtask: not a gate - a banner
+      - run: dart run :xtask ci-analyze
+''');
+      final found = check();
+      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
+      expect(found.invocations.single.gate, 'ci-analyze');
+    });
+
     test('and a separator inside quotes is text, not a new command', () {
       workflow('ci.yml', '''
 jobs:
@@ -422,9 +477,12 @@ jobs:
       - run: dart run :xtask ci-analyze
       - run: dart run :xtask ci-web # xtask: not a gate
 ''');
-      final said_ = said();
-      expect(said_.any((s) => s.contains('gives no reason')), isTrue);
-      expect(said_.any((s) => s.contains('excuses nothing')), isTrue);
+      // And it excuses nothing, so the gate under it still counts as run:
+      // an exemption IS its reason, and without one there is no exemption to
+      // weigh — only a marker to report.
+      final found = check();
+      expect(said().single, contains('gives no reason'));
+      expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
     });
 
     test('a block is read a line at a time, whichever order it is in', () {
@@ -485,6 +543,29 @@ jobs:
         found.exempted.single.command,
         'npm ci',
         reason: 'the marker is a comment, not part of the command',
+      );
+    });
+
+    test('but a reasonless marker beside one excuses none of it', () {
+      // The hole the shared-marker flag opened: with no reason to weigh, the
+      // whole block vanished — no finding, no exemption, nothing said. The
+      // cheapest way there has ever been to turn a red gate green.
+      workflow('ci.yml', '''
+jobs:
+  a:
+    steps:
+      - run: dart run :xtask ci-analyze
+      - run: |  # xtask: not a gate
+          npm ci
+          npm run build
+''');
+      final found = check();
+      expect(found.exempted, isEmpty);
+      expect(said().where((s) => s.contains('gives no reason')), hasLength(1));
+      expect(
+        said().where((s) => s.contains('belongs in the task file')),
+        hasLength(2),
+        reason: 'both lines of the block are unexcused',
       );
     });
 
@@ -597,20 +678,23 @@ jobs:
       expect(said().first, contains('belongs in the task file'));
     });
 
-    test('while an invocation quoted as a whole command is one', () {
-      // The quote rule is asked only of a mention that is not in command
-      // position. `-c` hands the next word to a shell, and what is inside it
-      // is a command wherever the quotes are.
+    test('and a command hidden in a quoted argument is not read as one', () {
+      // The price of the rule, paid deliberately. `sh -c "…"` really does run
+      // what is inside the quotes, and telling it from `echo "…"` means
+      // knowing which programs take a command as an argument — the list this
+      // module refuses to keep. So the step is answered rather than vouched
+      // for: it wants a marker, or wants writing plainly. What must not happen
+      // is the other direction, where a banner counts as running a gate.
       workflow('ci.yml', '''
 jobs:
   a:
     steps:
-      - run: sh -c "dart run :xtask ci-analyze"
-      - run: dart run :xtask ci-web
+      - run: dart run :xtask ci-analyze
+      - run: sh -c "dart run :xtask ci-web"
 ''');
       final found = check();
-      expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
-      expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+      expect(found.invocations.single.gate, 'ci-analyze');
+      expect(said().single, contains('belongs in the task file'));
     });
 
     test('and a second mention on one line is tried when the first fails', () {
@@ -658,7 +742,13 @@ jobs:
       # xtask: not a gate
       - run: npx playwright install
 ''');
-      expect(said().single, contains('gives no reason'));
+      // Two facts: the marker says nothing, and what it was written over is
+      // therefore unexcused. Swallowing the step on the strength of a marker
+      // that gives no reason is the form this grows into when it is reached
+      // for to make a red gate green.
+      final lines = said();
+      expect(lines.any((s) => s.contains('gives no reason')), isTrue);
+      expect(lines.any((s) => s.contains('belongs in the task file')), isTrue);
     });
 
     test('and one that exempts nothing is refused too', () {

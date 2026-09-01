@@ -59,8 +59,13 @@ final class PlainMarkers extends LogMarkers {
 final class GitHubMarkers extends LogMarkers {
   const GitHubMarkers();
 
+  /// Escaped for the reason [error] is: a task name is a name somebody wrote,
+  /// and `::group::` is read to the end of its line like any other workflow
+  /// command. The escaping was added to the annotation and not to this, so the
+  /// fold could still be opened on half a name with the rest printed beside
+  /// it as stray output.
   @override
-  List<String> open(String task) => ['::group::$task'];
+  List<String> open(String task) => ['::group::${_escaped(task)}'];
 
   @override
   List<String> close() => const ['::endgroup::'];

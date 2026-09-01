@@ -125,21 +125,17 @@ List<PlanEdge>? routeTo(
   // reported as broken.
   var cutShort = false;
 
-  // **Built once, on the way out.** Each level used to return
-  // `[edge, ...rest]`, copying the whole remaining route at every hop — which
-  // is quadratic in a route's length, and a route is as long as the chain.
-  // The edges are appended as the recursion unwinds, so they come out
-  // deepest-first and are reversed at the end.
+  // **Built once, and read off the path rather than accumulated.** Each level
+  // used to return `[edge, ...rest]`, copying the whole remaining route at
+  // every hop — which is quadratic in a route's length, and a route is as long
+  // as the chain. The path holds the edge that led to each hop, so the route
+  // is that path in order, taken when the target is reached.
   final route = <PlanEdge>[];
 
-  /// One task on the path, and how far through its edges the walk has got.
+  /// The edges leading out of [at], `needs:` first, in declaration order.
   ///
-  /// **An explicit stack, because the recursion was one frame per edge.** A
-  /// `needs:` chain long enough overflowed it and ended `--why` at 255, and
-  /// bounding the depth instead only moved the problem: a branch given up on
-  /// is neither a route nor a proof there is none, so the answer was either
-  /// silently short or a refusal of a question the deep chain never touched.
-  /// A loop has no depth to bound.
+  /// A name with no task has none: a dangling `needs:` is §8's to report, and
+  /// this walk answers about routes.
   List<(String, String)> edgesOf(String at) {
     final task = file.tasks[at];
     if (task == null) {

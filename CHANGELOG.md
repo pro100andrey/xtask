@@ -68,9 +68,28 @@ and a line is cut again at `&&`, `||`, `;` and `|`, which are the other places
 a command begins. Read whole, a line's answer depended on the order inside it:
 `dart analyze && dart run :xtask check` passed green with the duplicated `dart
 analyze` never mentioned, while the same two the other way round were refused
-for the operands after the gate. A separator inside quotes is text, and a
-segment that only moves the shell — `cd`, `export` and the rest of what a shell
-does to itself — runs nothing and is not reported. The
+for the operands after the gate. A redirection is not a separator — `2>&1` is
+part of the command it follows, and the redirect and its target are dropped
+rather than read as arguments. A separator inside quotes is text, and a segment
+that only moves the shell — `cd`, `export` and the rest of what a shell does to
+itself — runs nothing and is not reported.
+
+All of that comes from one reading of the line, at the lexical level and no
+further: words, quotes, escapes, operators, and where a comment starts. The
+module had grown three separate quote scanners — one in the invocation finder,
+one in the command splitter, one in the comment finder — which disagreed with
+each other and none of which knew about `\` escapes.
+
+**A word written in quotes is data.** `echo "run xtask check"` used to parse
+into `check` and report the job as running a gate that nothing in it runs. The
+price, paid on purpose: `sh -c "dart run :xtask check"` really is an invocation
+and is now answered as an ordinary command, because telling it from the banner
+means knowing which programs take a command as an argument.
+
+**A marker with no reason excuses nothing.** It is reported once, and what it
+was written over is read as though it had not been written. Honoured silently
+where it covered more than one command, a reasonless marker beside a `run: |`
+block made the whole block vanish with no finding and nothing said. The
 exemption marker follows the block in: beside the `run:` key it excuses the
 whole script under it, at the end of a line it excuses that line, on a line of
 its own it excuses the line under it, and it no longer reaches out of one
@@ -81,6 +100,22 @@ prints rather than what the step claims, and excuses nothing —
 **Behaviour change:** a workflow whose exemption was written inside quotes, or
 inside another step's script, goes from green to red. Both were exempting a
 step nobody had excused.
+
+### What makes a task unreadable is asked of the document
+
+The scan of the raw text existed on the reasoning that by the time a document
+exists, `package:yaml` has expanded every alias into a copy and the evidence is
+gone. It has not: an alias produces the SAME node reached twice, a merge key
+arrives as a plain key called `<<`, and a scalar knows whether it was written in
+quotes. So the state machine goes — it had been narrowed five times, and each
+narrowing refused a file the one before it accepted.
+
+What is left for the raw text is what only the raw text has: the whitespace that
+indents a line, which is not a value and never reaches a node.
+
+**One rule is narrower on purpose.** An anchor with nothing pointing at it is no
+longer refused. What R2 protects is a task being readable from its own keys, and
+it is the `*base` somewhere else that breaks that.
 
 ### The scan of the raw text reads the file the way YAML does
 
@@ -274,12 +309,14 @@ Measured on a synthetic repository of 15,000 files and a task file of 4,000:
   `xtask check >&-` ended at 255 from inside the failure reporting. A closed
   reader is an ordinary end in both places now. A piped child's stdin is closed
   rather than left as a pipe nothing fills.
-- An `::error::` annotation escapes `%` before it escapes the newlines. The
+- An `::error::` annotation and a `::group::` fold both escape `%` before they
+  escape the newlines. The
   runner decodes what it reads back, so a message quoting `--name a%0Ab` — what
   a failure prints of its own argv — was decoded into the newline the escaping
   exists to remove, and truncated there.
 - `do: remove` sorts the paths it reports whether or not one of its arguments
-  contains a glob character. It sorted them in one case and kept written order
+  contains a glob character, and lists a path named twice — `['build',
+  'build*']` — once. It sorted them in one case and kept written order
   in the other, so one block's `--dry-run` could not be compared with another's.
 - A `timeout:` or an `interruptible:` on a body that cannot honour one is
   collected with the rest of a task's contradictions rather than thrown one at

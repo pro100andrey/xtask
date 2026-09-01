@@ -45,6 +45,7 @@ final class CiStep {
     this.command, {
     this.exemption,
     this.exemptionIsShared = false,
+    this.exemptionIsFirst = true,
   });
 
   /// The file it came from, relative to the repository root.
@@ -75,6 +76,12 @@ final class CiStep {
   /// command, the author was told their marker excused nothing, about a marker
   /// that excused the command they wrote it for.
   final bool exemptionIsShared;
+
+  /// Whether this is the first command that reason covers.
+  ///
+  /// Only for saying a thing once: a marker with no reason is one mistake
+  /// however many commands it stands over.
+  final bool exemptionIsFirst;
 }
 
 /// What a person writes beside a `run:` step that is not a gate set.
@@ -280,7 +287,7 @@ CiReport checkCi(XtaskFile file, {required String root}) {
 
   for (final step in steps) {
     final read = _readStep(step.command, declared);
-    final exemption = step.exemption;
+    final written = step.exemption;
 
     // **The exemption is asked last, and only of a step that would otherwise
     // be a command.** Asked first, it swallowed everything: a marker on
@@ -292,12 +299,18 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     // **Said wherever it is true, not only where nothing else is.** The
     // reason is the whole price of the marker, and the test for it lived in
     // the last branch — so a marker with nothing after it was reported as
-    // missing its reason only on the steps this mode already passes. On a
-    // step that reaches xtask the reader was told the marker excuses nothing
-    // and never that it says nothing, which are two facts and not one.
-    if (exemption != null && exemption.isEmpty && !step.exemptionIsShared) {
+    // missing its reason only on the steps this mode already passes, and then
+    // not at all on one covering more than one command: a reasonless marker
+    // beside a `run: |` block made the whole block vanish with no finding, no
+    // exemption and nothing said, which is the cheapest way there has ever
+    // been to turn a red gate green.
+    if (written != null && written.isEmpty && step.exemptionIsFirst) {
       problems.add(ExemptsWithoutSaying(step));
     }
+    // And it excuses nothing, so everything below reads as though it had not
+    // been written. An exemption IS its reason; without one there is no
+    // exemption to weigh, only a marker to report.
+    final exemption = written == null || written.isEmpty ? null : written;
 
     if (read.refused case final refusal?) {
       problems.add(RunsSomethingRefused(step, refusal));
@@ -347,9 +360,7 @@ CiReport checkCi(XtaskFile file, {required String root}) {
       continue;
     }
     if (exemption != null) {
-      if (exemption.isNotEmpty) {
-        exempted.add(step);
-      }
+      exempted.add(step);
       continue;
     }
     problems.add(RunsACommand(step));
@@ -431,56 +442,38 @@ bool _namesXtask(String word) =>
 /// its gate counted as unrun — a false red about a workflow that runs the
 /// gate, and precisely the shape this reading was written to support.
 ///
-/// **And a mention inside a quoted string is not tried at all.** The words
-/// have their quotes taken off before the parser sees them, because `-j "2"`
-/// is an ordinary thing to write — so `echo "run xtask check"` parsed into
-/// `check`, a declared gate set, and the job was reported as running a gate
-/// that nothing in it runs. That is the silent green this mode exists to
-/// prevent, and it is reachable from a banner line. Asked only of the
-/// fallback: a mention in command position is a command wherever the quotes
-/// are, which is what `sh -c "dart run :xtask check"` is.
-StepReading? _invocationIn(List<String> words, Set<String> declared) {
-  final quoted = _wordsInsideQuotes(words);
+/// **And a word that was written in quotes is data.** `echo "run xtask check"`
+/// — a banner line — parsed into `check`, a declared gate set, and the job was
+/// reported as running a gate that nothing in it runs. That is the silent
+/// green this mode exists to prevent, reached from a line somebody writes to
+/// be helpful. The rule is one sentence and holds for the word before it too:
+/// a `run` that is part of a string does not put the next word in command
+/// position.
+///
+/// The price is `sh -c "dart run :xtask check"`, which really is an
+/// invocation and is now read as an ordinary command. Telling it from `echo
+/// "…"` means knowing which programs take a command as an argument, which is
+/// the list this doc has already refused to keep twice. It is a step that
+/// wants a marker, or wants writing plainly — and either way it is answered,
+/// which is the half that matters.
+StepReading? _invocationIn(List<_Word> words, Set<String> declared) {
   for (var at = 0; at < words.length; at++) {
-    if (!_namesXtask(words[at])) {
+    final word = words[at];
+    if (word.quoted || !_namesXtask(word.text)) {
       continue;
     }
-    if (at == 0 || _runsWhatFollows(words[at - 1])) {
-      return _readWords(words.skip(at + 1));
+    final after = [for (final rest in words.skip(at + 1)) rest.text];
+    final before = at == 0 ? null : words[at - 1];
+    if (before == null || (!before.quoted && _runsWhatFollows(before.text))) {
+      return _readWords(after);
     }
-    if (quoted[at]) {
-      continue;
-    }
-    final read = _readWords(words.skip(at + 1));
+    final read = _readWords(after);
     final names = read.gate ?? read.named;
     if ((names != null && declared.contains(names)) || read.mode != null) {
       return read;
     }
   }
   return null;
-}
-
-/// Which of [words] begin inside a quoted string.
-///
-/// Whitespace cannot open or close a quote, so the words in order carry the
-/// same quote state the line does. A `'` inside double quotes is a character
-/// and not an opener, which is what keeps `echo "don't" && ./xtask check` an
-/// invocation.
-List<bool> _wordsInsideQuotes(List<String> words) {
-  final inside = <bool>[];
-  var single = false;
-  var double = false;
-  for (final word in words) {
-    inside.add(single || double);
-    for (final unit in word.codeUnits) {
-      if (unit == 0x27 && !double) {
-        single = !single;
-      } else if (unit == 0x22 && !single) {
-        double = !double;
-      }
-    }
-  }
-  return inside;
 }
 
 /// Whether [word] is a thing whose next argument is a command to run.
@@ -492,9 +485,6 @@ bool _runsWhatFollows(String word) => const {
   'pnpx',
   'dlx',
 }.contains(word);
-
-/// [word] without the quotes a shell would take off it.
-String _unquoted(String word) => word.replaceAll('"', '').replaceAll("'", '');
 
 /// What one shell step turns out to be.
 typedef StepReading = ({
@@ -565,14 +555,15 @@ StepReading _names(String mode, String what) => (
 /// `--why=check` reported a gate set named under an empty flag — and had
 /// nothing to say about `--help`, which is not in `modes`.
 StepReading _readStep(String command, Set<String> declared) =>
-    _invocationIn(command.split(RegExp(r'\s+')), declared) ?? _notAnInvocation;
+    _invocationIn(_lex(command).words, declared) ?? _notAnInvocation;
 
 /// What [arguments] make of themselves, read by the command line's own parser.
-StepReading _readWords(Iterable<String> arguments) {
+StepReading _readWords(List<String> arguments) {
   final request = parseArguments(
-    // Quotes come off, because they are the shell's and not the parser's:
-    // `-j "2"` is an ordinary thing to write and `2` is what the child sees.
-    arguments.map(_unquoted).toList(),
+    // Their quotes are already off: they are the shell's and not the parser's,
+    // and `-j "2"` is an ordinary thing to write while `2` is what the child
+    // sees.
+    arguments,
     // The number is discarded — only whether it PARSES is being asked — and a
     // check that read this machine's width would vouch differently for one
     // workflow on two runners.
@@ -699,6 +690,7 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
           inTheBlock += commands.length;
           read.add((own: own, commands: commands));
         }
+        final under = <String>{};
         for (final line in read) {
           final exemption = line.own ?? beside;
           for (final one in line.commands) {
@@ -710,6 +702,7 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
               exemptionIsShared:
                   exemption != null &&
                   (line.own != null ? line.commands.length : inTheBlock) > 1,
+              exemptionIsFirst: exemption != null && under.add(exemption),
             );
           }
         }
@@ -719,6 +712,176 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
   }
 }
 
+/// One word of a shell line, with its quotes off and where they were noted.
+final class _Word {
+  const _Word(
+    this.text, {
+    required this.quoted,
+    required this.at,
+    required this.end,
+  });
+
+  /// The word as the child would see it — quotes removed, escapes applied.
+  final String text;
+
+  /// Whether any part of it was written inside quotes.
+  ///
+  /// Which makes it data rather than something the step runs: `echo "run
+  /// xtask check"` is a banner, and reading it as an invocation reported a
+  /// gate as covered that nothing in the job runs.
+  final bool quoted;
+
+  /// Where it begins in the line, so a command can be quoted back as written.
+  final int at;
+
+  /// Where it ends, exclusive.
+  final int end;
+}
+
+/// A shell line, read at the lexical level and no further.
+///
+/// **One reading of one line, because there were three and they disagreed.**
+/// This module grew a scanner for quotes inside the invocation finder, another
+/// inside the command splitter, and a third inside the comment finder. None
+/// knew about `\` escapes, they answered the same question differently, and
+/// the two silent greens and the two false reds of the last review each came
+/// from one of them being right where another was wrong. The doc on the
+/// comment finder had already argued that two readings of one `#` is a defect;
+/// three readings of one quote is the same defect, three times.
+///
+/// This is the lexical level and nothing above it: words, quotes, operators,
+/// and where a comment starts. Nothing here asks what a command MEANS — which
+/// program takes another as an argument, which builtin does no work — because
+/// that is the list this module has refused to keep since it started.
+///
+/// Redirections are recognised so they can be dropped: `dart run :xtask check
+/// 2>&1` is one of the most ordinary lines in a workflow, and splitting it on
+/// the `&` cut it into `dart run :xtask check 2>` and `1`, reported a command
+/// nobody wrote, and counted the gate unrun.
+({List<_Word> words, List<int> breaks, String? comment}) _lex(String line) {
+  final words = <_Word>[];
+  // Where a control operator ended a command: an index into [words].
+  final breaks = <int>[];
+  String? comment;
+
+  final text = StringBuffer();
+  var began = -1;
+  var quoted = false;
+  // The word so far is all digits and unquoted, so a `>` or `<` next takes it
+  // as the file descriptor it redirects.
+  var digits = true;
+
+  void endWord(int at) {
+    if (began == -1) {
+      return;
+    }
+    words.add(_Word(text.toString(), at: began, end: at, quoted: quoted));
+    text.clear();
+    began = -1;
+    quoted = false;
+    digits = true;
+  }
+
+  /// Drops the redirection at [i] and the word after it, answering where to
+  /// carry on from.
+  int skipRedirect(int i, int width) {
+    // The file descriptor in front of it, where there was one.
+    if (digits && began != -1) {
+      text.clear();
+      began = -1;
+      quoted = false;
+      digits = true;
+    } else {
+      endWord(i);
+    }
+    var at = i + width;
+    while (at < line.length && (line[at] == ' ' || line[at] == '\t')) {
+      at++;
+    }
+    // Its target, which is a word of the redirect and not of the command.
+    var single = false;
+    var double = false;
+    while (at < line.length) {
+      final c = line[at];
+      if (c == "'" && !double) {
+        single = !single;
+      } else if (c == '"' && !single) {
+        double = !double;
+      } else if (!single && !double && ' \t&|;<>'.contains(c)) {
+        break;
+      }
+      at++;
+    }
+    return at - 1;
+  }
+
+  for (var i = 0; i < line.length; i++) {
+    final c = line[i];
+    if (c == "'" || c == '"') {
+      final close = line.indexOf(c, i + 1);
+      final to = close == -1 ? line.length : close;
+      if (began == -1) {
+        began = i;
+      }
+      // A double-quoted string keeps `\` before the few characters a shell
+      // lets it escape; anywhere else the backslash is literal.
+      for (var at = i + 1; at < to; at++) {
+        if (c == '"' && line[at] == r'\' && at + 1 < to) {
+          at++;
+        }
+        text.write(line[at]);
+      }
+      quoted = true;
+      digits = false;
+      i = to;
+      continue;
+    }
+    if (c == r'\' && i + 1 < line.length) {
+      if (began == -1) {
+        began = i;
+      }
+      text.write(line[i + 1]);
+      digits = false;
+      i++;
+      continue;
+    }
+    if (c == ' ' || c == '\t') {
+      endWord(i);
+      continue;
+    }
+    if (c == '#' && began == -1) {
+      // A comment opens where a word does. `red#1` is one word to a shell as
+      // it is to YAML, and cutting there reported a fragment nobody wrote.
+      comment = line.substring(i);
+      break;
+    }
+    if (c == '>' || c == '<') {
+      final next = i + 1 < line.length ? line[i + 1] : '';
+      final width = (next == c || next == '&' || next == '|') ? 2 : 1;
+      i = skipRedirect(i, width);
+      continue;
+    }
+    if (c == '&' || c == '|' || c == ';') {
+      endWord(i);
+      if (breaks.isEmpty || breaks.last != words.length) {
+        breaks.add(words.length);
+      }
+      final next = i + 1 < line.length ? line[i + 1] : '';
+      i += (next == c && c != ';') ? 1 : 0;
+      continue;
+    }
+    if (began == -1) {
+      began = i;
+    }
+    text.write(c);
+    if (c.codeUnitAt(0) < 0x30 || c.codeUnitAt(0) > 0x39) {
+      digits = false;
+    }
+  }
+  endWord(line.length);
+  return (words: words, breaks: breaks, comment: comment);
+}
+
 /// The commands written on one line of a script.
 ///
 /// **The same argument the newline gets, and the same shallow rule.** A block
@@ -726,54 +889,30 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
 /// `||`, `;` and `|` are the other places one begins, and reading past them
 /// made the answer depend on the order inside the line. `dart analyze &&
 /// dart run :xtask check` passed green with the duplicated `dart analyze`
-/// never mentioned, while the same two commands the other way round were
-/// refused for the operands after the gate — one line, two answers, decided by
-/// which half came first. That is the defect the line-splitting was written to
-/// remove, one level in.
+/// never mentioned, while the same two the other way round were refused for
+/// the operands after the gate — one line, two answers, decided by which half
+/// came first.
 ///
-/// This is not reading the script. Nothing here asks what a command means, and
-/// a separator inside quotes is text: `echo "a && b"` is one command, as a
-/// shell has it.
+/// Each command comes back as the text it was written as, so a report quotes
+/// the line rather than a rebuilt version of it.
 ///
 /// A segment that only moves the shell is dropped, and [_movesTheShell] is
 /// where that list is argued for.
 List<String> _commandsOn(String line) {
+  final read = _lex(line);
   final commands = <String>[];
-  var single = false;
-  var double = false;
-  var began = 0;
-  void take(int end) {
-    final one = line.substring(began, end).trim();
-    if (one.isNotEmpty && !_movesTheShell(one)) {
-      commands.add(one);
+  var from = 0;
+  for (final to in [...read.breaks, read.words.length]) {
+    if (to > from) {
+      final one = line
+          .substring(read.words[from].at, read.words[to - 1].end)
+          .trim();
+      if (one.isNotEmpty && !_movesTheShell(one)) {
+        commands.add(one);
+      }
     }
+    from = to;
   }
-
-  for (var i = 0; i < line.length; i++) {
-    switch (line[i]) {
-      case "'":
-        if (!double) {
-          single = !single;
-        }
-      case '"':
-        if (!single) {
-          double = !double;
-        }
-      case '&' || '|' || ';':
-        if (single || double) {
-          continue;
-        }
-        take(i);
-        // `&&` and `||` are two characters and `;`, `&` and `|` are one. Which
-        // it is does not matter here — every one of them ends a command — so
-        // the second character is only skipped over.
-        final doubled =
-            i + 1 < line.length && line[i + 1] == line[i] && line[i] != ';';
-        i += doubled ? 1 : 0;
-        began = i + 1;
-    }
-  }
-  take(line.length);
   return commands;
 }
 
@@ -826,8 +965,7 @@ List<String> _commandLines(String command) {
 /// shellcheck's findings against the `run:` key rather than the line. The
 /// text is enough, because the marker is in it.
 String? _exemptionIn(String line) {
-  if (_commentOpensAt(line) case final opens?) {
-    final comment = line.substring(opens);
+  if (_lex(line).comment case final comment?) {
     final marker = comment.indexOf(exemptionMarker);
     if (marker != -1) {
       return _reasonAfter(comment.substring(marker + exemptionMarker.length));
@@ -836,51 +974,13 @@ String? _exemptionIn(String line) {
   return null;
 }
 
-/// Where a `#` comment opens on [line], or null if none does.
-///
-/// **One reading of one `#`, because two of them disagreed.** The exemption
-/// was looked for with `indexOf` over the whole line while the argv beside it
-/// was cut by a scan that tracked quotes, so the same `#` on the same line was
-/// a comment to one and text to the other — and the disagreement resolved in
-/// the direction that turns a finding into a pass: `run: echo '# xtask: not a
-/// gate - pretend'` exempted the step that was printing it. [ExemptsNothing]
-/// and [ExemptsWithoutSaying] are both about a marker that does not mean what
-/// it looks like; this was the third way, and it looked like a green job.
-///
-/// **Not the first `#`, and not one inside quotes.** Cut blindly, `echo "a #
-/// b"` was reported as `echo "a` — a fragment nobody wrote — and `xtask
-/// check -- --tag "#fast"` became `xtask check -- --tag "`, which parses as
-/// a gate set handed arguments and was refused for it. A comment opens where
-/// the line does or after whitespace, which is the rule a shell and YAML both
-/// use: `red#1` is one word to either of them.
-int? _commentOpensAt(String line) {
-  var single = false;
-  var double = false;
-  for (var i = 0; i < line.length; i++) {
-    switch (line[i]) {
-      case "'":
-        if (!double) {
-          single = !single;
-        }
-      case '"':
-        if (!single) {
-          double = !double;
-        }
-      case '#':
-        final opens = i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t';
-        if (!single && !double && opens) {
-          return i;
-        }
-    }
-  }
-  return null;
-}
-
 /// [line] without a trailing `#` comment, so a marker is not read as argv.
-String _withoutTrailingComment(String line) => switch (_commentOpensAt(line)) {
-  final opens? => line.substring(0, opens).trimRight(),
-  null => line,
-};
+String _withoutTrailingComment(String line) {
+  final comment = _lex(line).comment;
+  return comment == null
+      ? line
+      : line.substring(0, line.length - comment.length).trimRight();
+}
 
 /// The reason written beside the `run:` key at [span], if there is one.
 ///
