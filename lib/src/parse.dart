@@ -39,6 +39,13 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
     throw XtaskFormatException('the file is empty');
   }
 
+  // **After the parser, because this is what the parser can show and the text
+  // cannot.** An alias arrives as the same node reached twice; a merge key
+  // arrives as a key called `<<`; a scalar arrives knowing whether it was
+  // written in quotes. Derived from the raw text instead, each of those was a
+  // rule about YAML's grammar re-stated beside a parser that already had it.
+  refuseUnreadableDocument(document);
+
   final root = _asMap(document, 'the file');
 
   // Version first, and the order is not cosmetic. A key this engine does not

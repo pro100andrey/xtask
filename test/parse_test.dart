@@ -155,21 +155,32 @@ tasks: {}
     });
   });
 
-  group('§8: the scan of the raw text, before the parser', () {
-    // It has to be before, and this is the only function that ever holds the
-    // raw text: by the time an XtaskFile exists, package:yaml has expanded
-    // every alias into a copy and there is nothing left to detect.
-    test('an anchor is refused', () {
+  group('§8: what makes a task unreadable is refused', () {
+    // Asked of the document, not derived from its text: an alias arrives as
+    // the same node reached twice, and a merge key as a plain key called `<<`.
+    test('an alias is refused, at the line it is written on', () {
       final message = refusalOf(
         () => parseXtaskFile(
-          'version: 1\ntasks:\n  base: &b {desc: shared}\n',
+          'version: 1\ntasks:\n'
+          '  base: {desc: &b shared, run: [d]}\n'
+          '  third: {desc: *b, run: [d]}\n',
         ),
       );
-      expect(message, contains('anchor'));
-      expect(message, contains('line 3'));
+      expect(message, contains('alias'));
     });
 
-    test('an alias is refused', () {
+    test('and an anchor nothing points at is dead text', () {
+      // What is refused is what makes a task unreadable from its own keys, and
+      // that is the `*b` somewhere else — not the `&b` sitting on its own.
+      expect(
+        parseXtaskFile(
+          'version: 1\ntasks:\n  base: {desc: &b shared, run: [d]}\n',
+        ).tasks.keys,
+        ['base'],
+      );
+    });
+
+    test('a dangling alias is refused', () {
       expect(
         refusalOf(
           () => parseXtaskFile(
@@ -208,11 +219,13 @@ tasks: {}
       // mark cannot put the scan and the parser one character out of step.
       final message = refusalOf(
         () => parseXtaskFile(
-          '\uFEFFversion: 1\ntasks:\n  base: &b {desc: shared}\n',
+          '\uFEFFversion: 1\ntasks:\n'
+          '  a: {desc: x, run: [d]}\n'
+          '  b: {desc: x, run: [d], in:\u00A0sub}\n',
         ),
       );
-      expect(message, contains('anchor'));
-      expect(message, contains('line 3'));
+      expect(message, contains('U+00A0'));
+      expect(message, contains('line 4'));
     });
 
     test('a merge key is refused as itself, not as an unknown key', () {
