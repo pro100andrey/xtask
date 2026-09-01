@@ -771,48 +771,23 @@ final class _Word {
   // as the file descriptor it redirects.
   var digits = true;
 
+  // The next word belongs to a redirection rather than to the command, so it
+  // is read like any other word and then dropped. Skipped with a scan of its
+  // own instead, that scan was a fifth place in this module that knew what a
+  // quote is — which is the shape of every defect the lexer replaced.
+  var dropNext = false;
+
   void endWord(int at) {
-    if (began == -1) {
-      return;
+    if (began != -1 && !dropNext) {
+      words.add(_Word(text.toString(), at: began, end: at, quoted: quoted));
     }
-    words.add(_Word(text.toString(), at: began, end: at, quoted: quoted));
+    if (began != -1) {
+      dropNext = false;
+    }
     text.clear();
     began = -1;
     quoted = false;
     digits = true;
-  }
-
-  /// Drops the redirection at [i] and the word after it, answering where to
-  /// carry on from.
-  int skipRedirect(int i, int width) {
-    // The file descriptor in front of it, where there was one.
-    if (digits && began != -1) {
-      text.clear();
-      began = -1;
-      quoted = false;
-      digits = true;
-    } else {
-      endWord(i);
-    }
-    var at = i + width;
-    while (at < line.length && (line[at] == ' ' || line[at] == '\t')) {
-      at++;
-    }
-    // Its target, which is a word of the redirect and not of the command.
-    var single = false;
-    var double = false;
-    while (at < line.length) {
-      final c = line[at];
-      if (c == "'" && !double) {
-        single = !single;
-      } else if (c == '"' && !single) {
-        double = !double;
-      } else if (!single && !double && ' \t&|;<>'.contains(c)) {
-        break;
-      }
-      at++;
-    }
-    return at - 1;
   }
 
   for (var i = 0; i < line.length; i++) {
@@ -856,13 +831,23 @@ final class _Word {
       break;
     }
     if (c == '>' || c == '<') {
+      // The file descriptor in front of it belongs to the redirect too, and
+      // it is what makes `2>&1` one operator rather than a `2` the command
+      // was handed and an `&` that ends it.
+      if (digits && began != -1) {
+        text.clear();
+        began = -1;
+        quoted = false;
+      }
+      endWord(i);
+      dropNext = true;
       final next = i + 1 < line.length ? line[i + 1] : '';
-      final width = (next == c || next == '&' || next == '|') ? 2 : 1;
-      i = skipRedirect(i, width);
+      i += (next == c || next == '&' || next == '|') ? 1 : 0;
       continue;
     }
     if (c == '&' || c == '|' || c == ';') {
       endWord(i);
+      dropNext = false;
       if (breaks.isEmpty || breaks.last != words.length) {
         breaks.add(words.length);
       }

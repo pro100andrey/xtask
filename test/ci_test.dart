@@ -138,11 +138,16 @@ jobs:
   a:
     steps:
       - run: dart run :xtask ci-analyze 2>&1
-      - run: dart run :xtask ci-web > out.txt
+      - run: dart run :xtask ci-web >out.txt
+      - run: dart run :xtask ci-analyze 2> "a b.log"
 ''');
       final found = check();
       expect(found.problems, isEmpty, reason: refusals(found).join('\n'));
-      expect(found.invocations.map((i) => i.gate), ['ci-analyze', 'ci-web']);
+      expect(found.invocations.map((i) => i.gate), [
+        'ci-analyze',
+        'ci-web',
+        'ci-analyze',
+      ]);
     });
 
     test('and a mention inside quotes is data, however it is written', () {
