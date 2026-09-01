@@ -2226,6 +2226,37 @@ void main() {
   });
 
   group('the real starter, against a real process', () {
+    test('a flush that never answers does not end the run', () async {
+      // The mechanism the CI failure turned out to be. Before an inheriting
+      // child this process flushes its own stdout, to order its lines against
+      // the child's. On a pipe whose reader has gone that flush can return a
+      // future nothing completes — and a Dart isolate whose `main` awaits such
+      // a future, with no other IO outstanding, simply ENDS: `exitCode` is
+      // never assigned, so the process answers 0. `xtask check | head -1` ran
+      // the first task of a gate set and reported success with the rest never
+      // started and nothing on stderr.
+      //
+      // Unbounded, this test hangs until the suite's own timeout. That is the
+      // bug, stated as a test.
+      final marker = File(
+        p.join(Directory.systemTemp.createTempSync('xtask_hang').path, 'ran'),
+      );
+      addTearDown(() => marker.parent.deleteSync(recursive: true));
+      final code =
+          await SystemProcessStarter(
+            orderingDeadline: const Duration(milliseconds: 50),
+            flushStdout: () => Completer<void>().future,
+          ).start(
+            '/bin/sh',
+            ['-c', 'touch ${marker.path}'],
+            workingDirectory: Directory.current.path,
+            environment: const {},
+            runInShell: false,
+          );
+      expect(code, 0);
+      expect(marker.existsSync(), isTrue, reason: 'the child never ran');
+    }, testOn: '!windows');
+
     test('a child still runs when nobody is reading this process', () async {
       // The coupling this removes: with a reader, the engine flushes its own
       // stdout before an inheriting child and hands that descriptor down. With
@@ -2255,7 +2286,7 @@ void main() {
       // ended the process at 255 with the section still open. These bytes are
       // for a person to read, not for this engine to validate.
       final lines = <String>[];
-      final code = await const SystemProcessStarter().start(
+      final code = await SystemProcessStarter().start(
         '/bin/sh',
         ['-c', r"printf 'na\xefve\n'"],
         workingDirectory: Directory.current.path,
@@ -2278,8 +2309,8 @@ void main() {
         // does not let go.
         final began = DateTime.now();
         final code =
-            await const SystemProcessStarter(
-              grace: Duration(milliseconds: 200),
+            await SystemProcessStarter(
+              grace: const Duration(milliseconds: 200),
             ).start(
               '/bin/sh',
               ['-c', 'sleep 30 & echo started'],
@@ -2301,7 +2332,7 @@ void main() {
     // The one thing the fake cannot answer. Everything else above is about
     // which processes would start; this is about a process actually starting.
     test('runs it and reports its code', () async {
-      const starter = SystemProcessStarter();
+      final starter = SystemProcessStarter();
       final code = await starter.start(
         Platform.resolvedExecutable,
         ['--version'],
@@ -2316,7 +2347,7 @@ void main() {
       // What makes the wrapper above necessary rather than defensive: the
       // real starter cannot report this as a code, because there is no
       // process to get a code from.
-      const starter = SystemProcessStarter();
+      final starter = SystemProcessStarter();
       expect(
         () => starter.start(
           Platform.resolvedExecutable,
@@ -2331,7 +2362,7 @@ void main() {
 
     test('a process is stopped when the run gives up on it', () async {
       // The one thing no fake can answer: whether the process actually dies.
-      const starter = SystemProcessStarter();
+      final starter = SystemProcessStarter();
       final giveUp = Completer<void>();
       final began = DateTime.now();
       final running = starter.start(
@@ -2357,7 +2388,9 @@ void main() {
       // inherited them keeps them open — so `sh -c 'sleep …'` killed at once
       // still took the full sleep to report, which is `interruptible:` giving
       // back nothing and billing the wait as the task's own work.
-      const starter = SystemProcessStarter(grace: Duration(milliseconds: 200));
+      final starter = SystemProcessStarter(
+        grace: const Duration(milliseconds: 200),
+      );
       final giveUp = Completer<void>();
       final began = DateTime.now();
       final running = starter.start(
@@ -2384,7 +2417,7 @@ void main() {
     test('a process that overstays is killed, and says so', () async {
       // The one thing no fake can answer: whether the process actually dies.
       // A Dart that reads stdin forever is portable and needs no `sleep`.
-      const starter = SystemProcessStarter();
+      final starter = SystemProcessStarter();
       final began = DateTime.now();
       final code = await starter.start(
         Platform.resolvedExecutable,
@@ -2408,7 +2441,7 @@ void main() {
         // SIGTERM is a request. The escalation is what makes `timeout:` a limit
         // rather than a suggestion, and only a process that refuses the request
         // can tell the two apart.
-        const starter = SystemProcessStarter(grace: Duration(seconds: 2));
+        final starter = SystemProcessStarter(grace: const Duration(seconds: 2));
         final code = await starter.start(
           Platform.resolvedExecutable,
           ['run', p.join('test', 'fixtures', 'ignores_sigterm.dart')],
@@ -2424,7 +2457,7 @@ void main() {
     );
 
     test('and one that finishes in time is not touched', () async {
-      const starter = SystemProcessStarter();
+      final starter = SystemProcessStarter();
       final code = await starter.start(
         Platform.resolvedExecutable,
         ['--version'],
@@ -2437,7 +2470,7 @@ void main() {
     });
 
     test('a non-zero exit comes back as itself', () async {
-      const starter = SystemProcessStarter();
+      final starter = SystemProcessStarter();
       final code = await starter.start(
         Platform.resolvedExecutable,
         ['run', 'no_such_file_4f3a9.dart'],
