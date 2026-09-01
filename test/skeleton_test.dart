@@ -8,6 +8,15 @@ import 'package:xtask/xtask.dart';
 
 import 'helpers.dart';
 
+/// The gate the pipe tests run: four tasks, each touching a marker, so that a
+/// failure can say how far the run got instead of only that it did not finish.
+const _marks = ['one', 'two', 'three', 'four'];
+
+/// One of them, as the file writes it.
+String _aTask(String name) =>
+    '  $name: {desc: $name, gate: [check], '
+    'run: [sh, -c, "touch ran-$name"]}\n';
+
 void main() {
   group('dart run :xtask', () {
     // The claim this proves, and the reason it is a subprocess rather than a
@@ -226,12 +235,12 @@ void main() {
 
     setUp(() {
       root = tempRepo('epipe');
+      // **Four, not two.** With two, a failure says only "it stopped" — and
+      // whether the run stops at the same task every time or at whichever one
+      // the pipe happened to close under is the difference between a decision
+      // and a race, which is the first thing worth knowing about it.
       File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
-        'version: 1\n'
-        'gates: [check]\n'
-        'tasks:\n'
-        '  one: {desc: a, gate: [check], run: [sh, -c, "touch ran-one"]}\n'
-        '  two: {desc: b, gate: [check], run: [sh, -c, "touch ran-two"]}\n',
+        'version: 1\ngates: [check]\ntasks:\n${_marks.map(_aTask).join()}',
       );
     });
 
@@ -274,28 +283,26 @@ void main() {
 
     bool ran(String marker) => File(p.join(root.path, marker)).existsSync();
 
+    /// Which of the four touched their marker, in order.
+    String reached() => [
+      for (final n in _marks)
+        if (ran('ran-$n')) n,
+    ].join(', ');
+
     test('and the same run with nobody closing the pipe does too', () async {
       // The control. If this fails as well, the pipe is not what stopped the
       // run and the sentence the other test prints is about the wrong thing.
       final run = await whole(['check']);
-      expect(ran('ran-one'), isTrue, reason: run.out);
-      expect(ran('ran-two'), isTrue, reason: run.out);
+      expect(reached(), _marks.join(', '), reason: run.out);
       expect(run.code, 0, reason: run.out);
     }, testOn: '!windows');
 
     test('every task still runs, and the run still answers 0', () async {
       final run = await piped(['check']);
-      final said = 'exit ${run.code}, stderr: <<${run.errors.trim()}>>';
-      expect(
-        ran('ran-one'),
-        isTrue,
-        reason: 'the first task never started — $said',
-      );
-      expect(
-        ran('ran-two'),
-        isTrue,
-        reason: 'the run stopped at the pipe — $said',
-      );
+      final said =
+          'reached: <<${reached()}>>, exit ${run.code}, '
+          'stderr: <<${run.errors.trim()}>>';
+      expect(reached(), _marks.join(', '), reason: said);
       expect(run.code, 0, reason: said);
     }, testOn: '!windows');
   });
