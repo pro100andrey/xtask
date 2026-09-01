@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -234,27 +235,42 @@ void main() {
       );
     });
 
-    Future<int> piped(List<String> args) async {
+    /// **Its stderr is kept, not drained.** Drained, this test could say only
+    /// that the run stopped at the pipe — which is the one thing already
+    /// obvious from the assertion, while the sentence the run printed about
+    /// WHY is exactly what a reader needs and is the thing being thrown away.
+    /// It failed on two CI runners and passed everywhere else, and there was
+    /// nothing in the report to work from.
+    Future<({int code, String errors})> piped(List<String> args) async {
       final xtask = await Process.start(
         Platform.resolvedExecutable,
         ['run', p.join(Directory.current.path, 'bin', 'xtask.dart'), ...args],
         workingDirectory: root.path,
       );
       final head = await Process.start('head', const ['-1']);
+      final errors = xtask.stderr.transform(utf8.decoder).join();
       unawaited(xtask.stdout.pipe(head.stdin).catchError((Object _) {}));
-      unawaited(xtask.stderr.drain<void>().catchError((Object _) {}));
       unawaited(head.stdout.drain<void>());
       await head.exitCode;
-      return xtask.exitCode;
+      return (code: await xtask.exitCode, errors: await errors);
     }
 
     bool ran(String marker) => File(p.join(root.path, marker)).existsSync();
 
     test('every task still runs, and the run still answers 0', () async {
-      final code = await piped(['check']);
-      expect(ran('ran-one'), isTrue, reason: 'the first task never started');
-      expect(ran('ran-two'), isTrue, reason: 'the run stopped at the pipe');
-      expect(code, 0);
+      final run = await piped(['check']);
+      final said = 'exit ${run.code}, stderr: <<${run.errors.trim()}>>';
+      expect(
+        ran('ran-one'),
+        isTrue,
+        reason: 'the first task never started — $said',
+      );
+      expect(
+        ran('ran-two'),
+        isTrue,
+        reason: 'the run stopped at the pipe — $said',
+      );
+      expect(run.code, 0, reason: said);
     }, testOn: '!windows');
   });
 }

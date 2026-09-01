@@ -135,7 +135,7 @@ final class ExecutableResolver {
     if (_isAPath(executable)) {
       final candidate = _paths.isAbsolute(executable)
           ? executable
-          : _paths.normalize(_paths.join(from, executable));
+          : _paths.normalize(_paths.joinAll([from, ..._written(executable)]));
       return isRunnable(candidate) ? candidate : null;
     }
 
@@ -159,6 +159,18 @@ final class ExecutableResolver {
   /// key, the resolution and the message — and a change to it in two of them
   /// is a cache that disagrees with the answer it caches.
   bool _isAPath(String executable) => _paths.split(executable).length > 1;
+
+  /// [written]'s segments, read the way the file writes them.
+  ///
+  /// **The file speaks POSIX and the machine may not.** Every path in
+  /// `xtask.yaml` is written with `/`, because the file is committed and read
+  /// on three platforms. Joined onto a native directory without re-splitting,
+  /// `./tool/gen` came out as `C:\repo/tool/gen` — which Windows accepts and
+  /// `--dry-run` then printed back at a reader as the plan, and which no
+  /// comparison against a path this engine built any other way matches.
+  /// `boundary.dart` draws the same line for `in:` and for `remove`; this was
+  /// the one place that joined without it.
+  List<String> _written(String written) => p.posix.split(written);
 
   /// Whether the answer for [executable] can depend on where the body runs.
   ///

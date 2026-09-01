@@ -92,6 +92,22 @@ void main() {
       expect(r.resolve('./tool/gen', from: '/repo'), '/repo/tool/gen');
     });
 
+    test('and it comes back in the separators the machine writes', () {
+      // The file speaks POSIX and the machine may not. Joined onto a native
+      // directory without re-splitting, `./tool/gen` came back as
+      // `C:\repo/tool/gen` — which Windows accepts, which `--dry-run` printed
+      // back at a reader as the plan, and which matches no path this engine
+      // builds any other way. `boundary.dart` draws that line for `in:` and
+      // for `remove`; this was the one place that joined without it.
+      final r = resolver(
+        windows: true,
+        environment: {'PATH': r'C:\bin', 'PATHEXT': '.EXE'},
+        runnable: {r'C:\repo\tool\gen'},
+      );
+      expect(r.resolve('./tool/gen', from: r'C:\repo'), r'C:\repo\tool\gen');
+      expect(r.resolve('tool/gen', from: r'C:\repo'), r'C:\repo\tool\gen');
+    });
+
     test('so the same name under two directories is two programs', () {
       // The cache is keyed on the pair for this reason. Keyed on the name
       // alone, the second task here answered with the first one's program —
