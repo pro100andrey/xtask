@@ -255,7 +255,33 @@ void main() {
       return (code: await xtask.exitCode, errors: await errors);
     }
 
+    /// The same run with nobody closing the pipe: the control this test had
+    /// no way to state, and without which a failure cannot say whether the
+    /// pipe is implicated at all.
+    Future<({int code, String out})> whole(List<String> args) async {
+      final log = File(p.join(root.path, 'out.log'));
+      final xtask = await Process.start(
+        Platform.resolvedExecutable,
+        ['run', p.join(Directory.current.path, 'bin', 'xtask.dart'), ...args],
+        workingDirectory: root.path,
+      );
+      final written = xtask.stdout.pipe(log.openWrite());
+      unawaited(xtask.stderr.drain<void>().catchError((Object _) {}));
+      final code = await xtask.exitCode;
+      await written;
+      return (code: code, out: log.readAsStringSync());
+    }
+
     bool ran(String marker) => File(p.join(root.path, marker)).existsSync();
+
+    test('and the same run with nobody closing the pipe does too', () async {
+      // The control. If this fails as well, the pipe is not what stopped the
+      // run and the sentence the other test prints is about the wrong thing.
+      final run = await whole(['check']);
+      expect(ran('ran-one'), isTrue, reason: run.out);
+      expect(ran('ran-two'), isTrue, reason: run.out);
+      expect(run.code, 0, reason: run.out);
+    }, testOn: '!windows');
 
     test('every task still runs, and the run still answers 0', () async {
       final run = await piped(['check']);
