@@ -39,6 +39,21 @@ void main() {
     isRunnable: (path) => !p.basename(path).startsWith('missing'),
   );
 
+  /// The same, shaped like the host it runs on.
+  ///
+  /// **For the two cases that are about how a path is WRITTEN.** The resolver
+  /// above is fixed to POSIX so that finding a name is not what is under test
+  /// — and these two are about the separators the answer comes back in, which
+  /// a POSIX resolver on Windows gets wrong by construction: it joined
+  /// `C:\repo` and `./tool/gen` into `C:\repo/tool/gen` while the expectation
+  /// was built with `p.join`, so the test failed on the runner about a
+  /// disagreement it had with itself.
+  ExecutableResolver hostShaped() => ExecutableResolver(
+    environment: const {'PATH': '/bin'},
+    windows: Platform.isWindows,
+    isRunnable: (path) => !p.basename(path).startsWith('missing'),
+  );
+
   /// The Windows shape §5.4 rule 3 is about: every tool is a batch shim.
   ExecutableResolver windowsShims() => ExecutableResolver(
     environment: const {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
@@ -95,6 +110,7 @@ void main() {
         dry(
           'version: 1\ntasks:\n  a: {desc: x, run: [./tool/gen, --check]}\n',
           'a',
+          resolver: hostShaped(),
         ),
         completion(ExitCode.success),
       );
@@ -108,6 +124,7 @@ void main() {
           'version: 1\ntasks:\n'
               '  a: {desc: x, in: sub, run: [./gen]}\n',
           'a',
+          resolver: hostShaped(),
         ),
         completion(ExitCode.success),
       );
