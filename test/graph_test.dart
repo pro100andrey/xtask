@@ -4,6 +4,8 @@ import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/parse.dart';
 
+import 'helpers.dart';
+
 /// Parses a document whose tasks are written as `name: needs -> then`.
 ///
 /// Written this way because every case below is about ORDER, and a page of
@@ -25,15 +27,6 @@ Plan planOf(String taskName, Map<String, String> tasks) {
     }
   });
   return planRun(parseXtaskFile(buffer.toString()), taskName);
-}
-
-String refusalOf(void Function() body) {
-  try {
-    body();
-  } on XtaskFormatException catch (e) {
-    return e.toString();
-  }
-  fail('expected a refusal, got none');
 }
 
 void main() {
@@ -227,6 +220,54 @@ void main() {
     });
   });
 
+  group('a route is looked for down every edge, not only the first', () {
+    test('a dangling name does not read as a ring on a second branch', () {
+      // Left on the path, the second branch reaching it saw the path guard
+      // fire and switched off the memo for the rest of the question.
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  target: {desc: t, run: [d]}\n'
+        '  ghost: {desc: g, needs: [nowhere], run: [d]}\n'
+        '  top: {desc: c, needs: [ghost, target], run: [d]}\n'
+        '  other: {desc: o, needs: [ghost, target], run: [d]}\n',
+      );
+      expect(routeTo(file, from: 'top', to: 'target'), isNotNull);
+      expect(routeTo(file, from: 'other', to: 'target'), isNotNull);
+    });
+
+    test('and a ring does not make a later branch answer wrongly', () {
+      // What cannot reach the target is remembered, which is what keeps the
+      // search from re-walking every shared subtree once per path. A branch
+      // cut short by the path guard says nothing in general, so nothing is
+      // remembered once a ring has been met.
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  target: {desc: t, run: [d]}\n'
+        '  ring-a: {desc: a, needs: [ring-b], run: [d]}\n'
+        '  ring-b: {desc: b, needs: [ring-a, target], run: [d]}\n'
+        '  top: {desc: c, needs: [ring-a, target], run: [d]}\n',
+      );
+      expect(routeTo(file, from: 'top', to: 'target'), isNotNull);
+    });
+
+    test('a dead branch does not mark what it touched unreachable', () {
+      // `seen` is the PATH, not the visited set. Kept across branches, a task
+      // a dead branch had walked through was never revisited, so `--why`
+      // answered "nothing reaches it" about a task a run does reach — the one
+      // answer §8 says this question exists to prevent.
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  dead: {desc: a, run: [d]}\n'
+        '  target: {desc: b, run: [d]}\n'
+        '  mid: {desc: c, needs: [target], run: [d]}\n'
+        '  top: {desc: d, needs: [dead, mid], run: [d]}\n'
+        '  other: {desc: e, needs: [mid, target], run: [d]}\n',
+      );
+      expect(routeTo(file, from: 'top', to: 'target'), isNotNull);
+      expect(routeTo(file, from: 'other', to: 'target'), isNotNull);
+    });
+  });
+
   group('the routes `--why` reads off the graph', () {
     const chain = '''
 version: 1
@@ -307,6 +348,69 @@ tasks:
         routeTo(file, from: 'top', to: 'target')!.first.to,
         'first',
       );
+    });
+  });
+
+  group('a chain deeper than the engine walks is refused, not crashed on', () {
+    // One stack frame per edge, so a long enough chain took `--validate` and
+    // `--dry-run` out on a stack overflow and exit 255 — a number the table
+    // does not define, from the modes whose job is to answer about a file.
+    String chain(int length) => [
+      'version: 1',
+      'tasks:',
+      for (var i = 0; i < length; i++) ...[
+        '  t$i:',
+        '    desc: x',
+        "    run: ['true']",
+        if (i < length - 1) '    needs: [t${i + 1}]',
+      ],
+    ].join('\n');
+
+    test('and one at the bound still plans', () {
+      final plan = planRun(parseXtaskFile(chain(mostDepth)), 't0');
+      expect(plan.names, hasLength(mostDepth));
+    });
+
+    test('and one past it is a sentence and a code the table has', () {
+      expect(
+        () => planRun(parseXtaskFile(chain(mostDepth + 50)), 't0'),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('deep'), contains('$mostDepth')),
+          ),
+        ),
+      );
+    });
+
+    test('and `--why` walks it without a bound at all', () {
+      // Two ways to get this wrong, and both were tried. Returning false where
+      // the branch was cut renders as `nothing reaches it`, about a branch
+      // never looked down; refusing instead turned down questions the deep
+      // chain never touched. The walk holds its own stack now, so there is no
+      // depth to bound and neither answer has to be invented.
+      final file = parseXtaskFile(chain(mostDepth * 4));
+      expect(routesTo(file, 't0').keys, ['t0']);
+      expect(
+        routesTo(file, 't${mostDepth * 3}').keys,
+        ['t0'],
+        reason: 'a route four thousand hops long is still a route',
+      );
+    });
+
+    test('and an unrelated deep chain does not refuse a short question', () {
+      final file = parseXtaskFile(
+        [
+          'version: 1',
+          'gates: [g]',
+          'tasks:',
+          '  s: {desc: x, gate: [g], needs: [z]}',
+          "  z: {desc: y, run: ['true']}",
+          chain(mostDepth + 100).split('\n').skip(2).join('\n'),
+        ].join('\n'),
+      );
+      expect(routesTo(file, 'z').keys, contains('gate g'));
     });
   });
 }

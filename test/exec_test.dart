@@ -5,12 +5,17 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/bodies.dart';
 import 'package:xtask/src/context.dart';
+import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/exec.dart';
 import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/markers.dart';
 import 'package:xtask/src/parse.dart';
+import 'package:xtask/src/primitives.dart';
+import 'package:xtask/src/process.dart';
+
+import 'helpers.dart';
 
 /// A clock that advances by [step] every time it is read.
 ///
@@ -64,6 +69,20 @@ final class FakeStarter implements ProcessStarter {
   /// which "are these two running at once" is a question with an answer.
   final holds = <String, Completer<void>>{};
 
+  /// Executables started with no output sink — the streaming path, where the
+  /// child writes straight through and nothing is collected.
+  final streamed = <String>[];
+
+  /// Which executables were given a reason to stop early, by name.
+  final stoppable = <String, Future<void>>{};
+
+  /// Executables that cannot be started at all, by name.
+  ///
+  /// `Process.start` throws rather than answering when the working directory
+  /// is not there, so a fake that can only return an exit code cannot reach
+  /// the case at all — which is why nothing here caught it for so long.
+  final refuses = <String>{};
+
   @override
   Future<int> start(
     String executable,
@@ -72,9 +91,26 @@ final class FakeStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    Future<void>? until,
     void Function(String line)? output,
   }) async {
     final name = p.basename(executable);
+    if (output == null) {
+      streamed.add(name);
+    }
+    if (until != null) {
+      // The real starter kills the process; here it is enough to answer the
+      // way a stopped one does.
+      stoppable[name] = until;
+    }
+    if (refuses.contains(name)) {
+      throw ProcessException(
+        executable,
+        arguments,
+        'No such file or directory',
+        2,
+      );
+    }
     started.add(
       Started(
         executable,
@@ -88,7 +124,17 @@ final class FakeStarter implements ProcessStarter {
     // Two lines with a pause between them: enough to tell output that was
     // collected and printed whole from output that arrived interleaved.
     (output ?? (_) {})('$name speaking');
-    await holds[name]?.future;
+    if (until != null) {
+      final stopped = await Future.any([
+        holds[name]?.future.then((_) => false) ?? Future.value(false),
+        until.then((_) => true),
+      ]);
+      if (stopped) {
+        return SystemProcessStarter.interrupted;
+      }
+    } else {
+      await holds[name]?.future;
+    }
     (output ?? (_) {})('$name again');
     return codes[name] ?? ExitCode.success;
   }
@@ -100,12 +146,10 @@ void main() {
   late List<String> logged;
 
   setUp(() {
-    root = Directory.systemTemp.createTempSync('xtask_exec_');
+    root = tempRepo('exec');
     starter = FakeStarter();
     logged = [];
   });
-
-  tearDown(() => root.deleteSync(recursive: true));
 
   void given(List<String> paths) {
     for (final path in paths) {
@@ -155,7 +199,56 @@ void main() {
     ).run(planRun(file, task));
   }
 
+  group('an empty set that feeds `remove` says what shape it wants', () {
+    test(
+      'because a glob set for a clean task is green once and red after',
+      () async {
+        // The one shape that passes on the first run and refuses on the second:
+        // a glob matches the build output, then matches nothing once the task
+        // has done its job. The general refusal is about sets and says nothing
+        // about the one thing that would fix it.
+        final code = await runFile(
+          'version: 1\n'
+              "sets:\n  outs:\n    include: ['build/**']\n"
+              'tasks:\n'
+              r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
+              '\n',
+          'clean',
+          verbs: builtInVerbs(root: root.path),
+        );
+        expect(code, ExitCode.invalidFile);
+        expect(logged.join('\n'), contains('list of literal patterns'));
+      },
+    );
+
+    test('and an ordinary empty set is not given that advice', () async {
+      final code = await runFile(
+        'version: 1\n'
+            "sets:\n  srcs:\n    include: ['lib/**.dart']\n"
+            'tasks:\n'
+            r'  fmt: {desc: x, run: [dart, format, $all], all: srcs}'
+            '\n',
+        'fmt',
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(logged.join('\n'), isNot(contains('list of literal patterns')));
+    });
+  });
+
   group('a `run:` body becomes one process, as argv', () {
+    test('and the echo renders it the way a failure will', () async {
+      // One run said `ls no such dir` while the failure two lines under it
+      // said `ls 'no such dir' ''` — the same three arguments, rendered as
+      // four and as three. `--dry-run` agrees with the second, so the plan and
+      // the transcript of one task contradicted each other.
+      await runFile(
+        'version: 1\ntasks:\n'
+            "  a: {desc: x, run: [dart, test, 'a b', '']}\n",
+        'a',
+      );
+      expect(logged.join('\n'), contains("test 'a b' ''"));
+    });
+
     test('argv is not a string anybody splits', () async {
       final code = await runFile(
         'version: 1\ntasks:\n'
@@ -179,13 +272,13 @@ void main() {
       ]);
     });
 
-    test('`argv-from` appends the resolved members', () async {
+    test('`all` puts the resolved members where the marker is', () async {
       given(['a.lake', 'b.lake']);
       await runFile(
         'version: 1\n'
             "sets:\n  srcs: {include: ['**/*.lake']}\n"
             'tasks:\n'
-            '  a: {desc: x, run: [fmt], argv-from: srcs}\n',
+            '  a: {desc: x, run: [fmt, \$all], all: srcs}\n',
         'a',
       );
       expect(starter.started.single.arguments, ['a.lake', 'b.lake']);
@@ -298,11 +391,11 @@ void main() {
       expect(starter.started, isEmpty);
     });
 
-    test('the same for `argv-from`, which fails one step later', () async {
+    test('the same for `all:`, which fails one step later', () async {
       final code = await runFile(
         'version: 1\n'
             'sets:\n  src:\n    include: [lib/*.dart]\n'
-            'tasks:\n  a: {desc: x, argv-from: src, run: [dart, format]}\n',
+            'tasks:\n  a: {desc: x, all: src, run: [dart, format, \$all]}\n',
         'a',
       );
       expect(code, ExitCode.invalidFile);
@@ -436,7 +529,7 @@ void main() {
   });
 
   group('arguments from the command line land last', () {
-    test('after `args:` and after the expanded `argv-from`', () async {
+    test('after `args:` and after the expanded `all:`', () async {
       // Where a command line belongs: able to add to what the file already
       // said, rather than buried in front of it.
       given(['lib/a.dart']);
@@ -444,8 +537,8 @@ void main() {
         'version: 1\n'
             'sets:\n  src:\n    include: [lib/*.dart]\n'
             'tasks:\n'
-            '  a: {desc: x, run: [dart, format], args: [--fix],'
-            ' argv-from: src}\n',
+            r'  a: {desc: x, run: [dart, format], args: [--fix, $all],'
+            ' all: src}\n',
         'a',
         passed: ['--line-length', '100'],
       );
@@ -562,6 +655,40 @@ void main() {
       expect(
         logged.join('\n'),
         contains('skipped  all — needs `lint`, which did not pass'),
+      );
+    });
+
+    test('a plain failure answers for the run, not a continuation', () async {
+      // Keyed by plan position alone, the earliest failure won — and a
+      // continuation always sits before the unrelated tasks that come after
+      // its origin, so a run where an ordinary task ALSO failed answered 4:
+      // "the body succeeded and only a `then:` after it did not". That is the
+      // one code that must not be claimed loosely; the registry has already
+      // taken the upload it describes.
+      const both =
+          'version: 1\ntasks:\n'
+          '  a: {desc: a, run: [dart], then: [a_check]}\n'
+          '  a_check: {desc: b, run: [ruff]}\n'
+          '  b: {desc: c, run: [pytest]}\n'
+          '  all: {desc: d, needs: [a, b]}\n';
+      starter = FakeStarter({'ruff': 1, 'pytest': 1});
+      expect(
+        await runFile(both, 'all', keepGoing: true),
+        ExitCode.taskFailed,
+      );
+    });
+
+    test('and a continuation alone still answers 4', () async {
+      const both =
+          'version: 1\ntasks:\n'
+          '  a: {desc: a, run: [dart], then: [a_check]}\n'
+          '  a_check: {desc: b, run: [ruff]}\n'
+          '  b: {desc: c, run: [pytest]}\n'
+          '  all: {desc: d, needs: [a, b]}\n';
+      starter = FakeStarter({'ruff': 1});
+      expect(
+        await runFile(both, 'all', keepGoing: true),
+        ExitCode.continuationFailed,
       );
     });
 
@@ -767,7 +894,7 @@ void main() {
     test('but a plan of one task is not made to wait for itself', () async {
       // Buffering exists because two tasks writing to one terminal produce a
       // transcript belonging to neither. One task cannot do that, so asking
-      // for `--parallel` on a single task used to cost §5.2's live output and
+      // for `-j` above 1 on a single task used to cost §5.2's live output and
       // buy nothing — and announce a width it had no use for.
       starter = FakeStarter()..holds['ruff'] = Completer<void>();
       final running = runFile(three, 'boom', concurrency: 2);
@@ -829,7 +956,7 @@ void main() {
     });
   });
 
-  group('--parallel runs what does not depend on anything else', () {
+  group('`-j` runs what does not depend on anything else', () {
     // The one place a documented promise is deliberately broken, and only when
     // asked: §5.2 wants a task's output as it arrives, and two tasks arriving
     // at once make a transcript belonging to neither.
@@ -1080,19 +1207,25 @@ void main() {
       );
       expect(
         starter.started.single.workingDirectory,
-        p.join(root.path, 'packages/lake'),
+        // Segment by segment: a path written `packages/lake` in the file
+        // becomes this machine's spelling of it, which on Windows is not the
+        // one `p.join` leaves when handed the whole string.
+        p.join(root.path, 'packages', 'lake'),
       );
     });
 
-    test(r'`in: $each` without an `each:` set is refused', () async {
-      final code = await runFile(
-        'version: 1\ntasks:\n'
-            r'  a: {desc: x, in: $each, run: [dart]}'
-            '\n',
-        'a',
+    test(r'`in: $each` without an `each:` set is refused when read', () {
+      // Refused by the parser now, before a plan exists — earlier than this
+      // used to be caught, and with the line it was written on.
+      expect(
+        () => runFile(
+          'version: 1\ntasks:\n'
+              r'  a: {desc: x, in: $each, run: [dart]}'
+              '\n',
+          'a',
+        ),
+        throwsA(isA<XtaskFormatException>()),
       );
-      expect(code, ExitCode.invalidFile);
-      expect(logged.join('\n'), contains(r'`in: $each` without an `each:`'));
     });
   });
 
@@ -1160,14 +1293,14 @@ void main() {
   });
 
   group("a `do:` body is the project's own Dart", () {
-    test('the verb is called, with args and argv-from resolved', () async {
+    test('the verb is called, with args and `all:` resolved', () async {
       given(['x.lake']);
       late VerbContext seen;
       final code = await runFile(
         'version: 1\n'
             "sets:\n  srcs: {include: ['**/*.lake']}\n"
             'tasks:\n'
-            '  a: {desc: x, do: fmt, args: [--write], argv-from: srcs}\n',
+            '  a: {desc: x, do: fmt, args: [--write, \$all], all: srcs}\n',
         'a',
         verbs: {
           'fmt': (context) async {
@@ -1360,11 +1493,846 @@ void main() {
     });
   });
 
+  group('a process that cannot be started at all', () {
+    test('is a task failure, not an unhandled exception', () async {
+      starter.refuses.add('dart');
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n',
+        'a',
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(
+        logged.join('\n'),
+        contains('task `a` could not be started: No such file or directory'),
+      );
+    });
+
+    test('names the member it was at', () async {
+      given(['packages/one/x', 'packages/two/x']);
+      starter.refuses.add('dart');
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [packages/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}'
+            '\n',
+        'a',
+      );
+      expect(logged.join('\n'), contains('at `packages/one`'));
+    });
+
+    test('leaves no section open on a host that folds', () async {
+      // The half of this nobody could see from a terminal: only a
+      // `RunFailure` reaches the annotation, and the annotation is what emits
+      // `::endgroup::`. An escaping exception left the group open, so the rest
+      // of the job folded into a task that had already died.
+      starter.refuses.add('dart');
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n',
+        'a',
+        markers: const GitHubMarkers(),
+      );
+      final marks = logged.where((l) => l.startsWith('::')).toList();
+      expect(marks.where((l) => l == '::group::a'), hasLength(1));
+      expect(marks.where((l) => l == '::endgroup::'), hasLength(1));
+      expect(marks.last, startsWith('::error::'));
+    });
+  });
+
+  group('`-j` reaches the members of an `each:`', () {
+    test('which is the shape the flag exists for', () async {
+      // The budget used to gate which TASKS were admitted, so `-j 4` over one
+      // fanned-out task admitted the task and ran its members in turn: the
+      // flag did nothing at all on its commonest case.
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        concurrency: 3,
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(3), reason: 'all three at once');
+      starter.holds['ruff']!.complete();
+      await running;
+    });
+
+    test('and the budget is a budget, not a promise', () async {
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        concurrency: 2,
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(2), reason: 'the third is waiting');
+      starter.holds['ruff']!.complete();
+      await running;
+      expect(starter.started, hasLength(3));
+    });
+
+    test('and one member at a time is still one member at a time', () async {
+      // §5.2 unchanged where it was never in question.
+      given(['pkg/a/x', 'pkg/b/x']);
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(1));
+      starter.holds['ruff']!.complete();
+      await running;
+    });
+  });
+
+  group('a fanned-out task says how much work there was', () {
+    test('beside how long it took, which is the number `-j` is for', () async {
+      // One row said how long you waited; over forty packages at four at a
+      // time, how much work there WAS is the other half, and without it a run
+      // that halved its wall clock looked like one that had less to do.
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+      );
+      expect(logged.join('\n'), contains('over 3 members'));
+    });
+
+    test('and a task with one body says nothing of the kind', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [ruff]}\n',
+        'a',
+      );
+      expect(logged.join('\n'), isNot(contains('members')));
+    });
+  });
+
+  group('a one-step plan keeps its live output', () {
+    test('because there is no second task to interleave with', () async {
+      // Buffering the task as well as its members took §5.2's live output and
+      // bought nothing: the announcement promised output as each member ends
+      // while none of it arrived until the whole task did.
+      given(['pkg/a/x']);
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        concurrency: 4,
+      );
+      // Nothing collects the child's output: it writes straight through, as
+      // §5.2 promises when there is only one thing writing.
+      expect(starter.streamed, ['ruff']);
+    });
+  });
+
+  group('a run that is about to go quiet says so first', () {
+    test('including when the two things at once are members', () async {
+      // This asked only whether the PLAN had two steps, so `xtask fmt -j 4`
+      // over one `each:` task buffered every member and printed nothing at
+      // all until the first ended — with no announcement, because the
+      // announcement asked the same question.
+      given(['pkg/a/x', 'pkg/b/x']);
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        concurrency: 2,
+      );
+      expect(logged.first, contains('up to 2 at once'));
+    });
+
+    test('and says nothing when there is nothing to wait through', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [ruff]}\n',
+        'a',
+        concurrency: 2,
+      );
+      expect(logged.first, isNot(contains('at once')));
+    });
+  });
+
+  group('which member the run answers for does not depend on scheduling', () {
+    test('it is the earliest in the set, not the first to finish', () async {
+      // A `do:` verb's code is a deliberate decision, so two members
+      // answering 2 and 1 made the same command line answer differently run
+      // to run once members could overlap.
+      given(['pkg/a/x', 'pkg/b/x']);
+      final code = await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, do: pick}'
+            '\n',
+        'a',
+        concurrency: 2,
+        keepGoing: true,
+        verbs: {
+          'pick': (context) async =>
+              context.workingDirectory.endsWith('a') ? 2 : 1,
+        },
+      );
+      expect(code, 2, reason: '`pkg/a` is first in the set');
+    });
+  });
+
+  group('`interruptible:` gives back what parallelism costs', () {
+    test('a task that says so is stopped when the answer is known', () async {
+      // Sequentially, a format failure at 0.4s means the rest never run. In
+      // parallel they run to the end anyway and the machine spends the whole
+      // budget to learn what it knew in a tenth of a second.
+      starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  fmt: {desc: a, run: [ruff]}\n'
+            '  slow: {desc: b, interruptible: true, run: [pytest]}\n'
+            '  all: {desc: c, needs: [fmt, slow]}\n',
+        'all',
+        concurrency: 2,
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(
+        logged.join('\n'),
+        contains('task `slow` was stopped'),
+        reason: 'stopped, and not reported as a second failure',
+      );
+      expect(logged.join('\n'), isNot(contains('failed   slow')));
+    });
+
+    test('a task exiting 130 on its own is a failure, not a stop', () async {
+      // 130 is what a shell reports for SIGINT and what plenty of programs
+      // exit with by themselves. Reading it as "stopped" wherever the key
+      // appeared turned a real failure into a green result nobody checked.
+      starter = FakeStarter({'ruff': SystemProcessStarter.interrupted});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, interruptible: true, run: [ruff]}\n',
+        'a',
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(logged.join('\n'), isNot(contains('was stopped')));
+    });
+
+    test('and stopping one member stops the ones behind it', () async {
+      // Returning normally left the loop with no failure to act on, so every
+      // remaining member was started and immediately killed — the opposite of
+      // the first answer at the first answer's price.
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            '  fmt: {desc: a, run: [ruff]}\n'
+            r'  slow: {desc: b, each: pkgs, in: $each, interruptible: true,'
+            ' run: [pytest]}'
+            '\n'
+            '  all: {desc: c, needs: [fmt, slow]}\n',
+        'all',
+        concurrency: 2,
+      );
+      expect(
+        starter.started.where((s) => p.basename(s.executable) == 'pytest'),
+        hasLength(lessThan(3)),
+        reason:
+            'the members behind the stopped one never started — what was '
+            'already running is left alone, as it is for tasks',
+      );
+    });
+
+    test('a task that does not say so is left alone', () async {
+      starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  fmt: {desc: a, run: [ruff]}\n'
+            '  slow: {desc: b, run: [pytest]}\n'
+            '  all: {desc: c, needs: [fmt, slow]}\n',
+        'all',
+        concurrency: 2,
+      );
+      await pumpEventQueue();
+      expect(logged.join('\n'), isNot(contains('was stopped')));
+      starter.holds['pytest']!.complete();
+      await running;
+    });
+
+    test(
+      'and `--keep-going` stops nothing at all, which is what it says',
+      () async {
+        starter = FakeStarter({'ruff': 1})..holds['pytest'] = Completer<void>();
+        final running = runFile(
+          'version: 1\ntasks:\n'
+              '  fmt: {desc: a, run: [ruff]}\n'
+              '  slow: {desc: b, interruptible: true, run: [pytest]}\n'
+              '  all: {desc: c, needs: [fmt, slow]}\n',
+          'all',
+          concurrency: 2,
+          keepGoing: true,
+        );
+        await pumpEventQueue();
+        expect(logged.join('\n'), isNot(contains('was stopped')));
+        starter.holds['pytest']!.complete();
+        await running;
+      },
+    );
+  });
+
+  group('the file says whether, the flag says how many', () {
+    test("`serial:` keeps a task's members from overlapping", () async {
+      // One shared `pub` cache, one git index: getting this wrong makes a run
+      // flaky rather than slow, and it is the same on every machine.
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, serial: true, run: [ruff]}'
+            '\n',
+        'a',
+        concurrency: 3,
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(1), reason: 'one at a time, at -j 3');
+      starter.holds['ruff']!.complete();
+      await running;
+      expect(starter.started, hasLength(3));
+    });
+
+    test('`exclusive:` keeps apart two tasks the graph does not', () async {
+      // Nothing in the plan says these two are related; the machine says so.
+      starter = FakeStarter()
+        ..holds['ruff'] = Completer<void>()
+        ..holds['pytest'] = Completer<void>();
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, exclusive: [port], run: [ruff]}\n'
+            '  b: {desc: y, exclusive: [port], run: [pytest]}\n'
+            '  all: {desc: z, needs: [a, b]}\n',
+        'all',
+      );
+      await pumpEventQueue();
+      expect(starter.started, hasLength(1), reason: 'the token is held');
+      starter.holds['ruff']!.complete();
+      await pumpEventQueue();
+      expect(starter.started, hasLength(2));
+      starter.holds['pytest']!.complete();
+      await running;
+    });
+
+    test(
+      "a token-blocked task does not occupy one of `-j`'s places",
+      () async {
+        // The check ran a microtask after admission, so the walk's synchronous
+        // pass always saw an empty set: three tasks sharing a browser were all
+        // admitted, two blocked, and every independent task stayed out behind
+        // them.
+        starter = FakeStarter()
+          ..holds['ruff'] = Completer<void>()
+          ..holds['mypy'] = Completer<void>();
+        final running = runFile(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, exclusive: [browser], run: [ruff]}\n'
+              '  b: {desc: y, exclusive: [browser], run: [pytest]}\n'
+              '  quick: {desc: z, run: [mypy]}\n'
+              '  all: {desc: w, needs: [a, b, quick]}\n',
+          'all',
+          concurrency: 2,
+        );
+        await pumpEventQueue();
+        expect(
+          starter.started.map((s) => p.basename(s.executable)),
+          ['ruff', 'mypy'],
+          reason: '`b` is blocked, so its place went to `quick`',
+        );
+        for (final hold in starter.holds.values) {
+          hold.complete();
+        }
+        await running;
+      },
+    );
+
+    test('and two tasks sharing no token still run together', () async {
+      starter = FakeStarter()
+        ..holds['ruff'] = Completer<void>()
+        ..holds['pytest'] = Completer<void>();
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, exclusive: [one, two], run: [ruff]}\n'
+            '  b: {desc: y, exclusive: [two, one], run: [pytest]}\n'
+            '  c: {desc: z, run: [mypy]}\n'
+            '  all: {desc: w, needs: [a, b, c]}\n',
+        'all',
+        concurrency: 3,
+      );
+      await pumpEventQueue();
+      // `c` holds nothing, and `a`/`b` name the same pair in opposite
+      // orders — which is how two holders of one pair deadlock if the
+      // order is the one they wrote.
+      expect(starter.started.map((s) => p.basename(s.executable)), [
+        'ruff',
+        'mypy',
+      ]);
+      for (final hold in starter.holds.values) {
+        hold.complete();
+      }
+      await running;
+      expect(starter.started, hasLength(3));
+    });
+  });
+
+  group('a failing member does not silence the rest', () {
+    Future<int> overThree({required bool keepGoing}) {
+      given(['pkg/one/x', 'pkg/two/x', 'pkg/three/x']);
+      starter = FakeStarter({'ruff': 1});
+      return runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        keepGoing: keepGoing,
+      );
+    }
+
+    test('--keep-going runs every one and names them all', () async {
+      // The loop this ends: the first bad file abandoned the rest, so a run
+      // reported one problem and a person fixed, reran, fixed, reran.
+      expect(await overThree(keepGoing: true), ExitCode.taskFailed);
+      expect(starter.started, hasLength(3));
+      final said = logged.join('\n');
+      expect(said, contains('3 of 3 members failed'));
+      expect(said, contains('`pkg/one`'));
+      expect(said, contains('`pkg/three`'));
+    });
+
+    test('and without it, what did not run is said out loud', () async {
+      // A member that never ran read exactly like one that passed.
+      expect(await overThree(keepGoing: false), ExitCode.taskFailed);
+      expect(starter.started, hasLength(1));
+      expect(logged.join('\n'), contains('2 of 3 not attempted'));
+    });
+
+    test('one member says nothing about counts', () async {
+      given(['pkg/one/x']);
+      starter = FakeStarter({'ruff': 1});
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+      );
+      expect(logged.join('\n'), isNot(contains('of 1')));
+    });
+  });
+
+  group('a verb is given what it needs to be the escape hatch it is', () {
+    test('it knows which member it is', () async {
+      // It ran once per member with the same arguments and a different
+      // working directory, and that was all it had — it could not name the
+      // member in a message or derive anything from it.
+      given(['pkg/a/x', 'pkg/b/x']);
+      final seen = <String?>[];
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, do: note}'
+            '\n',
+        'a',
+        verbs: {
+          'note': (context) async {
+            seen.add(context.member);
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(seen, ['pkg/a', 'pkg/b']);
+    });
+
+    test('and it can run a program the way `run:` does', () async {
+      // "Make it a verb" was advice that could not be taken: a verb reaching
+      // for `Process.start` lost §5.4's PATH walk and the code that says a
+      // tool is missing rather than broken.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) => context.run(['ruff', '--fix']),
+        },
+      );
+      expect(starter.started, hasLength(1));
+      expect(p.basename(starter.started.single.executable), 'ruff');
+      expect(starter.started.single.arguments, ['--fix']);
+    });
+
+    test('and it is refused a metacharacter through a batch shim', () async {
+      // `runInShell` was computed and this never asked — so a verb could hand
+      // `cmd.exe` the one injection §5.4 rule 3 exists to stop, while the same
+      // argv written as a `run:` body was refused.
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        resolver: ExecutableResolver(
+          environment: const {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
+          windows: true,
+          isRunnable: (path) => path.toLowerCase().endsWith('.bat'),
+        ),
+        verbs: {
+          'shell-out': (context) => context.run(['ruff', 'a&b']),
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(starter.started, isEmpty);
+    });
+
+    test('and a relative directory is read from the repository root', () async {
+      // Against the process's own directory it worked from the root and
+      // quietly targeted somewhere else from a subdirectory.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) =>
+              context.run(['ruff'], workingDirectory: 'packages/a'),
+        },
+      );
+      expect(
+        starter.started.single.workingDirectory,
+        p.join(root.path, 'packages', 'a'),
+      );
+    });
+
+    test('and its own directory passed back in is not "outside"', () async {
+      // The obvious way for a verb to be explicit, and the way any path
+      // composed around `context.workingDirectory` arrives. Refusing every
+      // absolute path refused this one and said, of the repository root, that
+      // it reaches outside the repository.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) => context.run(
+            ['ruff'],
+            workingDirectory: context.workingDirectory,
+          ),
+        },
+      );
+      expect(starter.started.single.workingDirectory, root.path);
+    });
+
+    test('and with no directory at all it runs where the task runs', () async {
+      // The default the context used to apply itself and the engine now
+      // applies one layer down. Nothing asserted it, so the two halves of that
+      // move could disagree in silence.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, in: packages/a, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) => context.run(['ruff']),
+        },
+      );
+      expect(
+        starter.started.single.workingDirectory,
+        p.join(root.path, 'packages', 'a'),
+      );
+    });
+
+    test('and a directory outside the repository is refused', () async {
+      // `boundary.dart` says the fence is one function, and that every place
+      // turning a written string into a path calls it. This was the third such
+      // place and the only one that called nothing: `p.join` walks straight up
+      // a `..`, so the child started at the filesystem root and the run
+      // answered 0. Code 2 for the reason `remove` answers 2 on the same
+      // question — the project is wrong about what it owns.
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) =>
+              context.run(['ruff'], workingDirectory: '../../..'),
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(starter.started, isEmpty);
+      expect(logged.join('\n'), contains('outside the repository'));
+    });
+
+    test('and so is an absolute one', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) =>
+              context.run(['ruff'], workingDirectory: '/etc'),
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(starter.started, isEmpty);
+    });
+
+    test('and a program it cannot find is still code 3', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) => context.run(['missing-tool']),
+        },
+      );
+      expect(code, ExitCode.missingTool);
+    });
+  });
+
+  group('a body that raises rather than answering', () {
+    test("closes its section even when the failure is not this one's to "
+        'answer', () async {
+      // `XtaskFormatException` leaves through a rethrow, past the annotation
+      // that emits `::endgroup::` — reintroducing, for one exception type,
+      // the failure this whole block was written to remove.
+      await expectLater(
+        runFile(
+          'version: 1\ntasks:\n  a: {desc: x, do: boom}\n',
+          'a',
+          verbs: {'boom': (_) => throw XtaskFormatException('nope')},
+          markers: const GitHubMarkers(),
+        ),
+        throwsA(isA<XtaskFormatException>()),
+      );
+      expect(
+        logged.where((l) => l == '::endgroup::'),
+        hasLength(1),
+      );
+    });
+
+    test('and the summary still names what never started', () async {
+      // The unwind lets the running tasks finish so the summary is the whole
+      // run rather than a mid-run snapshot — and left everything still queued
+      // out of it entirely, in neither `failed` nor `skipped`. A task that
+      // silently did not happen is indistinguishable from one that passed,
+      // which is the failure this tool is about.
+      await expectLater(
+        runFile(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, do: boom}\n'
+              '  c: {desc: z, run: [pytest]}\n'
+              '  all: {desc: w, needs: [a, c]}\n',
+          'all',
+          verbs: {'boom': (_) => throw XtaskFormatException('nope')},
+        ),
+        throwsA(isA<XtaskFormatException>()),
+      );
+      expect(logged.join('\n'), contains('skipped  c'));
+      expect(logged.join('\n'), contains('skipped  all'));
+    });
+
+    test('is a task failure, not exit 255', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: boom}\n',
+        'a',
+        verbs: {'boom': (_) => throw StateError('nope')},
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(logged.join('\n'), contains('task `a` threw StateError'));
+    });
+
+    test('closes its section on a host that folds', () async {
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: boom}\n',
+        'a',
+        verbs: {'boom': (_) => throw StateError('nope')},
+        markers: const GitHubMarkers(),
+      );
+      final marks = logged.where((l) => l.startsWith('::')).toList();
+      expect(marks.where((l) => l == '::endgroup::'), hasLength(1));
+      expect(marks.last, startsWith('::error::'));
+    });
+
+    test("a verb's own ProcessException is not read as this body failing "
+        'to start', () async {
+      // A verb that shells out to something absent raises the same exception
+      // a body does. Reported as "could not be started" it would print
+      // `do <verb>` underneath, sending the reader at the wrong command.
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: boom}\n',
+        'a',
+        verbs: {
+          'boom': (_) => throw const ProcessException('git', ['log']),
+        },
+      );
+      final said = logged.join('\n');
+      expect(said, contains('threw ProcessException'));
+      expect(said, isNot(contains('could not be started')));
+    });
+  });
+
+  group('which failure answers for the run', () {
+    // Taken from the first to FINISH, the exit code depended on scheduling:
+    // under `-j`, two tasks failing with different codes answered whichever
+    // ended sooner, so the same file answered differently on a busier
+    // machine. A tool whose exit code is its shortest bug report cannot roll
+    // dice, and the plan's order is the one thing about a run that does not
+    // move.
+    test('is the first in the plan, not the first to end', () async {
+      starter = FakeStarter({'slow': 1});
+      starter.holds['slow'] = Completer<void>();
+      final run = runFile(
+        'version: 1\n'
+            'tasks:\n'
+            '  slow: {desc: a, run: [slow]}\n'
+            '  fast: {desc: b, run: [missingfast]}\n'
+            '  both: {desc: c, needs: [slow, fast]}\n',
+        'both',
+        keepGoing: true,
+        concurrency: 2,
+      );
+      // Long enough that `fast` has certainly finished and recorded its own
+      // failure first — which is the whole state this is about.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      starter.holds['slow']!.complete();
+      expect(
+        await run,
+        ExitCode.taskFailed,
+        reason:
+            '`slow` is first in the plan and answers for the run, though '
+            '`fast` failed with 3, the missing-tool code, and ended first',
+      );
+    });
+  });
+
   group('the real starter, against a real process', () {
+    test('a flush that never answers does not end the run', () async {
+      // The mechanism the CI failure turned out to be. Before an inheriting
+      // child this process flushes its own stdout, to order its lines against
+      // the child's. On a pipe whose reader has gone that flush can return a
+      // future nothing completes — and a Dart isolate whose `main` awaits such
+      // a future, with no other IO outstanding, simply ENDS: `exitCode` is
+      // never assigned, so the process answers 0. `xtask check | head -1` ran
+      // the first task of a gate set and reported success with the rest never
+      // started and nothing on stderr.
+      //
+      // Unbounded, this test hangs until the suite's own timeout. That is the
+      // bug, stated as a test.
+      final marker = File(
+        p.join(Directory.systemTemp.createTempSync('xtask_hang').path, 'ran'),
+      );
+      addTearDown(() => marker.parent.deleteSync(recursive: true));
+      final code =
+          await SystemProcessStarter(
+            orderingDeadline: const Duration(milliseconds: 50),
+            flushStdout: () => Completer<void>().future,
+          ).start(
+            '/bin/sh',
+            ['-c', 'touch ${marker.path}'],
+            workingDirectory: Directory.current.path,
+            environment: const {},
+            runInShell: false,
+          );
+      expect(code, 0);
+      expect(marker.existsSync(), isTrue, reason: 'the child never ran');
+    }, testOn: '!windows');
+
+    test('a child still runs when nobody is reading this process', () async {
+      // The coupling this removes: with a reader, the engine flushes its own
+      // stdout before an inheriting child and hands that descriptor down. With
+      // none, both are for nobody — and a run whose tasks depend on who is
+      // listening is a run that answers differently down a pipe. `xtask check
+      // | head -1` started the first task of a gate set and answered 0 with
+      // the rest never run, on CI and on no machine that could reproduce it.
+      final marker = File(
+        p.join(Directory.systemTemp.createTempSync('xtask_gone').path, 'ran'),
+      );
+      addTearDown(() => marker.parent.deleteSync(recursive: true));
+      final code = await SystemProcessStarter(readerGone: () => true).start(
+        '/bin/sh',
+        ['-c', 'echo out; touch ${marker.path}'],
+        workingDirectory: Directory.current.path,
+        environment: const {},
+        runInShell: false,
+      );
+      expect(code, 0);
+      expect(marker.existsSync(), isTrue, reason: 'the child never ran');
+    }, testOn: '!windows');
+
+    test('a byte that is not UTF-8 is passed through, not raised', () async {
+      // The strict decoder throws from inside the stream's data handler, which
+      // reaches the root zone as an UNCAUGHT error rather than as something
+      // the fan-out could catch: one Latin-1 byte from any task under `-j`
+      // ended the process at 255 with the section still open. These bytes are
+      // for a person to read, not for this engine to validate.
+      final lines = <String>[];
+      final code = await SystemProcessStarter().start(
+        '/bin/sh',
+        ['-c', r"printf 'na\xefve\n'"],
+        workingDirectory: Directory.current.path,
+        environment: const {},
+        runInShell: false,
+        output: lines.add,
+      );
+      expect(code, ExitCode.success);
+      expect(lines.single, contains('na'));
+      expect(lines.single, contains('ve'));
+    }, testOn: '!windows');
+
+    test(
+      'and a grandchild holding the pipes does not outlive the run',
+      () async {
+        // The two subscriptions were never held and never cancelled, so they
+        // kept the socket after the report had printed and the exit code was
+        // set: `main` had returned and the isolate stayed alive until the
+        // grandchild let go. Bounding the wait was half the fix — waiting less
+        // does not let go.
+        final began = DateTime.now();
+        final code =
+            await SystemProcessStarter(
+              grace: const Duration(milliseconds: 200),
+            ).start(
+              '/bin/sh',
+              ['-c', 'sleep 30 & echo started'],
+              workingDirectory: Directory.current.path,
+              environment: const {},
+              runInShell: false,
+              output: (_) {},
+            );
+        expect(code, ExitCode.success);
+        expect(
+          DateTime.now().difference(began),
+          lessThan(const Duration(seconds: 5)),
+          reason: 'it waited for the grandchild rather than for the child',
+        );
+      },
+      testOn: '!windows',
+    );
+
     // The one thing the fake cannot answer. Everything else above is about
     // which processes would start; this is about a process actually starting.
     test('runs it and reports its code', () async {
-      const starter = SystemProcessStarter();
+      final starter = SystemProcessStarter();
       final code = await starter.start(
         Platform.resolvedExecutable,
         ['--version'],
@@ -1375,10 +2343,81 @@ void main() {
       expect(code, 0);
     });
 
+    test('a missing working directory throws rather than answering', () {
+      // What makes the wrapper above necessary rather than defensive: the
+      // real starter cannot report this as a code, because there is no
+      // process to get a code from.
+      final starter = SystemProcessStarter();
+      expect(
+        () => starter.start(
+          Platform.resolvedExecutable,
+          ['--version'],
+          workingDirectory: p.join(Directory.current.path, 'no_such_dir_9f2'),
+          environment: Platform.environment,
+          runInShell: false,
+        ),
+        throwsA(isA<ProcessException>()),
+      );
+    });
+
+    test('a process is stopped when the run gives up on it', () async {
+      // The one thing no fake can answer: whether the process actually dies.
+      final starter = SystemProcessStarter();
+      final giveUp = Completer<void>();
+      final began = DateTime.now();
+      final running = starter.start(
+        Platform.resolvedExecutable,
+        ['run', p.join('test', 'fixtures', 'hangs.dart')],
+        workingDirectory: Directory.current.path,
+        environment: Platform.environment,
+        runInShell: false,
+        until: giveUp.future,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      giveUp.complete();
+      expect(await running, SystemProcessStarter.interrupted);
+      expect(
+        DateTime.now().difference(began),
+        lessThan(const Duration(seconds: 20)),
+        reason: 'it was stopped, not waited out',
+      );
+    });
+
+    test('a killed process is not waited out through a grandchild', () async {
+      // Collecting ends when stdout and stderr close, and a grandchild that
+      // inherited them keeps them open — so `sh -c 'sleep …'` killed at once
+      // still took the full sleep to report, which is `interruptible:` giving
+      // back nothing and billing the wait as the task's own work.
+      final starter = SystemProcessStarter(
+        grace: const Duration(milliseconds: 200),
+      );
+      final giveUp = Completer<void>();
+      final began = DateTime.now();
+      final running = starter.start(
+        '/bin/sh',
+        ['-c', 'sleep 20; echo done'],
+        workingDirectory: Directory.current.path,
+        environment: Platform.environment,
+        runInShell: false,
+        until: giveUp.future,
+        // Piped, which is the mode `-j > 1` uses and the only one where the
+        // collecting can outlive the process.
+        output: (_) {},
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      giveUp.complete();
+      expect(await running, SystemProcessStarter.interrupted);
+      expect(
+        DateTime.now().difference(began),
+        lessThan(const Duration(seconds: 10)),
+        reason: 'it was stopped, not waited out',
+      );
+    }, testOn: 'posix');
+
     test('a process that overstays is killed, and says so', () async {
       // The one thing no fake can answer: whether the process actually dies.
       // A Dart that reads stdin forever is portable and needs no `sleep`.
-      const starter = SystemProcessStarter();
+      final starter = SystemProcessStarter();
       final began = DateTime.now();
       final code = await starter.start(
         Platform.resolvedExecutable,
@@ -1402,7 +2441,7 @@ void main() {
         // SIGTERM is a request. The escalation is what makes `timeout:` a limit
         // rather than a suggestion, and only a process that refuses the request
         // can tell the two apart.
-        const starter = SystemProcessStarter(grace: Duration(seconds: 2));
+        final starter = SystemProcessStarter(grace: const Duration(seconds: 2));
         final code = await starter.start(
           Platform.resolvedExecutable,
           ['run', p.join('test', 'fixtures', 'ignores_sigterm.dart')],
@@ -1418,7 +2457,7 @@ void main() {
     );
 
     test('and one that finishes in time is not touched', () async {
-      const starter = SystemProcessStarter();
+      final starter = SystemProcessStarter();
       final code = await starter.start(
         Platform.resolvedExecutable,
         ['--version'],
@@ -1431,7 +2470,7 @@ void main() {
     });
 
     test('a non-zero exit comes back as itself', () async {
-      const starter = SystemProcessStarter();
+      final starter = SystemProcessStarter();
       final code = await starter.start(
         Platform.resolvedExecutable,
         ['run', 'no_such_file_4f3a9.dart'],

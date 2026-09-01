@@ -5,21 +5,226 @@ import 'package:glob/list_local_fs.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/errors.dart';
+import 'package:xtask/src/globs.dart';
 import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/sets.dart';
 
-/// The message of the [XtaskFormatException] [body] throws.
-String refusalOf(void Function() body) {
-  try {
-    body();
-  } on XtaskFormatException catch (e) {
-    return e.toString();
-  }
-  fail('expected a refusal, got none');
-}
+import 'helpers.dart';
 
 void main() {
+  group('a brace does not switch pruning off by itself', () {
+    test('one inside a segment still prunes, and finds the same members', () {
+      // `packages/{a,b}/**` splits and rejoins exactly, so the prune
+      // arithmetic holds. Reading every brace as unprunable made an ordinary
+      // monorepo shape read all of `node_modules` and `.git` — 250ms against
+      // 10ms for the same set written without it.
+      final root = tempRepo('brace');
+      for (final path in [
+        'packages/a/lib/one.dart',
+        'packages/b/lib/two.dart',
+        'packages/c/lib/three.dart',
+      ]) {
+        File(p.join(root.path, p.joinAll(p.posix.split(path))))
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync('');
+      }
+      expect(
+        SetExpander(root: root.path).expand(
+          's',
+          const GlobSet(include: ['packages/{a,b}/**/*.dart'], exclude: []),
+        ),
+        ['packages/a/lib/one.dart', 'packages/b/lib/two.dart'],
+      );
+    });
+
+    test('and one that spans a separator keeps reaching everywhere', () {
+      // `{a,b/c}/**` makes the segment COUNT depend on which alternative is
+      // taken, so a pattern with four apparent segments may still reach five
+      // deep. That one has to keep going.
+      final root = tempRepo('brace2');
+      for (final path in ['a/deep/one.dart', 'b/c/deep/two.dart']) {
+        File(p.join(root.path, p.joinAll(p.posix.split(path))))
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync('');
+      }
+      expect(
+        SetExpander(root: root.path).expand(
+          's',
+          const GlobSet(include: ['{a,b/c}/**/*.dart'], exclude: []),
+        ),
+        ['a/deep/one.dart', 'b/c/deep/two.dart'],
+      );
+    });
+  });
+
+  test('and it is refused before every reading is built', () {
+    // The limit used to be applied after every reading had been materialised:
+    // twenty-four globstars built sixteen million strings and then refused,
+    // and thirty ran the process out of memory instead of reaching the
+    // sentence written here for it. The readings are accumulated left to
+    // right and the count is checked at each step, so a pattern like this one
+    // is refused having built thirty-three strings, not 2^50000.
+    final root = tempRepo('vast');
+    // Eight, which is inside the segment bound and well past the readings
+    // one: 2^8 is 256. The two limits are different questions and this is
+    // about the second.
+    final vast = '${'**/x/' * 8}*.dart';
+    expect(
+      () => SetExpander(root: root.path).expand(
+        's',
+        GlobSet(include: [vast], exclude: const []),
+      ),
+      throwsA(
+        isA<XtaskFormatException>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('readings'), contains('set `s`')),
+        ),
+      ),
+    );
+  });
+
+  test('and a pattern whose readings collapse is bounded by its length', () {
+    // The readings bound cannot catch this one: `{a,**/}` keeps the set at a
+    // single member however many times it is repeated, so the loop ran once
+    // per segment and nothing stopped it — sixteen thousand of them was a
+    // second and a half of work to answer with one string.
+    //
+    // Counted rather than timed. A wall-clock assertion in a suite three OS
+    // runners run is a gate that goes red for being busy.
+    expect(
+      () => zeroOrMoreDirectories('{a,**/}' * (mostGlobstarSegments + 10)),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('`**/` in it'),
+        ),
+      ),
+    );
+    expect(
+      zeroOrMoreDirectories('{a,**/}' * mostGlobstarSegments),
+      hasLength(1),
+      reason: 'the bound is on the segments, and this many is still read',
+    );
+  });
+
+  test('a pattern too long to print is cut between characters', () {
+    // The refusal quotes the pattern so a reader can see which line of the
+    // file it is about, and cut on UTF-16 units it split an astral character
+    // in half — a lone surrogate in the one sentence whose job is to be read.
+    // The emoji sits across units 116 and 117, which is exactly where the cut
+    // used to land.
+    final tail = '{a,**/}' * (mostGlobstarSegments + 10);
+    final pattern = '${'a' * 116}\u{1F600}$tail';
+    expect(
+      () => zeroOrMoreDirectories(pattern),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message.runes.every((r) => r < 0xD800 || r > 0xDFFF),
+          'no unpaired surrogate in the message',
+          isTrue,
+        ),
+      ),
+    );
+  });
+
+  test("an empty pattern is the caller's own, not an invented variant", () {
+    // The empty variants are dropped on the way out because `**/` alone reads
+    // as one and `Glob` refuses it. That removal took a pattern somebody
+    // actually wrote with it: `include: ['']` contributed no glob at all and
+    // surfaced as "the set expands to nothing", about a cause the sentence
+    // does not name. Handed back, it reaches `Glob` and gets its own.
+    expect(zeroOrMoreDirectories(''), {''});
+    expect(
+      () => Glob('', context: p.posix),
+      throwsA(isA<FormatException>()),
+      reason: 'which is the refusal the reader is meant to get',
+    );
+  });
+
+  test('and an alternative that is only a globstar is never emptied', () {
+    // `{**/,b}` dropped to `{,b}`, which `package:glob` builds and then
+    // throws `Bad state: No element` from at match time — a StateError, past
+    // the FormatException guard, so exit 255. The check was asked of the text
+    // before the globstar, which after the first segment no longer holds the
+    // `{`: `{**/**/,b}` reached it with nothing to look at and built `{,b}`
+    // anyway.
+    for (final pattern in ['{**/,b}', '{**/**/,b}', '{a,**/**/}']) {
+      for (final reading in zeroOrMoreDirectories(pattern)) {
+        expect(
+          () => Glob(reading).matches('x'),
+          returnsNormally,
+          reason: '$pattern produced `$reading`, which Glob cannot match',
+        );
+      }
+    }
+  });
+
+  test(
+    'and a pattern whose readings collapse is not refused for its shape',
+    () {
+      // Counting globstars and calling it `2^n` refused this: six of them, so
+      // sixty-four readings by that arithmetic. Dropping one adjacent globstar
+      // and dropping the next produce the same string, so there are seven.
+      expect(zeroOrMoreDirectories('a/**/**/**/**/**/**/b'), hasLength(7));
+    },
+  );
+
+  test('a pattern with too many readings is refused, not matched', () {
+    // Each `**/` doubles them, because it means none OR more directories, and
+    // every reading becomes a glob matched against every entry of the walk:
+    // eight globstars is 256 globs per file, ten is over a thousand. One line
+    // of the file, unbounded work.
+    final root = tempRepo('many');
+    final wild = '${'**/x/' * 8}*.dart';
+    expect(
+      () => SetExpander(root: root.path).expand(
+        's',
+        GlobSet(include: [wild], exclude: const []),
+      ),
+      throwsA(
+        isA<XtaskFormatException>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('readings'), contains('set `s`')),
+        ),
+      ),
+    );
+  });
+
+  group('a directory that cannot be read is refused, not passed over', () {
+    test('because a set that is quietly short is a gate that checked less', () {
+      // Unhandled, this left `--validate` on a stack trace and exit 255 — a
+      // number §5.3 does not have — from the one gate the README tells every
+      // project to put in CI.
+      final root = Directory.systemTemp.createTempSync('xtask_locked_');
+      final locked = Directory(p.join(root.path, 'src', 'shut'))
+        ..createSync(recursive: true);
+      File(p.join(root.path, 'src', 'a.dart')).writeAsStringSync('');
+      Process.runSync('chmod', ['000', locked.path]);
+      addTearDown(() {
+        Process.runSync('chmod', ['755', locked.path]);
+        root.deleteSync(recursive: true);
+      });
+
+      expect(
+        () => SetExpander(root: root.path).expand(
+          's',
+          const GlobSet(include: ['src/**.dart'], exclude: []),
+        ),
+        throwsA(
+          isA<XtaskFormatException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('cannot be read'), contains('src/shut')),
+          ),
+        ),
+      );
+    }, testOn: '!windows');
+  });
+
   late Directory root;
 
   /// Creates [paths] under the temporary root, directories and all.
@@ -42,15 +247,40 @@ void main() {
     // A real filesystem rather than a fake one, deliberately: the property
     // under test is that a directory listing's order does not reach a task's
     // argument list, and a fake would have to be given an order to have one.
-    root = Directory.systemTemp.createTempSync('xtask_sets_');
+    root = tempRepo('sets');
   });
-
-  tearDown(() => root.deleteSync(recursive: true));
 
   group('a list set', () {
     test('is the members, as written', () {
       final members = expander().expand('s', const ListSet(['b', 'a', 'c']));
       expect(members, ['b', 'a', 'c']);
+    });
+
+    test('refuses a written member that leaves the repository', () {
+      // The glob arm had refused this since it was written; the list arm never
+      // met the check at all, so these reached a working directory and a verb
+      // that deletes with nothing said about them.
+      //
+      // Windows spellings included, because a fence read only as POSIX is not
+      // a fence on the machine that writes `..\..` — and every caller joins
+      // what comes back with the platform's own `p.join`.
+      const escapes = [
+        '/etc',
+        '../..',
+        r'C:\Windows',
+        'C:relative',
+        r'..\..',
+        r'\foo',
+        r'\\server\share',
+        r'a\..\b',
+      ];
+      for (final member in escapes) {
+        expect(
+          refusalOf(() => expander().expand('s', ListSet([member]))),
+          contains('reaches outside the repository'),
+          reason: member,
+        );
+      }
     });
 
     test('is NOT sorted — somebody chose that order', () {
@@ -287,6 +517,79 @@ void main() {
       expect(members, containsAll(['keep.lake', 'packages/a.lake']));
     });
 
+    test('a globstar starting a brace alternative reads as none-or-more', () {
+      // `{templates,packages}/**/*.lake` is the shape the README writes, and
+      // it was fine — the globstar there follows a `/`. This is the other
+      // shape, where each alternative is its own pattern and the globstar
+      // begins one: nothing preceded it with a slash, so the correction
+      // skipped it and the set matched every nested file and no root one.
+      given(['top.lake', 'deep/nested.lake', 'top.yaml', 'deep/nested.yaml']);
+      expect(
+        expandGlob(['{**/*.lake,**/*.yaml}']),
+        containsAll([
+          'top.lake',
+          'deep/nested.lake',
+          'top.yaml',
+          'deep/nested.yaml',
+        ]),
+      );
+    });
+
+    test('a globstar that IS a brace alternative is left alone', () {
+      // The zero-directory reading of `{**/,b}` is `{,b}` — an empty
+      // alternative, which `package:glob` builds without complaint and then
+      // throws `Bad state: No element` from at MATCH time, past the
+      // `FormatException` guard that catches a malformed pattern. A variant
+      // this engine invents must not be one the file could not have written.
+      given(['a.dart', 'deep/a.dart']);
+      expect(
+        () => expandGlob(['{**/,b}*.dart']),
+        returnsNormally,
+        reason: 'it crashed the whole run, past every exit code',
+      );
+    });
+
+    test('a comma outside braces is an ordinary character', () {
+      // `,` starts an alternative only INSIDE a group. Outside one it is
+      // text, and reading it as a segment start invented `data/a,b` for
+      // `data/a,**/b` — a variant OR'd into the match and fed to a verb that
+      // deletes.
+      given(['data/a,b', 'data/a,deep/b']);
+      expect(expandGlob(['data/a,**/b']), ['data/a,deep/b']);
+    });
+
+    test('`**` inside a segment still reaches what it matches', () {
+      // `package:glob` lets `**` cross `/` wherever it appears, and
+      // `lib/**.dart` is the shape this repository's own example ships.
+      // Reading it as a whole segment pruned `lib/src` out of the walk and
+      // lost every nested match — silently, since the set stays non-empty and
+      // the gate just checks fewer files.
+      given(['lib/a.dart', 'lib/src/b.dart']);
+      expect(expandGlob(['lib/**.dart']), ['lib/a.dart', 'lib/src/b.dart']);
+    });
+
+    test('a prefix that will not compile is read as `keep going`', () {
+      // Valid as a whole, split across an escape. Unreadable here, so it must
+      // not be read as "no" — the alternative is a scanner exception out of
+      // `expand`, past the exit codes.
+      given(['a/b/c.dart']);
+      expect(() => expandGlob([r'a\/b/*.dart']), returnsNormally);
+    });
+
+    test('a directory no include pattern could reach is not entered', () {
+      // Observable rather than asserted about: a directory the walk cannot
+      // read at all. Entering it throws; pruning it does not. Include
+      // patterns were used to match and never to prune, so a set over `src`
+      // walked all of `node_modules` and all of `.git` to find nothing there
+      // by construction.
+      given(['src/a.dart', 'node_modules/deep/b.dart']);
+      final shut = Directory(p.join(root.path, 'node_modules'));
+      Process.runSync('chmod', ['000', shut.path]);
+      addTearDown(() => Process.runSync('chmod', ['755', shut.path]));
+
+      expect(expandGlob(['src/**/*.dart']), ['src/a.dart']);
+    });
+
     test('an excluded directory is not descended into either', () {
       given(['x/test_data/deep/deeper/a.lake']);
       expect(
@@ -445,6 +748,32 @@ void main() {
       expect(
         Glob('a/b/*.lake', context: p.posix).matches('a/b/c.lake'),
         isTrue,
+      );
+    });
+  });
+
+  group('a value set holds what is not a path', () {
+    test('and is never asked whether it leaves the repository', () {
+      // That question refused `a:b` for looking like a Windows drive, and it
+      // means nothing at all about `dev` or `stable`.
+      expect(
+        expander().expand('flavours', const ValueSet(['dev', 'a:b', '/etc'])),
+        ['dev', 'a:b', '/etc'],
+      );
+    });
+
+    test('and is never matched on disk', () {
+      // No file called `dev` exists here, and the set is still its members.
+      expect(
+        expander().expand('f', const ValueSet(['dev', 'prod'])),
+        ['dev', 'prod'],
+      );
+    });
+
+    test('but empty is still an error, for the reason it always was', () {
+      expect(
+        () => expander().expand('f', const ValueSet([])),
+        throwsA(isA<XtaskFormatException>()),
       );
     });
   });

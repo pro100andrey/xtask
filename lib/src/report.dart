@@ -105,7 +105,7 @@ List<String> summary(Map<String, int> failed, Map<String, Skipped> skipped) {
 
 /// What a parallel run is about to do, before it goes quiet.
 ///
-/// **This exists because `--parallel` breaks the promise §5.2 makes.** A
+/// **This exists because `-j` above 1 breaks the promise §5.2 makes.** A
 /// sequential run narrates itself: the section opens, the body streams, and a
 /// person watching knows both what is happening and that something is. A
 /// parallel run collects each task's output and prints it whole when that task
@@ -117,13 +117,18 @@ List<String> summary(Map<String, int> failed, Map<String, Skipped> skipped) {
 /// "is it stuck", and the answer is the count, the width, and the reason the
 /// silence is expected.
 List<String> starting(int tasks, int concurrency) {
-  final noun = tasks == 1 ? 'task' : 'tasks';
   // Built here rather than inside the list: two string parts side by side in
   // a list literal read as a missing comma, and the lint that says so is
   // right about every other case.
-  final line =
-      'running $tasks $noun, up to $concurrency at once — '
-      "each task's output arrives when that task ends";
+  //
+  // **One task is not one thing to wait for.** A fanned-out task is as many
+  // as it has members, and saying "running 1 task" beside a four-way budget
+  // reads as an announcement about nothing — which is how `xtask fmt -j 4`
+  // came to print that line and then go silent with no reason given.
+  final line = tasks == 1
+      ? 'running up to $concurrency at once — output arrives as each ends'
+      : 'running $tasks tasks, up to $concurrency at once — '
+            "each task's output arrives when that task ends";
   return [line, ''];
 }
 
@@ -138,7 +143,8 @@ List<String> starting(int tasks, int concurrency) {
 /// expanded nothing.
 List<String> timing(
   Map<String, Duration> took,
-  Duration wall, {
+  Duration wall,
+  Map<String, ({Duration spent, int members})> work, {
   required bool concurrent,
 }) {
   if (took.isEmpty) {
@@ -149,19 +155,54 @@ List<String> timing(
   // gets none — and then the column must not be widened for a word that is
   // not going to be printed.
   final sums = took.length > 1;
+
+  /// How much work [name] was, which is not how long it took when its members
+  /// ran together.
+  ///
+  /// **The total said it was how much work there was, and was not.** It summed
+  /// the task ROWS, and a fanned-out task's row is how long you waited — four
+  /// members of a second each at `-j 4` is a one-second row and four seconds
+  /// of work. So a plan of four such tasks reported four seconds spent against
+  /// four taken, which reads as a run that gained nothing from `-j` when it
+  /// had in fact done sixteen seconds of work in four.
+  ///
+  /// Where there was one member the row IS the work, which is the same
+  /// condition the per-row `over` line is printed under.
+  Duration workOf(String name) {
+    final done = work[name];
+    return done == null || done.members < 2 ? took[name]! : done.spent;
+  }
+
   final numbers = [
     ...took.values.map(asTime),
-    if (sums) asTime(took.values.reduce((a, b) => a + b)),
+    if (sums) asTime(took.keys.map(workOf).reduce((a, b) => a + b)),
   ];
   final width = _widest([...took.keys, if (sums) total]);
   final column = _widest(numbers);
   final spent = '${total.padRight(width)}  ${numbers.last.padLeft(column)}';
   final sum = concurrent ? '$spent spent, ${asTime(wall)} taken' : spent;
 
+  /// What a fanned-out task's members added up to, beside how long it took.
+  ///
+  /// **The number `-j` is for, and it was nowhere.** One row said how long you
+  /// waited; over forty packages at four at a time, how much work there WAS is
+  /// the other half, and without it a run that halved its wall clock looked
+  /// exactly like one that had less to do.
+  String over(String name) {
+    final done = work[name];
+    if (done == null || done.members < 2) {
+      // One member is the row already, said twice — and `over 1 members` is
+      // not a sentence. A task whose first member failed without
+      // `--keep-going` has exactly one attempted, which is how this got out.
+      return '';
+    }
+    return '  ${asTime(done.spent)} over ${done.members} members';
+  }
+
   return [
     '',
     for (final (index, name) in took.keys.indexed)
-      '${name.padRight(width)}  ${numbers[index].padLeft(column)}',
+      '${name.padRight(width)}  ${numbers[index].padLeft(column)}${over(name)}',
     // **Two numbers, and only where they differ.** Sequentially the sum of the
     // tasks IS how long the run took. Run together they are different
     // questions — how much work there was, and how long you waited — and
@@ -185,6 +226,58 @@ List<String> listing(Iterable<Task> tasks) {
   final width = _widest(tasks.map((task) => task.name));
   return [
     for (final task in tasks) '${task.name.padRight(width)}  ${task.desc}',
+  ];
+}
+
+/// `--list` over a whole file: the tasks grouped under the gate sets that run
+/// them, in the order the file declares.
+///
+/// **The reason gate sets are declared rather than inferred.** A gate that
+/// existed by being mentioned had no order of its own and no complete list, so
+/// this could only ever print one flat column — and "which of these does CI
+/// run" was a question a reader answered by scanning every task's `gate:` key
+/// and assembling the answer themselves.
+///
+/// A task in two sets appears under both, which is what it is. The last group
+/// is the one that could not be named before: `ungated` is complete only
+/// because the declaration says what all the gates are, so a task under it is
+/// one nothing runs rather than one this report did not think of.
+List<String> grouping(XtaskFile file) {
+  if (file.gates.isEmpty) {
+    // Nothing to group by. A single heading over the whole file would be a
+    // grouping the file does not have.
+    return listing(file.tasks.values);
+  }
+
+  final width = _widest(file.tasks.keys);
+  String row(Task task) => '  ${task.name.padRight(width)}  ${task.desc}';
+
+  final groups = <List<String>>[
+    for (final gate in file.gates.keys)
+      [
+        'gate $gate',
+        for (final task in file.tasks.values)
+          if (task.gate.contains(gate)) row(task),
+      ],
+    [
+      'ungated',
+      // **Every task no DECLARED gate set runs**, not only the ones that
+      // claim no gate. A task whose `gate:` is misspelled belongs to no
+      // declared set, and matching neither bucket made it vanish from the
+      // listing entirely — one transposed letter turning this report into a
+      // lie by omission, which is the failure grouping was added to prevent.
+      // `--validate` is what names the misspelling; this only has to be
+      // complete.
+      for (final task in file.tasks.values)
+        if (!task.gate.any(file.gates.containsKey)) row(task),
+    ],
+  ]..removeWhere((group) => group.length == 1);
+
+  return [
+    for (final (at, group) in groups.indexed) ...[
+      if (at > 0) '',
+      ...group,
+    ],
   ];
 }
 
@@ -222,6 +315,15 @@ List<String> workflow(CiReport report) {
   return [
     for (final invocation in report.invocations)
       _ran(invocation.step.workflow, invocation.step.job, invocation.gate),
+    // Named rather than passed over. Such a step is not a problem and is not
+    // a gate either, and a listing that showed neither left a reader unable
+    // to tell it had been read at all.
+    for (final question in report.questions)
+      _asked(question.step, question.mode),
+    // **Counted, not silent.** An exemption nobody sees is one nobody
+    // revisits, and a workflow that has quietly exempted its way to green
+    // should say so in the same breath as it passes.
+    for (final step in report.exempted) _exempted(step),
     if (report.ok && report.unrun.isNotEmpty) ...['', nobody],
   ];
 }
@@ -229,17 +331,94 @@ List<String> workflow(CiReport report) {
 String _ran(String workflow, String job, String gate) =>
     '$workflow: job `$job` runs the gate set `$gate`';
 
+String _asked(CiStep step, String mode) =>
+    '${step.workflow}: job `${step.job}` asks `$mode`, which is a question '
+    'rather than a gate set';
+
+String _exempted(CiStep step) =>
+    '${step.workflow}: job `${step.job}` exempts `${step.command}` '
+    '— ${step.exemption}';
+
+/// `--check-ci`: why each step is not a job running a gate set.
+///
+/// The prefix — which workflow, which job, what it runs — is written once
+/// here, for the three refusals and for the one line above that is not a
+/// refusal at all.
+List<String> refusals(CiReport report) => [
+  for (final problem in report.problems) _about(problem.step, _why(problem)),
+];
+
+String _about(CiStep step, String what) =>
+    '${step.workflow}: job `${step.job}` $what';
+
+String _why(CiProblem problem) => switch (problem) {
+  RunsACommand(:final step) =>
+    'runs `${step.command}`. What runs belongs in the task file as '
+        'a task in a gate set; a job runs the gate, so that the two cannot '
+        'drift apart',
+  // **The command line's own sentence, not a guess at it.** Such a step may
+  // name a gate set correctly and still exit before doing anything, and
+  // "what runs belongs in the task file" about it sends the reader to move a
+  // task that is already where it should be.
+  RunsSomethingRefused(:final step, :final refusal) =>
+    'runs `${step.command}`, which xtask refuses: $refusal',
+  RunsAnUndeclaredGate(:final gate, :final declared) =>
+    'runs the gate set `$gate`, which this file does not declare — so the job '
+        'runs nothing'
+        '${declared.isEmpty ? '' : '. Declared: ${_names(declared)}'}',
+  NamesAGateWithoutRunningIt(:final mode, :final named) =>
+    'names the gate set `$named` under `$mode`, which asks about it rather '
+        'than running it — so the job passes having run nothing of it',
+  // The reason is the whole price of the exemption. Without it the marker is
+  // a way of turning a red gate green and leaving nothing behind that says
+  // who did it or what for.
+  ExemptsWithoutSaying(:final step) =>
+    'exempts `${step.command}` and gives no reason. Write it after '
+        '`$exemptionMarker`: the reason is what someone reads before deleting '
+        'the line, and what makes an exemption possible to weigh',
+  ExemptsNothing(:final step, :final reaches) =>
+    'exempts `${step.command}`, which reaches xtask as `$reaches` — '
+        'so the marker excuses '
+        'nothing — the step was never going to be reported as a command. A '
+        'marker that excuses nothing hides the findings under it and makes '
+        'the load-bearing ones impossible to find',
+};
+
+/// [of], sorted and joined.
+///
+/// Not shared beyond this file on purpose. Three modules render a list of gate
+/// set names, and they are three different questions — a task naming an
+/// undeclared one, a workflow step naming one, `--gate-members` given one —
+/// so what they have in common is a one-line idiom rather than a rule. A
+/// formatter reaching into the type module to save that line would be putting
+/// message rendering where the shapes live.
+String _names(Iterable<String> of) => (of.toList()..sort()).join(', ');
+
 /// `--validate`, when there is nothing to say.
 ///
 /// Not silence. Silence is what a gate that never ran also prints, and naming
 /// the file proves it read the one somebody meant.
-String read(String path, int tasks, int sets) =>
-    '$path: ${_count(tasks, 'task')}, ${_count(sets, 'set')}, nothing wrong';
+String read(String path, int tasks, int gates, int sets) => [
+  '$path: ${_count(tasks, 'task')}',
+  // Named only when there are any: a file with no gate sets is a legitimate
+  // file, and "0 gate sets" reads as something missing.
+  if (gates > 0) _count(gates, 'gate set'),
+  _count(sets, 'set'),
+  'nothing wrong',
+].join(', ');
 
 int _widest(Iterable<String> of) =>
     of.fold(0, (widest, s) => s.length > widest ? s.length : widest);
 
 String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
+
+/// What a task with no body of its own says.
+///
+/// A pure composite: its `needs:` have already run and there is nothing left
+/// to do, which is more useful said than left as silence. Written out in the
+/// executor and in the dry run, two modules, while this one is the declared
+/// home of what the tool says to a person.
+String nothingToRun(String task) => '$task: nothing of its own to run';
 
 /// How a [Resolved] body is written down: what runs, where, and with what.
 ///
@@ -263,12 +442,12 @@ List<String> describe(Resolved body, {bool header = true}) {
       if (member == null) body.task.name else '${body.task.name}  [$member]',
     switch (body) {
       ResolvedProcess(:final executable, :final arguments) =>
-        '  run  ${_command(executable, arguments)}',
+        '  run  ${commandLine(executable, arguments)}',
       // The name written in the file, not the Dart function it found: a verb
       // is the project's, and `Closure: (VerbContext) => Future<int>` tells
       // the reader nothing they can check.
       ResolvedVerb(:final verb, :final arguments) =>
-        '  do   ${_command(verb, arguments)}',
+        '  do   ${commandLine(verb, arguments)}',
     },
     '  in   ${body.workingDirectory}',
     // **The task's own `env:`, not the environment the body will see.** The
@@ -276,7 +455,7 @@ List<String> describe(Resolved body, {bool header = true}) {
     // printing it would bury the two lines that are part of the plan under a
     // hundred that are part of the terminal. What `env-required` asked for is
     // not printed either: by the time a body resolves, it is set.
-    for (final variable in body.task.env.entries)
+    for (final variable in body.declaredEnvironment.entries)
       '  env  ${variable.key}=${_quoted(variable.value)}',
     if (body case ResolvedProcess(timeout: final limit?))
       '  for  at most ${limit.inSeconds}s, then it is killed',
@@ -285,7 +464,14 @@ List<String> describe(Resolved body, {bool header = true}) {
   ];
 }
 
-String _command(String head, List<String> arguments) =>
+/// [head] and [arguments], written so a person can check them.
+///
+/// **Public, because a run echoes the same line it later reports.** The echo
+/// built its own — a bare `join(' ')` — so one run said `ls no such dir` while
+/// the failure under it said `ls 'no such dir' ''`: the same three arguments,
+/// rendered as four and as three, two lines apart. `--dry-run` agrees with the
+/// second, so the plan and the transcript of one task contradicted each other.
+String commandLine(String head, List<String> arguments) =>
     [head, ...arguments].map(_quoted).join(' ');
 
 /// [word] written so that its edges are visible.

@@ -9,7 +9,7 @@ import 'package:xtask/xtask.dart';
 
 /// A verb: ordinary Dart, given the arguments its task resolved to.
 ///
-/// `context.args` here is the expanded `argv-from: sources` — the engine did
+/// `context.args` here is the expanded `all: sources` — the engine did
 /// the globbing, so a verb never touches the filesystem to find out what it
 /// was asked about.
 Future<int> countLines(VerbContext context) async {

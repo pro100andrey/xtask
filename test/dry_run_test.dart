@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:xtask/src/bodies.dart';
+import 'package:xtask/src/boundary.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/dry_run.dart';
 import 'package:xtask/src/executables.dart';
@@ -10,16 +12,16 @@ import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/primitives.dart';
 
+import 'helpers.dart';
+
 void main() {
   late Directory root;
   late List<String> logged;
 
   setUp(() {
-    root = Directory.systemTemp.createTempSync('xtask_dry_');
+    root = tempRepo('dry');
     logged = [];
   });
-
-  tearDown(() => root.deleteSync(recursive: true));
 
   void given(List<String> paths) {
     for (final path in paths) {
@@ -34,6 +36,21 @@ void main() {
   ExecutableResolver resolverFor() => ExecutableResolver(
     environment: const {'PATH': '/bin'},
     windows: false,
+    isRunnable: (path) => !p.basename(path).startsWith('missing'),
+  );
+
+  /// The same, shaped like the host it runs on.
+  ///
+  /// **For the two cases that are about how a path is WRITTEN.** The resolver
+  /// above is fixed to POSIX so that finding a name is not what is under test
+  /// — and these two are about the separators the answer comes back in, which
+  /// a POSIX resolver on Windows gets wrong by construction: it joined
+  /// `C:\repo` and `./tool/gen` into `C:\repo/tool/gen` while the expectation
+  /// was built with `p.join`, so the test failed on the runner about a
+  /// disagreement it had with itself.
+  ExecutableResolver hostShaped() => ExecutableResolver(
+    environment: const {'PATH': '/bin'},
+    windows: Platform.isWindows,
     isRunnable: (path) => !p.basename(path).startsWith('missing'),
   );
 
@@ -52,14 +69,19 @@ void main() {
     ExecutableResolver? resolver,
   }) {
     final file = parseXtaskFile(yaml);
+    // The same value a run is given, built the same way — which is the point
+    // of the module: `--dry-run` prints what a run performs because it is
+    // handed the thing that works it out, rather than making its own.
     return dryRun(
-      file: file,
-      root: root.path,
       plan: planRun(file, task),
-      resolver: resolver ?? resolverFor(),
+      bodies: BodyResolver(
+        root: root.path,
+        resolver: resolver ?? resolverFor(),
+        sets: file.sets,
+        verbs: verbs,
+        environment: environment,
+      ),
       log: logged.add,
-      verbs: verbs,
-      environment: environment,
     );
   }
 
@@ -78,6 +100,37 @@ void main() {
       expect(output(), isNot(contains('run  dart analyze')));
     });
 
+    test('and a repository-relative program is that path too', () {
+      // Not pinned anywhere before, because it did not work: the check was
+      // made against the process's own directory while the body runs at the
+      // root, so this refused as a missing tool whenever `xtask` was typed
+      // from a subdirectory. Printing it resolved is the same promise the
+      // line above makes — what will be started, not what was typed.
+      expect(
+        dry(
+          'version: 1\ntasks:\n  a: {desc: x, run: [./tool/gen, --check]}\n',
+          'a',
+          resolver: hostShaped(),
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('run  ${p.join(root.path, 'tool', 'gen')}'));
+      expect(output(), isNot(contains('run  ./tool/gen')));
+    });
+
+    test('and `in:` moves where that path is read from', () {
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, in: sub, run: [./gen]}\n',
+          'a',
+          resolver: hostShaped(),
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('run  ${p.join(root.path, 'sub', 'gen')}'));
+    });
+
     test(
       'a glob set is expanded, and each member gets its own block',
       () async {
@@ -92,18 +145,28 @@ void main() {
         );
         expect(output(), contains('a  [packages/one]'));
         expect(output(), contains('a  [packages/two]'));
-        expect(output(), contains('in   ${p.join(root.path, 'packages/one')}'));
-        expect(output(), contains('in   ${p.join(root.path, 'packages/two')}'));
+        // Joined segment by segment, as the engine joins it. Written
+        // `packages/one`, `p.join` leaves the inner `/` alone — so on Windows
+        // this asserted `C:\…\packages/one`, a spelling of the path that the
+        // engine no longer produces and never meant to.
+        expect(
+          output(),
+          contains('in   ${p.join(root.path, 'packages', 'one')}'),
+        );
+        expect(
+          output(),
+          contains('in   ${p.join(root.path, 'packages', 'two')}'),
+        );
       },
     );
 
-    test('`argv-from` is on the command line, already expanded', () async {
+    test('`all` is on the command line, already expanded', () async {
       given(['lib/a.dart', 'lib/b.dart']);
       await dry(
         'version: 1\n'
             'sets:\n  src:\n    include: [lib/*.dart]\n'
             'tasks:\n'
-            '  a: {desc: x, run: [dart, format], argv-from: src}\n',
+            '  a: {desc: x, run: [dart, format, \$all], all: src}\n',
         'a',
       );
       expect(output(), contains('run  /bin/dart format lib/a.dart lib/b.dart'));
@@ -115,7 +178,10 @@ void main() {
             '  a: {desc: x, in: packages/lake, run: [dart, test]}\n',
         'a',
       );
-      expect(output(), contains('in   ${p.join(root.path, 'packages/lake')}'));
+      expect(
+        output(),
+        contains('in   ${p.join(root.path, 'packages', 'lake')}'),
+      );
     });
   });
 
@@ -183,6 +249,120 @@ void main() {
       expect(output(), isNot(contains('missing-two')));
     });
 
+    test('and `remove` says what it would delete, not just its pattern', () {
+      // The engine ships one verb and it deletes recursively. Every other body
+      // is fully worked out by the time it is described — a `run:` prints the
+      // argv the child gets — and this block used to print the PATTERN, so the
+      // one operation a reader most needs to check was the one they could not.
+      given(['build/out/a.o', 'keep.txt']);
+      expect(
+        dry(
+          'version: 1\n'
+              "sets:\n  outs: ['build', 'coverage']\n"
+              'tasks:\n'
+              r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
+              '\n',
+          'clean',
+          verbs: builtInVerbs(root: root.path),
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('do   remove build coverage'));
+      expect(output(), contains('del  build'));
+      expect(
+        output(),
+        isNot(contains('del  coverage')),
+        reason: 'coverage is not there, and a missing path is not deleted',
+      );
+      expect(
+        File(p.join(root.path, 'build', 'out', 'a.o')).existsSync(),
+        isTrue,
+        reason: 'a dry run deleted something',
+      );
+    });
+
+    test('and says so out loud when there is nothing there', () {
+      // Silence reads as "nothing was worked out". The answer — there is
+      // nothing there, which is not an error — is the one a person running
+      // `clean` a second time needs.
+      expect(
+        dry(
+          'version: 1\n'
+              "sets:\n  outs: ['build']\n"
+              'tasks:\n'
+              r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
+              '\n',
+          'clean',
+          verbs: builtInVerbs(root: root.path),
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('nothing of these is on disk'));
+    });
+
+    test('and stops where the run stops, rather than calling it harmless', () {
+      // The gap this closes: `--dry-run` rendered a refused `remove` as
+      // "nothing of these is on disk, which is not an error" and answered 0,
+      // while the run refused it and answered 2. A mode that promises to stop
+      // where the run stops said a recursive delete aimed outside the
+      // repository was fine.
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              '  clean: {desc: x, do: remove, args: [../outside]}\n'
+              '  after: {desc: y, needs: [clean], run: [dart, test]}\n',
+          'after',
+          verbs: builtInVerbs(root: root.path),
+        ),
+        completion(ExitCode.invalidFile),
+      );
+      expect(output(), contains('outside the repository'));
+      expect(output(), contains('../outside'));
+      // Word for word what the run logs, which is why the sentence lives in
+      // `boundary.dart` at all. This one carried a `task `clean`:` prefix the
+      // run does not write, so a diff of the two was not comparable — in the
+      // one place a reader compares them.
+      expect(
+        output(),
+        contains('error: ${removeLeavesRoot(written: '../outside')}'),
+      );
+      expect(output(), isNot(contains('nothing of these is on disk')));
+      expect(
+        output(),
+        isNot(contains('run  /bin/dart test')),
+        reason: 'a plan below a step the run refuses is a plan never reached',
+      );
+    });
+
+    test('and a refused `remove` inside a `then:` fails as one', () {
+      // The early return answered 2 flat, while the run turns any failure
+      // inside a continuation into its own code — so this mode disagreed with
+      // the run it describes, about the same file.
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, run: [dart, test], then: [clean]}\n'
+              '  clean: {desc: y, do: remove, args: [../outside]}\n',
+          'a',
+          verbs: builtInVerbs(root: root.path),
+        ),
+        completion(ExitCode.continuationFailed),
+      );
+    });
+
+    test('and says the same about a pattern that will not compile', () {
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              "  clean: {desc: x, do: remove, args: ['a{b']}\n",
+          'clean',
+          verbs: builtInVerbs(root: root.path),
+        ),
+        completion(ExitCode.invalidFile),
+      );
+      expect(output(), contains('not a valid pattern'));
+    });
+
     test('a verb is looked up and NOT called', () async {
       var called = false;
       final code = await dry(
@@ -236,7 +416,9 @@ void main() {
 
     test('a set that does not exist is still 2', () async {
       final code = await dry(
-        'version: 1\ntasks:\n  a: {desc: x, each: absent, run: [dart]}\n',
+        'version: 1\ntasks:\n'
+            r'  a: {desc: x, each: absent, in: $each, run: [dart]}'
+            '\n',
         'a',
       );
       expect(code, ExitCode.invalidFile);
@@ -305,6 +487,22 @@ void main() {
       expect(output(), isNot(contains('HOME')));
     });
 
+    test(r'with $each already standing for the member', () async {
+      // Every other line of this block was substituted, so it promised
+      // `FLAVOR=$each` while the run exported `FLAVOR=dev`.
+      await dry(
+        'version: 1\n'
+            'sets:\n  f:\n    values: [dev, prod]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: f, env: {FLAVOR: $each}, run: [d, $each]}'
+            '\n',
+        'a',
+      );
+      expect(output(), contains('env  FLAVOR=dev'));
+      expect(output(), contains('env  FLAVOR=prod'));
+      expect(output(), isNot(contains(r'FLAVOR=$each')));
+    });
+
     test('and no task is wrapped in a section', () async {
       // §7.1's markers exist to fold a task's OUTPUT, and a dry run produces
       // none: its own report is the plan, and a header above each block would
@@ -369,6 +567,66 @@ void main() {
       );
       expect(output(), contains(r'run  C:\bin\dart.BAT analyze'));
       expect(output(), contains('via  cmd.exe'));
+    });
+
+    group('a set another task produces is not called wrong here either', () {
+      test('it says the timing rather than answering 2', () async {
+        given(['build/keep/x']);
+        final code = await dry(
+          'version: 1\n'
+              "sets:\n  made:\n    include: ['build/*.txt']\n"
+              '    produced: true\n'
+              'tasks:\n'
+              '  make: {desc: p, run: [touch, build/a.txt]}\n'
+              r'  use: {desc: c, needs: [make], all: made, run: [echo, $all]}'
+              '\n',
+          'use',
+        );
+        expect(code, ExitCode.success);
+        expect(output(), contains('cannot be resolved yet'));
+        // The original reason is printed under it, so nothing is hidden if the
+        // cause turns out to be something other than the timing.
+        expect(output(), contains('is empty'));
+      });
+
+      test('and a failure that is not the timing still stops the print', () {
+        // Guessing from the exit code and the task's set names called a
+        // boundary violation and an unknown verb premature too, and answered 0.
+        const escaping =
+            '  use: {desc: c, needs: [make], all: made, in: "../..", '
+            r'run: [echo, $all]}';
+        const unknownVerb = '  use: {desc: c, needs: [make], do: no-such-verb}';
+        for (final task in [escaping, unknownVerb]) {
+          expect(
+            () async {
+              given(['build/keep/x']);
+              final code = await dry(
+                'version: 1\n'
+                    "sets:\n  made:\n    include: ['build/*.txt']\n"
+                    '    produced: true\n'
+                    'tasks:\n'
+                    '  make: {desc: p, run: [touch, build/a.txt]}\n'
+                    '$task\n',
+                'use',
+              );
+              expect(code, ExitCode.invalidFile, reason: task);
+            },
+            returnsNormally,
+          );
+        }
+      });
+
+      test('and a task nothing runs before still stops the print', () async {
+        final code = await dry(
+          'version: 1\n'
+              "sets:\n  src:\n    include: ['nothing-matches/*']\n"
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [echo, $all]}'
+              '\n',
+          'a',
+        );
+        expect(code, ExitCode.invalidFile);
+      });
     });
 
     test('a body that is not a shim says nothing about a shell', () async {

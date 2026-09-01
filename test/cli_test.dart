@@ -6,8 +6,11 @@ import 'package:xtask/src/cli.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
+import 'package:xtask/src/request.dart';
 import 'package:xtask/src/schema.dart';
 import 'package:xtask/src/version.dart';
+
+import 'helpers.dart';
 
 /// One process the CLI asked for.
 final class Started {
@@ -32,6 +35,7 @@ final class FakeStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    Future<void>? until,
     void Function(String line)? output,
   }) async {
     started.add(Started(executable, arguments, workingDirectory));
@@ -101,14 +105,18 @@ void main() {
       );
     });
 
-    test('and `--parallel` says which form it wants, not what it counted', () {
-      // `--parallel 2` reads as a second task called `2`, and the refusal used
-      // to report that: "xtask runs one task at a time, and it was given
-      // `build` and `2`" — true, useless, and about something the person did
-      // not write. It cannot take a separate word: a bare `--parallel` is
-      // already an answer, and nothing tells that apart from a task named `2`.
-      final usage = parseArguments(['build', '--parallel', '2']) as ShowUsage;
-      expect(usage.problem, contains('--parallel=2'));
+    test("and an empty value is refused in the mode's own terms", () {
+      // `--why=` used to become a request naming the empty string, and the
+      // reader was told there is no task called ``. Narrowed to the modes that
+      // take a name, the rest reached the arm below it and were told they had
+      // been given `` — the same empty interpolation, one sentence along.
+      expect(
+        (parseArguments(['--why=']) as ShowUsage).problem,
+        contains('nothing after'),
+      );
+      final usage = parseArguments(['--validate=']) as ShowUsage;
+      expect(usage.problem, contains('takes no name'));
+      expect(usage.problem, isNot(contains('given ``')));
     });
 
     test('and on its own it is refused, pointing at the other name', () {
@@ -120,6 +128,25 @@ void main() {
       // still the answer that costs somebody an afternoon.
       final usage = parseArguments(['--gate', 'ci-web']) as ShowUsage;
       expect(usage.problem, contains('--gate-members'));
+    });
+
+    test('a run modifier with no task names what is missing', () {
+      // Zero operands fell into the "it was given" branch and interpolated an
+      // empty list, so the sentence stopped mid-way and told the reader
+      // nothing at all about what was wrong.
+      for (final written in [
+        ['--keep-going'],
+        ['-j', '2'],
+        ['--keep-going', '-j', '4'],
+      ]) {
+        final usage = parseArguments(written) as ShowUsage;
+        expect(
+          usage.problem,
+          contains('needs the name of one task'),
+          reason: '$written',
+        );
+        expect(usage.problem, isNot(endsWith('given ')), reason: '$written');
+      }
     });
 
     test('two modes ask for different things', () {
@@ -219,33 +246,83 @@ void main() {
       });
     });
 
-    group('--parallel', () {
-      test('it is a modifier on a run, with a number or without', () {
+    group('-j', () {
+      test('every spelling make and cargo already taught', () {
         expect((parseArguments(['check']) as RunTask).concurrency, 1);
-        expect(
-          (parseArguments(['check', '--parallel=3']) as RunTask).concurrency,
-          3,
-        );
-        expect(
-          (parseArguments(['check', '--parallel']) as RunTask).concurrency,
-          greaterThan(1),
-          reason: 'a bare --parallel means as many as this machine has',
-        );
-      });
-
-      test('a number that is not one is refused', () {
-        for (final written in ['0', '-2', 'many', '']) {
+        for (final written in [
+          ['-j', '3'],
+          ['-j3'],
+          ['--jobs', '3'],
+          ['--jobs=3'],
+        ]) {
           expect(
-            parseArguments(['check', '--parallel=$written']),
-            isA<ShowUsage>(),
-            reason: '`--parallel=$written` was accepted',
+            (parseArguments(['check', ...written]) as RunTask).concurrency,
+            3,
+            reason: written.join(' '),
           );
         }
       });
 
+      test('`auto` is capped, because a job here is a whole toolchain', () {
+        // The width is a parameter, so the cap can be PROVED rather than
+        // asserted to be somewhere below itself: on a machine narrower than
+        // the cap the old form of this test passed whether the cap fired or
+        // not, and the machines this is written on are narrower than 32.
+        int asked(int processors) =>
+            (parseArguments([
+                      'check',
+                      '-j',
+                      'auto',
+                    ], processors: () => processors)
+                    as RunTask)
+                .concurrency;
+        expect(asked(32), autoJobsCap);
+        expect(asked(2), 2);
+        expect(asked(autoJobsCap), autoJobsCap);
+      });
+
+      test('and reading the host is the default, not the mechanism', () {
+        final asked =
+            (parseArguments(['check', '-j', 'auto']) as RunTask).concurrency;
+        expect(asked, greaterThan(0));
+        expect(asked, lessThanOrEqualTo(autoJobsCap));
+      });
+
+      test('bare, it is refused rather than given a number of its own', () {
+        // `--parallel` read as a boolean and behaved as a number, which is
+        // why it needed a refusal explaining its own syntax.
+        expect(parseArguments(['check', '-j']), isA<ShowUsage>());
+      });
+
+      test('a number that is not one is refused', () {
+        for (final written in ['0', '-2', 'many']) {
+          expect(
+            parseArguments(['check', '-j', written]),
+            isA<ShowUsage>(),
+            reason: '`-j $written` was accepted',
+          );
+        }
+      });
+
+      test(
+        'and a mode is refused for the flag being written, not its value',
+        () {
+          // Testing the resulting number let `--list -j 1` through in silence,
+          // and made `--list -j auto` a refusal on an eight-core machine and an
+          // acceptance on a one-core runner.
+          for (final written in ['1', '2', 'auto']) {
+            expect(
+              parseArguments(['--list', '-j', written]),
+              isA<ShowUsage>(),
+              reason: '-j $written',
+            );
+          }
+        },
+      );
+
       test('and a mode that runs nothing has nothing to parallelise', () {
         expect(
-          parseArguments(['--dry-run', 'x', '--parallel=2']),
+          parseArguments(['--dry-run', 'x', '-j', '2']),
           isA<ShowUsage>(),
         );
       });
@@ -285,13 +362,11 @@ void main() {
     late FakeStarter starter;
 
     setUp(() {
-      root = Directory.systemTemp.createTempSync('xtask_cli_');
+      root = tempRepo('cli');
       out = [];
       err = [];
       starter = FakeStarter();
     });
-
-    tearDown(() => root.deleteSync(recursive: true));
 
     void writeFile(String yaml) =>
         File(p.join(root.path, xtaskFileName)).writeAsStringSync(yaml);
@@ -321,6 +396,7 @@ void main() {
 
     const lake = '''
 version: 1
+gates: [check, ci-analyze, ci-web]
 tasks:
   analyze:
     desc: analyze every package
@@ -334,15 +410,6 @@ tasks:
     desc: browser e2e for the web binding
     gate: [ci-web]
     run: [dart, test]
-  check:
-    desc: reproduce CI locally
-    collects: check
-  ci-analyze:
-    desc: the analyze job
-    collects: ci-analyze
-  ci-web:
-    desc: the web job
-    collects: ci-web
 ''';
 
     group('found from wherever the command was run', () {
@@ -392,19 +459,34 @@ tasks:
         expect(printed(), contains('browser e2e for the web binding'));
       });
 
+      test(
+        'grouped by the declared gate sets, in the declared order',
+        () async {
+          writeFile(lake);
+          await run(['--list']);
+          expect(out.first, 'gate check');
+          expect(
+            out.where((l) => l.startsWith('gate ')),
+            ['gate check', 'gate ci-analyze', 'gate ci-web'],
+          );
+          // Which is not the order the tasks are written in: `web-e2e` comes
+          // third in the file and its gate set comes last here.
+          // Every task in this file is in a gate set, so there is no such
+          // heading — which is the point of the heading being complete.
+          expect(out, isNot(contains('ungated')));
+        },
+      );
+
       test("in the file's order, with the names in a column", () async {
         writeFile(lake);
         await run(['--list']);
-        expect(out.first, startsWith('analyze  '));
-        expect(out.map((l) => l.split(' ').first).take(3), [
-          'analyze',
-          'lake-format',
-          'web-e2e',
-        ]);
-        // Where each description starts: past the name and its padding.
-        final column = RegExp(r'^\S+\s+');
+        final rows = out.where((l) => l.startsWith('  ')).toList();
+        expect(rows.first.trim(), startsWith('analyze  '));
+        // Where each description starts: past the indent, the name and its
+        // padding.
+        final column = RegExp(r'^\s+\S+\s+');
         expect(
-          out.map((l) => column.firstMatch(l)!.end).toSet(),
+          rows.map((l) => column.firstMatch(l)!.end).toSet(),
           hasLength(1),
           reason: 'one column, so the descriptions line up',
         );
@@ -428,10 +510,10 @@ tasks:
       test("in the file's order, which is the run order (§4.3)", () async {
         writeFile('''
 version: 1
+gates: [check]
 tasks:
   zebra: {desc: cheap, gate: [check], run: [dart]}
   alpha: {desc: slow, gate: [check], run: [dart]}
-  check: {desc: c, collects: check}
 ''');
         await run(['--gate-members', 'check']);
         expect(out, ['zebra', 'alpha']);
@@ -470,14 +552,15 @@ tasks:
           writeFile(lake);
           expect(await run(['--validate']), ExitCode.success);
           expect(printed(), contains(p.join(root.path, xtaskFileName)));
-          expect(printed(), contains('6 tasks'));
+          expect(printed(), contains('3 tasks'));
+          expect(printed(), contains('3 gate sets'));
         },
       );
 
       test('and counts one thing as one, not as "1 sets"', () async {
         writeFile(
           'version: 1\nsets:\n  s: [a]\n'
-          'tasks:\n  a: {desc: x, argv-from: s, run: [dart]}\n',
+          'tasks:\n  a: {desc: x, all: s, run: [dart, \$all]}\n',
         );
         await run(['--validate']);
         expect(printed(), contains('1 task,'));
@@ -487,27 +570,39 @@ tasks:
       test('reports every problem at once, not the first', () async {
         writeFile('''
 version: 1
+gates: [empty-one]
 tasks:
   a: {desc: x, do: nobody-registered-this}
-  b: {desc: x, gate: [orphaned], run: [dart]}
 ''');
         expect(await run(['--validate']), ExitCode.invalidFile);
         expect(complained(), contains('nobody-registered-this'));
-        expect(complained(), contains('orphaned'));
+        expect(complained(), contains('empty-one'));
       });
 
-      test('a cycle a `collects:` closes is caught', () async {
-        // Why the validator is given the COLLECTED file. The edges a gate set
-        // creates do not exist until the rewrite, so validating what was
-        // written would miss a ring that a run walks straight into.
+      test('a cycle is caught, with the ring spelled out', () async {
         writeFile('''
 version: 1
+gates: [check]
 tasks:
-  a: {desc: x, needs: [check], gate: [check], run: [dart]}
-  check: {desc: c, collects: check}
+  a: {desc: x, needs: [b], gate: [check], run: [dart]}
+  b: {desc: y, needs: [a], run: [dart]}
 ''');
         expect(await run(['--validate']), ExitCode.invalidFile);
         expect(complained(), contains('need each other'));
+      });
+
+      test('a gate set named in `needs:` is refused', () async {
+        // An edge runs between tasks. Before, `needs: [check]` reached a
+        // composite that happened to share the gate's name; now it names a
+        // list, and a list is not a step.
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, needs: [check], gate: [check], run: [dart]}
+''');
+        expect(await run(['--validate']), ExitCode.invalidFile);
+        expect(complained(), contains('edges between tasks'));
       });
 
       test('a file that does not parse is refused with its span', () async {
@@ -635,13 +730,13 @@ tasks:
           // A set expanding to nothing is an error §8 catches without running
           // anything — but reached here it must still close the group it
           // opened, or everything after it folds into a task that has stopped.
-          writeFile('''
+          writeFile(r'''
 version: 1
 sets:
   pkgs:
     include: [packages/*]
 tasks:
-  a: {desc: x, each: pkgs, run: [dart, test]}
+  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}
 ''');
           final code = await run(
             ['a'],
@@ -694,15 +789,15 @@ tasks:
       });
 
       test('a task with nothing of its own to run is refused', () async {
-        // A composite gathers other tasks. Handing it arguments that reach
-        // nothing is a command that looks as though it did what was asked.
+        // A gate set gathers tasks. Handing it arguments that reach nothing
+        // is a command that looks as though it did what was asked.
         writeFile(lake);
         expect(await run(['check', '--', '-n', 'x']), ExitCode.invalidFile);
         expect(complained(), contains('`-n`'));
         expect(starter.started, isEmpty);
       });
 
-      test('but the same composite runs fine without them', () async {
+      test('but the same gate set runs fine without them', () async {
         writeFile(lake);
         expect(await run(['check']), ExitCode.success);
       });
@@ -721,19 +816,19 @@ tasks:
           starter = FakeStarter({'ruff': 1, 'pytest': 1});
           writeFile('''
 version: 1
+gates: [check]
 tasks:
   lint: {desc: a, gate: [check], run: [ruff]}
   unit: {desc: b, gate: [check], run: [pytest]}
-  check: {desc: c, collects: check}
 ''');
           expect(await run(['check', '--keep-going']), ExitCode.taskFailed);
           expect(starter.started, hasLength(2));
           expect(printed(), contains('failed   lint (exit 1)'));
           expect(printed(), contains('failed   unit (exit 1)'));
-          expect(
-            printed(),
-            contains('skipped  check — needs `lint`, which did not pass'),
-          );
+          // Nothing is skipped: a gate set has no composite standing after
+          // its members, so both failures are reported and neither blocks a
+          // third thing that does not exist.
+          expect(printed(), isNot(contains('skipped')));
         },
       );
 
@@ -741,10 +836,10 @@ tasks:
         starter = FakeStarter({'ruff': 1, 'pytest': 1});
         writeFile('''
 version: 1
+gates: [check]
 tasks:
   lint: {desc: a, gate: [check], run: [ruff]}
   unit: {desc: b, gate: [check], run: [pytest]}
-  check: {desc: c, collects: check}
 ''');
         expect(await run(['check']), ExitCode.taskFailed);
         expect(starter.started, hasLength(1));
@@ -756,10 +851,10 @@ tasks:
           starter = FakeStarter({'ruff': 1, 'pytest': 1});
           writeFile('''
 version: 1
+gates: [check]
 tasks:
   lint: {desc: a, gate: [check], run: [ruff]}
   unit: {desc: b, gate: [check], run: [pytest]}
-  check: {desc: c, collects: check}
 ''');
           await run(
             ['check', '--keep-going'],
@@ -770,13 +865,87 @@ tasks:
       );
     });
 
+    group('a gate set is run by being named', () {
+      test('and runs its tasks in the order the file writes them', () async {
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  zebra: {desc: cheap, gate: [check], run: [ruff]}
+  alpha: {desc: slow, gate: [check], run: [pytest]}
+''');
+        expect(await run(['check']), ExitCode.success);
+        expect(
+          starter.started.map((s) => p.basename(s.executable)),
+          ['ruff', 'pytest'],
+        );
+      });
+
+      test(
+        'a task nothing gathers is still runnable by its own name',
+        () async {
+          writeFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, gate: [check], run: [ruff]}
+  aot: {desc: y, run: [pytest]}
+''');
+          expect(await run(['aot']), ExitCode.success);
+          expect(starter.started, hasLength(1));
+        },
+      );
+
+      test('an empty gate set is refused rather than run in silence', () async {
+        // It printed nothing and answered 0, so a CI job whose only step is
+        // `xtask check` passed in silence when every member's `gate:` was
+        // misspelled.
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, gate: [chekc], run: [ruff]}
+''');
+        expect(await run(['check']), ExitCode.invalidFile);
+        expect(complained(), contains('has no tasks in it'));
+        expect(starter.started, isEmpty);
+      });
+
+      test('a name that is both a gate set and a task is refused', () async {
+        // Silently preferring the gate set would run a plan the reader did
+        // not ask for, and the composite this replaced could not be
+        // ambiguous.
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, gate: [check], run: [ruff]}
+  check: {desc: y, run: [pytest]}
+''');
+        expect(await run(['check']), ExitCode.invalidFile);
+        expect(complained(), contains('both a gate set and a task'));
+        expect(starter.started, isEmpty);
+      });
+
+      test('a name that is neither is refused as a task', () async {
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, gate: [check], run: [ruff]}
+''');
+        expect(await run(['chekc']), ExitCode.invalidFile);
+        expect(complained(), contains('there is no task called `chekc`'));
+      });
+    });
+
     group('--why', () {
       const chain = '''
 version: 1
+gates: [check]
 tasks:
   install: {desc: a, run: [dart]}
   lint: {desc: b, gate: [check], needs: [install], run: [dart]}
-  check: {desc: c, collects: check}
   publish: {desc: d, then: [announce], run: [dart]}
   announce: {desc: e, run: [dart]}
 ''';
@@ -784,21 +953,19 @@ tasks:
       test('names each entry point and the edges that reach it', () async {
         writeFile(chain);
         expect(await run(['--why', 'install']), ExitCode.success);
-        expect(printed(), contains('check'));
-        expect(printed(), contains('check needs lint'));
+        expect(printed(), contains('gate check'));
+        expect(printed(), contains('gate check runs lint'));
         expect(printed(), contains('lint needs install'));
       });
 
-      test('and it asks the file with `collects:` already resolved', () async {
-        // Otherwise every member of a gate looks like an entry point: it is
-        // the composite naming them that makes them not one.
+      test('a gate set is an entry point of its own', () async {
+        // The half that used to be free: a composite was a task, so
+        // `entryPoints` found it. A declared gate set has no such edge, and
+        // without it `--why` would answer "nothing reaches it" about a task
+        // every `check` runs.
         writeFile(chain);
-        await run(['--why', 'install']);
-        expect(
-          out.where((l) => !l.startsWith(' ')),
-          isNot(contains('lint')),
-          reason: '`lint` is named by `check`, so it is not where a run starts',
-        );
+        await run(['--why', 'lint']);
+        expect(out.where((l) => !l.startsWith(' ')), contains('gate check'));
       });
 
       test('a `then:` is reported as one, not as a requirement', () async {
@@ -809,8 +976,14 @@ tasks:
 
       test('an entry point is told it is one', () async {
         writeFile(chain);
-        await run(['--why', 'check']);
+        await run(['--why', 'publish']);
         expect(printed(), contains('where a run starts'));
+      });
+
+      test('and a gate set is told it is not a task', () async {
+        writeFile(chain);
+        expect(await run(['--why', 'check']), ExitCode.invalidFile);
+        expect(complained(), contains('is a gate set, not a task'));
       });
 
       test('a task in no plan at all gets the answer, not an error', () async {
@@ -847,16 +1020,16 @@ tasks:
       });
     });
 
-    group('running with --parallel', () {
+    group('running with `-j`', () {
       test('the whole gate still runs, and still passes', () async {
         writeFile('''
 version: 1
+gates: [check]
 tasks:
   lint: {desc: a, gate: [check], run: [ruff]}
   unit: {desc: b, gate: [check], run: [pytest]}
-  check: {desc: c, collects: check}
 ''');
-        expect(await run(['check', '--parallel=2']), ExitCode.success);
+        expect(await run(['check', '-j', '2']), ExitCode.success);
         expect(starter.started, hasLength(2));
       });
 

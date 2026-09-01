@@ -7,13 +7,89 @@ import 'package:xtask/src/context.dart';
 import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
+import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 
+import 'helpers.dart';
+
 void main() {
+  group('a set is read again when its task is about to run', () {
+    test('because a task before it may have made the files', () {
+      // The whole reason there is no cache by default. A run that answered
+      // from memory would hand the second task what the tree looked like
+      // before the first one touched it.
+      final root = tempRepo('reread');
+      final resolver = BodyResolver(
+        root: root.path,
+        resolver: ExecutableResolver(
+          environment: const {'PATH': '/bin'},
+          windows: false,
+          isRunnable: (_) => true,
+        ),
+        sets: const {
+          'built': GlobSet(include: ['build/*.o'], exclude: []),
+        },
+      );
+      const task = Task(
+        name: 'link',
+        desc: 'x',
+        body: RunBody(['ld']),
+        all: 'built',
+        args: [r'$all'],
+      );
+
+      File(p.join(root.path, 'build', 'a.o'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('');
+      expect(resolver.resolveTask(task).single.arguments, ['build/a.o']);
+
+      File(p.join(root.path, 'build', 'b.o')).writeAsStringSync('');
+      expect(
+        resolver.resolveTask(task).single.arguments,
+        ['build/a.o', 'build/b.o'],
+        reason: 'the run answered from memory',
+      );
+    });
+
+    test('and only a dry run, which runs nothing, may remember it', () {
+      final root = tempRepo('cached');
+      final resolver = BodyResolver(
+        root: root.path,
+        resolver: ExecutableResolver(
+          environment: const {'PATH': '/bin'},
+          windows: false,
+          isRunnable: (_) => true,
+        ),
+        sets: const {
+          'built': GlobSet(include: ['build/*.o'], exclude: []),
+        },
+        cacheSets: true,
+      );
+      const task = Task(
+        name: 'link',
+        desc: 'x',
+        body: RunBody(['ld']),
+        all: 'built',
+        args: [r'$all'],
+      );
+
+      File(p.join(root.path, 'build', 'a.o'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('');
+      expect(resolver.resolveTask(task).single.arguments, ['build/a.o']);
+
+      File(p.join(root.path, 'build', 'b.o')).writeAsStringSync('');
+      expect(
+        resolver.resolveTask(task).single.arguments,
+        ['build/a.o'],
+        reason: 'nothing ran between the two, so nothing could have changed',
+      );
+    });
+  });
+
   late Directory root;
 
-  setUp(() => root = Directory.systemTemp.createTempSync('xtask_resolution_'));
-  tearDown(() => root.deleteSync(recursive: true));
+  setUp(() => root = tempRepo('resolution'));
 
   ExecutableResolver posix() => ExecutableResolver(
     environment: const {'PATH': '/bin'},
@@ -79,11 +155,16 @@ void main() {
       );
     });
 
-    test('and NONE for a composite, which is not a special case', () {
+    test('and NONE for a task with no body, not a special case', () {
       // An empty list says "nothing of its own" without the caller needing to
       // ask a second question about the body.
       expect(
-        resolve('version: 1\ntasks:\n  c: {desc: x, collects: g}\n', 'c'),
+        resolve(
+          'version: 1\ntasks:\n'
+              '  c: {desc: x, needs: [d]}\n'
+              '  d: {desc: y, run: [dart]}\n',
+          'c',
+        ),
         isEmpty,
       );
     });
@@ -108,7 +189,7 @@ void main() {
 
     test('and a verb is given the three sources in one list, in order', () {
       // Asked of the document by a reviewer and answerable only here: `args:`,
-      // then the expanded `argv-from`, then whatever the command line passed
+      // then the expanded `all:`, then whatever the command line passed
       // after `--`. A verb is reached by `--` exactly as a process is, and
       // nothing said so — `VerbContext.args` was documented as the first two.
       for (final member in ['pkg/a', 'pkg/b']) {
@@ -119,8 +200,8 @@ void main() {
                 'version: 1\n'
                     'sets:\n  packages:\n    include: [pkg/*]\n'
                     'tasks:\n'
-                    '  a: {desc: x, do: regen, args: [--first], '
-                    'argv-from: packages}\n',
+                    r'  a: {desc: x, do: regen, args: [--first, $all], '
+                    'all: packages}\n',
                 'a',
                 verbs: {'regen': (_) async => 0},
                 passed: ['--last'],
@@ -168,7 +249,9 @@ void main() {
     test('a set that does not exist', () {
       expect(
         () => resolve(
-          'version: 1\ntasks:\n  a: {desc: x, each: absent, run: [dart]}\n',
+          'version: 1\ntasks:\n'
+              r'  a: {desc: x, each: absent, in: $each, run: [dart]}'
+              '\n',
           'a',
         ),
         refused(ExitCode.invalidFile, contains('absent')),
@@ -180,21 +263,66 @@ void main() {
         () => resolve(
           'version: 1\n'
               'sets:\n  pkgs:\n    include: [packages/*]\n'
-              'tasks:\n  a: {desc: x, each: pkgs, run: [dart]}\n',
+              'tasks:\n  a: {desc: x, each: pkgs, in: \$each, run: [dart]}\n',
           'a',
         ),
         refused(ExitCode.invalidFile, contains('cannot run')),
       );
     });
 
-    test(r'`in: $each` with no `each:`', () {
+    test('`in:` composed out of a value that leaves the repository', () {
+      // The hole `values:` opened: those members are deliberately NOT asked
+      // whether they stay inside, because they are not paths — and
+      // `in: sub/$each` composes one out of them, after the only gate. A
+      // flavour of `../../../etc` ran a body in `/etc` and answered 0,
+      // through the shape the README recommends.
       expect(
         () => resolve(
-          'version: 1\ntasks:\n'
-              r'  a: {desc: x, in: $each, run: [dart]}'
+          'version: 1\n'
+              "sets:\n  f:\n    values: ['../../../../etc']\n"
+              'tasks:\n'
+              r'  a: {desc: x, each: f, in: sub/$each, run: [pwd]}'
               '\n',
           'a',
         ),
+        refused(ExitCode.invalidFile, contains('reaches outside')),
+      );
+    });
+
+    test('`in:` that leaves the repository', () {
+      // Nothing checked this until now: `in: ../..` started a body two levels
+      // above the root and the run answered 0.
+      for (final where in ['../..', '/etc']) {
+        expect(
+          () => resolve(
+            'version: 1\ntasks:\n'
+                '  a: {desc: x, in: "$where", run: [dart]}\n',
+            'a',
+          ),
+          refused(ExitCode.invalidFile, contains('reaches outside')),
+          reason: where,
+        );
+      }
+    });
+
+    test(r'`in: $each` with no `each:`, if the model is hand-built', () {
+      // The parser refuses this shape now, one step earlier and with the line
+      // — so the only way here is a model assembled in code. The check stays
+      // because the resolver is a public seam and must not read a member that
+      // is not there.
+      expect(
+        () =>
+            BodyResolver(
+              root: root.path,
+              resolver: posix(),
+            ).resolveTask(
+              const Task(
+                name: 'a',
+                desc: 'x',
+                body: RunBody(['dart']),
+                workingDirectory: r'$each',
+              ),
+            ),
         refused(ExitCode.invalidFile, contains(r'$each')),
       );
     });
@@ -242,15 +370,15 @@ void main() {
   });
 
   group('what a command line adds', () {
-    test('lands after `args:` and the expanded `argv-from`', () {
+    test('lands after `args:` and the expanded `all:`', () {
       File(p.join(root.path, 'a.dart')).writeAsStringSync('');
       final body =
           resolve(
                 'version: 1\n'
                     'sets:\n  src:\n    include: ["*.dart"]\n'
                     'tasks:\n'
-                    '  a: {desc: x, run: [dart, format], args: [--fix],'
-                    ' argv-from: src}\n',
+                    r'  a: {desc: x, run: [dart, format], args: [--fix, $all],'
+                    ' all: src}\n',
                 'a',
                 passed: ['--line-length', '100'],
               ).single
@@ -286,6 +414,280 @@ void main() {
             .arguments,
         ['test', '-n', 'x'],
       );
+    });
+  });
+
+  group('`all:` puts its members where the marker stands', () {
+    test('in the middle of argv, which `argv-from:` could not do', () {
+      // The whole reason the key changed: a set could only ever be appended,
+      // so `cp <files> dest/` was unwritable.
+      for (final name in ['a.dart', 'b.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      final body = resolve(
+        'version: 1\n'
+            'sets:\n  src:\n    include: ["*.dart"]\n'
+            'tasks:\n'
+            r'  a: {desc: x, all: src, run: [cp, $all, dest/]}'
+            '\n',
+        'a',
+      ).single;
+      expect(
+        (body as ResolvedProcess).arguments,
+        ['a.dart', 'b.dart', 'dest/'],
+      );
+    });
+
+    test('and in `args:`, which is where a verb reads them', () {
+      File(p.join(root.path, 'a.dart')).writeAsStringSync('');
+      final body = resolve(
+        'version: 1\n'
+            'sets:\n  src:\n    include: ["*.dart"]\n'
+            'tasks:\n'
+            r'  a: {desc: x, do: v, all: src, args: [--in, $all]}'
+            '\n',
+        'a',
+        verbs: {'v': (_) async => 0},
+      ).single;
+      expect(body.arguments, ['--in', 'a.dart']);
+    });
+  });
+
+  group('a marker in `env:` is a value like any other', () {
+    test(r'$each is substituted there too', () {
+      // Left out, `env: {FLAVOR: $each}` reached the child as the literal
+      // text `$each` — accepted by every check and wrong in the one place
+      // nobody looks.
+      final bodies = resolve(
+        'version: 1\n'
+            'sets:\n  f:\n    values: [dev, prod]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: f, env: {FLAVOR: $each}, run: [b, $each]}'
+            '\n',
+        'a',
+      );
+      expect(
+        bodies.map((b) => b.environment['FLAVOR']),
+        ['dev', 'prod'],
+      );
+    });
+
+    test(r'and $all is refused, because one value is not a list', () {
+      expect(
+        () => parseXtaskFile(
+          'version: 1\n'
+          'sets:\n  s: [a]\n'
+          'tasks:\n'
+          r'  a: {desc: x, all: s, env: {LIST: $all}, run: [b, $all]}'
+          '\n',
+        ),
+        throwsA(isA<XtaskFormatException>()),
+      );
+    });
+  });
+
+  group('a member the program would read as an option', () {
+    Matcher refused(int code, Object message) => throwsA(
+      isA<RunFailure>()
+          .having((f) => f.code, 'code', code)
+          .having((f) => f.message, 'message', message),
+    );
+
+    test('is refused, and told where the operands begin', () {
+      // A repository may hold a file called `-n.dart` and a glob will find
+      // it. Handed over bare it is not a path to the program, it is `-n`.
+      for (final name in ['-n.dart', 'ok.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  src:\n    include: ["*.dart"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [fmt, $all]}'
+              '\n',
+          'a',
+        ),
+        refused(ExitCode.invalidFile, contains('says its operands begin')),
+      );
+    });
+
+    test('in `args:` as well, which is argv too', () {
+      // Looking only at `run:` skipped the check for the very shape it was
+      // written for: the schema says `all:` replaces the marker in `run:` OR
+      // `args:`.
+      for (final name in ['-n.dart', 'ok.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  src:\n    include: ["*.dart"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [fmt], args: [$all]}'
+              '\n',
+          'a',
+        ),
+        refused(ExitCode.invalidFile, contains('-n.dart')),
+      );
+    });
+
+    test('and the `--` may be in `args:` too', () {
+      for (final name in ['-n.dart', 'ok.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  src:\n    include: ["*.dart"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [fmt], args: [--, $all]}'
+              '\n',
+          'a',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('and a literal `--` before the marker is the answer', () {
+      for (final name in ['-n.dart', 'ok.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      final body = resolve(
+        'version: 1\n'
+            'sets:\n  src:\n    include: ["*.dart"]\n'
+            'tasks:\n'
+            r'  a: {desc: x, all: src, run: [fmt, --, $all]}'
+            '\n',
+        'a',
+      ).single;
+      expect(
+        (body as ResolvedProcess).arguments,
+        ['--', '-n.dart', 'ok.dart'],
+      );
+    });
+
+    test('a set the author WROTE is not second-guessed', () {
+      // `--enable-asserts` in a `values:` set is there because somebody typed
+      // it; refusing that refuses the use the key exists for.
+      expect(
+        () => resolve(
+          'version: 1\n'
+              "sets:\n  flags:\n    values: ['--enable-asserts']\n"
+              'tasks:\n'
+              r'  a: {desc: x, all: flags, run: [fmt, $all]}'
+              '\n',
+          'a',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('nor is a member composed into a word the author wrote', () {
+      // `--flavor=-dev` is one token and safe; the advised `--` would break
+      // it.
+      expect(
+        () => resolve(
+          'version: 1\n'
+              "sets:\n  f:\n    values: ['-dev']\n"
+              'tasks:\n'
+              r'  a: {desc: x, each: f, run: [b, --flavor=$each]}'
+              '\n',
+          'a',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('nor a member that only ever reaches `in:`', () {
+      // It is the working directory, never an argument — so the message would
+      // be false and the advice impossible to follow.
+      Directory(p.join(root.path, '-foo')).createSync();
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  dirs:\n    include: ["*"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, each: dirs, in: $each, run: [pwd]}'
+              '\n',
+          'a',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('and an ordinary member says nothing', () {
+      File(p.join(root.path, 'ok.dart')).writeAsStringSync('');
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  src:\n    include: ["*.dart"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [fmt, $all]}'
+              '\n',
+          'a',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('the same for `each:`, one member at a time', () {
+      File(p.join(root.path, '-n.dart')).writeAsStringSync('');
+      expect(
+        () => resolve(
+          'version: 1\n'
+              'sets:\n  src:\n    include: ["*.dart"]\n'
+              'tasks:\n'
+              r'  a: {desc: x, each: src, run: [fmt, $each]}'
+              '\n',
+          'a',
+        ),
+        refused(ExitCode.invalidFile, contains('`-n.dart`')),
+      );
+    });
+  });
+
+  group('`each:` puts its member where the marker stands', () {
+    test('as a whole argument — the case that did not exist before', () {
+      // Until now a member could be a working directory and nothing else, so
+      // "run this over every file" was unwritable.
+      for (final name in ['a.dart', 'b.dart']) {
+        File(p.join(root.path, name)).writeAsStringSync('');
+      }
+      final bodies = resolve(
+        'version: 1\n'
+            'sets:\n  src:\n    include: ["*.dart"]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: src, run: [fmt, $each]}'
+            '\n',
+        'a',
+      );
+      expect(
+        bodies.map((b) => (b as ResolvedProcess).arguments),
+        [
+          ['a.dart'],
+          ['b.dart'],
+        ],
+      );
+    });
+
+    test('and at the end of one, which composes a path around a name', () {
+      Directory(p.join(root.path, 'packages', 'lake')).createSync(
+        recursive: true,
+      );
+      final body = resolve(
+        'version: 1\n'
+            'sets:\n  pkgs: [lake]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: packages/$each,'
+            r' run: [dart, test, --name, $each]}'
+            '\n',
+        'a',
+      ).single;
+      // Both halves at once: the directory is the composed path, and the
+      // argument is the bare name it was composed from.
+      expect(body.workingDirectory, p.join(root.path, 'packages', 'lake'));
+      expect((body as ResolvedProcess).arguments, ['test', '--name', 'lake']);
     });
   });
 

@@ -3,8 +3,20 @@ import 'dart:io';
 import 'package:glob/glob.dart';
 import 'package:path/path.dart' as p;
 
+import 'boundary.dart';
 import 'errors.dart';
+import 'globs.dart';
 import 'model.dart';
+
+/// Why task [task]'s `[key]: [name]` names a set the file has not got.
+///
+/// One sentence for a rule two readers report: `--validate` when the file is
+/// read, the resolver when a run reaches the task.
+String noSuchSet({
+  required String task,
+  required String key,
+  required String name,
+}) => 'task `$task` has `$key: $name`, and there is no set called `$name`';
 
 /// Turning a named set into the strings a task is given.
 ///
@@ -24,12 +36,18 @@ final class SetExpander {
   /// The answer is unmodifiable, and both branches answer alike. The list arm
   /// used to hand back the parsed model's own list while the glob arm built a
   /// fresh one, so the obvious `expand(...)..addAll(task.args)` worked against
-  /// a glob and permanently poisoned a list — in a `collects:` gate, the second
-  /// task sharing an `argv-from` would receive the first one's arguments
+  /// a glob and permanently poisoned a list — in a gate set, the second
+  /// task sharing an `all:` would receive the first one's arguments
   /// appended to the file list, and the gate would go green having checked the
   /// wrong thing. Invisible for globs, which is most of the suite.
   List<String> expand(String name, NamedSet set) {
     final members = switch (set) {
+      // Checked one by one, and this is not decoration: a written member met
+      // no boundary at all until it did, so `['/etc', '../..']` expanded to
+      // real paths and reached a working directory and a verb that deletes.
+      // The glob arm has been refusing the same thing since it was written;
+      // the two arms disagreeing was the hole.
+      //
       // **Written order, not sorted.** §4.2 promises a deterministic order so
       // that an argument list does not depend on the filesystem — it does not
       // ask for an author's list to be rearranged. `each: test-packages` runs
@@ -39,7 +57,14 @@ final class SetExpander {
       // Members are literal. Globs among them — §12's `build-outputs` has
       // three — are `remove`'s to expand under §6's rule that a missing path
       // is not an error, which is why `clean` may run twice.
-      ListSet(:final members) => members,
+      ListSet(:final members) => [
+        for (final member in members) _refuseUnrooted(name, set, member),
+      ],
+      // **Not asked whether they leave the repository, because they are not
+      // paths.** That question refused `a:b` for looking like a Windows
+      // drive, and it has no meaning at all about `dev` or `stable`. A set
+      // that says what it holds is asked the right questions.
+      ValueSet(:final values) => values,
       GlobSet() => _matches(name, set),
     };
     _refuseEmpty(name, set, members);
@@ -68,20 +93,58 @@ final class SetExpander {
         if (pattern.endsWith('/**')) pattern.substring(0, pattern.length - 3),
     ]);
 
+    final reach = Reach(set.include);
+
     final found = <String>[];
-    void walk(Directory directory) {
+
+    // **The relative path is carried, not re-derived.** `p.relative` was
+    // called once per entry — over thirty thousand of them on an ordinary
+    // repository — to work out something the walk already knew: the parent's
+    // relative path plus this entry's own name. A third of the walk.
+    void walk(Directory directory, String at) {
       // Sorted here as well as at the end: a directory listing is in whatever
       // order the filesystem felt like, and a walk that descends in that order
       // is a walk whose failure messages arrive in it too.
-      final entries = directory.listSync(followLinks: false).toList()
-        ..sort((a, b) => a.path.compareTo(b.path));
+      final List<FileSystemEntity> entries;
+      try {
+        entries = directory.listSync(followLinks: false).toList()
+          ..sort((a, b) => a.path.compareTo(b.path));
+      } on FileSystemException catch (problem) {
+        // **Unless it simply went away.** A directory removed while this walk
+        // is inside it — by a `do: remove` running beside this task, or by
+        // anything else on the machine — has nothing left to be short of, and
+        // calling that "the file was refused" answers a machine race with a
+        // code documented as never being the code's fault.
+        if (!directory.existsSync()) {
+          return;
+        }
+        // **Refused, not skipped.** A directory this process cannot read may
+        // hold members, so passing over it makes the set quietly smaller than
+        // the file says — a gate that examined fewer files and went green,
+        // which is the failure this whole tool is against.
+        //
+        // Refused HERE, because unhandled it left `--validate` on a stack
+        // trace and exit 255, a number §5.3 does not have, from the one gate
+        // the README tells every project to put in CI.
+        throw XtaskFormatException(
+          'set `$name` cannot be read: `${at.isEmpty ? '.' : at}` is not '
+          'listable — ${problem.osError?.message ?? problem.message}. This is '
+          'about this machine rather than the file, and it is refused rather '
+          'than passed over: a directory that cannot be read may hold members, '
+          'and a set that is quietly short is a gate that checked less than it '
+          'says',
+          set.span,
+        );
+      }
       for (final entry in entries) {
         // §6 says `remove` never follows a symlink. Listing takes the same
         // line, and for a second reason: a link into an ancestor is a loop.
         if (entry is Link) {
           continue;
         }
-        final relative = _relative(entry.path);
+        final relative = at.isEmpty
+            ? p.basename(entry.path)
+            : '$at/${p.basename(entry.path)}';
         if (excludes.any((g) => g.matches(relative))) {
           continue;
         }
@@ -91,30 +154,49 @@ final class SetExpander {
         if (includes.any((g) => g.matches(relative))) {
           found.add(relative);
         }
-        if (entry is Directory) {
-          walk(entry);
+        // **Pruned on the includes, not only on the exclusions**, and only the
+        // DESCENT is pruned — a directory can be a member itself, which is how
+        // `packages/*/coverage` reaches a directory to delete.
+        //
+        // Include patterns were used to match and never to prune, so
+        // `include: ['src/**/*.ts']` walked all of `node_modules` and all of
+        // `.git` — once per set, per task, per run — to find nothing there by
+        // construction.
+        if (entry is Directory && reach.into(relative)) {
+          walk(entry, relative);
         }
       }
     }
 
-    walk(Directory(root));
+    walk(Directory(root), '');
     return found..sort();
   }
 
   /// Every reading of every pattern, as globs, refusing what cannot be one.
   List<Glob> _globs(String name, NamedSet set, List<String> patterns) => [
     for (final pattern in patterns)
-      for (final variant in _zeroOrMoreDirectories(
-        _refuseUnrooted(
-          name,
-          set,
-          pattern,
-        ),
-      ))
+      for (final variant in _readings(name, set, pattern))
         _glob(name, set, variant),
   ];
 
-  /// [pattern] unchanged, or a refusal if it names anything outside [root].
+  /// Every reading of [pattern], reported at the set's own line.
+  ///
+  /// `zeroOrMoreDirectories` refuses a pattern with too many of them, and that
+  /// refusal is a `FormatException` — which, unwrapped, would leave `expand`
+  /// past the exit codes, exactly as a malformed pattern used to.
+  Set<String> _readings(String name, NamedSet set, String pattern) {
+    final rooted = _refuseUnrooted(name, set, pattern);
+    try {
+      return zeroOrMoreDirectories(rooted);
+    } on FormatException catch (problem) {
+      throw XtaskFormatException(
+        'in set `$name`: ${problem.message}',
+        set.span,
+      );
+    }
+  }
+
+  /// [written] unchanged, or a refusal if it names anything outside [root].
   ///
   /// **`root` is a boundary, not a default.** An absolute pattern or one
   /// climbing through `..` used to walk wherever it liked — `include:
@@ -122,59 +204,32 @@ final class SetExpander {
   /// `remove`, which deletes recursively and treats a missing path as fine, is
   /// deletion outside the repository with no diagnostic and nothing
   /// `--validate` could see.
-  String _refuseUnrooted(String name, NamedSet set, String pattern) {
-    final absolute =
-        pattern.startsWith('/') || RegExp('^[A-Za-z]:').hasMatch(pattern);
-    final climbs = p.posix.split(pattern).contains('..');
-    if (!absolute && !climbs) {
-      return pattern;
+  ///
+  /// Applied to a written member as well as to a pattern, because what a set
+  /// hands on is the same string either way. The test itself lives in
+  /// [leavesRoot], so that the fence has one gate rather than a copy per
+  /// caller.
+  String _refuseUnrooted(String name, NamedSet set, String written) {
+    if (!leavesRoot(written)) {
+      return written;
     }
     throw XtaskFormatException(
-      'set `$name` reaches outside the repository with `$pattern`. Patterns '
-      'are relative to the root and stay there: a set is fed to verbs that '
-      "delete, and a path the repository does not own is not this file's to "
-      'name',
+      'set `$name` reaches outside the repository with `$written`. What a set '
+      'names is relative to the root and stays there: a set is fed to verbs '
+      "that delete, and a path the repository does not own is not this file's "
+      'to name'
+      '${_drivePrefixed(written) ? ' — one letter and a colon reads as a '
+                'Windows drive, whatever it was meant as' : ''}',
       set.span,
     );
   }
 
-  /// [pattern], and the same pattern with each `**/` standing for no directory
-  /// at all.
-  ///
-  /// **`package:glob` reads `**/` as one directory or more.** So
-  /// `packages/**/*.lake` — a pattern of exactly the shape a monorepo writes
-  /// — finds `packages/a/b.lake` and silently does not find
-  /// `packages/b.lake`.
-  /// Bash's `globstar`, git's ignore rules and every glob a person has met
-  /// elsewhere read it as none or more, so the file would mean one thing to
-  /// its author and another to this engine. The consequence is the one this
-  /// whole tool is against: not an error, but a gate that examined fewer files
-  /// than it was written to examine and went green anyway.
-  Set<String> _zeroOrMoreDirectories(String pattern) {
-    // Find the first `**` that stands as a WHOLE segment, skipping past any
-    // that do not. Stopping at the first occurrence and giving up if it was
-    // part of a larger token — as this did — abandons the zero-directory
-    // reading of every later, legitimate one: `a**/b/**/c` was left untouched
-    // entirely, and `{**/a,b}` never expanded because a brace preceded it.
-    var index = pattern.indexOf('**/');
-    while (index > 0 && pattern[index - 1] != '/') {
-      index = pattern.indexOf('**/', index + 1);
-    }
-    if (index == -1) {
-      return {pattern};
-    }
-
-    final withStar = pattern.substring(0, index + 3);
-    final withoutStar = pattern.substring(0, index);
-    final tails = _zeroOrMoreDirectories(pattern.substring(index + 3));
-    return {
-      for (final tail in tails) withStar + tail,
-      for (final tail in tails) withoutStar + tail,
-      // `**/` on its own yields the empty pattern, which `Glob` refuses. It is
-      // the engine's own by-product, so it is dropped here rather than
-      // surfacing as a crash on a pattern the library accepts.
-    }..removeWhere((variant) => variant.isEmpty);
-  }
+  /// Whether [written] is refused for looking like `C:` rather than for
+  /// anything about paths — the one shape whose refusal needs explaining.
+  static bool _drivePrefixed(String written) =>
+      written.length > 1 &&
+      written[1] == ':' &&
+      RegExp('[A-Za-z]').hasMatch(written[0]);
 
   /// A pattern is always read as POSIX, whatever the host is.
   ///
@@ -198,19 +253,10 @@ final class SetExpander {
     }
   }
 
-  /// [path] relative to [root], written with `/` on every platform.
-  ///
-  /// The separator is normalised for the same reason the patterns are: this
-  /// string becomes a process argument, and an argument list that differs
-  /// between platforms is a portability claim with a hole in it. Windows
-  /// accepts `/` in paths; the tools this passes them to accept it too.
-  String _relative(String path) =>
-      p.posix.joinAll(p.split(p.relative(path, from: root)));
-
   /// An expansion that found nothing is an error, and there is no key to
   /// soften it (§4.2).
   ///
-  /// A task whose `argv-from` came back empty runs its body with no arguments,
+  /// A task whose `all:` came back empty runs its body with no arguments,
   /// and `dart format` with no arguments formats the whole tree. The worse
   /// case is quieter: inside a gate, the set was empty, the task passed, the
   /// gate went green and nothing was checked — defect 3 of §1 reproduced by a
@@ -223,6 +269,7 @@ final class SetExpander {
     }
     final detail = switch (set) {
       ListSet() => 'it is written with no members',
+      ValueSet() => 'its `values:` are written with no members',
       // Blames the exclusion only when there was something for it to remove;
       // otherwise it points at a pattern that matched nothing, which is the
       // typo actually worth reporting.
@@ -230,12 +277,17 @@ final class SetExpander {
         'nothing under the repository root matches ${_quoted(include)}'
             '${exclude.isEmpty ? '' : ', with or without ${_quoted(exclude)}'}',
     };
-    throw XtaskFormatException(
+    throw EmptySetException(
       'set `$name` is empty — $detail. An empty set is refused rather than '
       'passed on: a task given no arguments where it expected files does not '
       'fail, it succeeds having done nothing, and in a gate that is a green '
       'result nobody checked',
       set.span,
+      // **The one place this is decided.** `produced:` says the members are
+      // made by the run, so before the task that makes them has run this
+      // emptiness is a moment rather than a mistake. Every reader used to
+      // work that out again from the set it happened to be holding.
+      onlyYet: set is GlobSet && set.produced,
     );
   }
 

@@ -13,9 +13,25 @@
       "const": 1,
       "description": "Required. The only version this engine reads; an unknown one is refused rather than read as best it can."
     },
+    "gates": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^\\r\\n]+$"
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Every gate set this file has, in the order a report groups by. Names only — a gate set is not a task and has nothing to describe. A gate set is run by being named — `xtask check`. Declaring them is what makes a misspelled `gate:` a refusal rather than a new gate set nobody runs."
+    },
     "sets": {
       "type": "object",
-      "description": "Named lists and globs, referenced by a task's `each:` or `argv-from:`. A set that expands to nothing is an error: a task given no files checked nothing.",
+      "description": "Named lists and globs, referenced by a task's `each:` or `all:`. A set that expands to nothing is an error: a task given no files checked nothing.",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^\\r\\n]+$"
+      },
       "additionalProperties": {
         "oneOf": [
           {
@@ -39,7 +55,7 @@
                   "type": "string"
                 },
                 "minItems": 1,
-                "description": "Patterns, relative to the repository root. `**/` means one or more directories."
+                "description": "Patterns, relative to the repository root. `**/` means NONE or more directories, as bash and git read it — so `packages/**/x` finds `packages/x` too."
               },
               "exclude": {
                 "type": "array",
@@ -47,16 +63,43 @@
                   "type": "string"
                 },
                 "description": "Patterns removed from what `include:` matched."
+              },
+              "produced": {
+                "type": "boolean",
+                "description": "Whether this set's members are made by the run itself. A set is read when the task naming it is about to run, so `--validate` and `--dry-run` see a different moment; this says so, and buys exactly one thing — the emptiness of this set is not judged before then. Everything else about it still is, and a run still refuses it empty."
               }
             },
             "description": "Globs, expanded by the engine rather than by a shell, in a deterministic order."
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "values"
+            ],
+            "properties": {
+              "values": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "description": "The members, written out. Whatever they name, it is not a path."
+              }
+            },
+            "description": "Members that are not paths — flavours, platforms, SDK versions. Not checked against the repository root and never matched on disk."
           }
         ]
       }
     },
     "tasks": {
       "type": "object",
-      "description": "The graph. Declaration order is meaningful: a `collects:` composite runs its gate members in the order they appear here.",
+      "description": "The graph. Declaration order is meaningful: a gate set runs its tasks in the order they appear here, except where a `needs:` or a `then:` puts one of them after another.",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^\\r\\n]+$"
+      },
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
@@ -96,20 +139,25 @@
             },
             "description": "Extra arguments appended to the body."
           },
-          "argv-from": {
+          "all": {
             "type": "string",
-            "description": "A set whose members are appended as arguments, already expanded."
+            "description": "A set whose members replace the `$all` marker in `run:` or `args:`, in one invocation. The marker is a whole argument and appears once."
           },
           "each": {
             "type": "string",
-            "description": "A set whose members the body runs once per, sequentially. A failure stops at that member, and the member is named."
+            "description": "A set whose members the body runs once per, with `$each` standing for the member — a whole argument, or the end of one: `packages/$each`. Nothing may follow it. A failure names the member; without `--keep-going` no further member is STARTED, so at `-j 1` it stops the rest and above that it stops what had not begun."
           },
           "in": {
             "type": "string",
-            "description": "Where the body runs, relative to the repository root — or the literal `$each`, which stands for the current member of `each:`."
+            "description": "Where the body runs, relative to the repository root. May end with `$each`, which stands for the current member of `each:` — as the whole value, or composed: `packages/$each`."
           },
           "env": {
             "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$"
+            },
             "additionalProperties": {
               "type": "string"
             },
@@ -143,9 +191,20 @@
             },
             "description": "The gate sets this task belongs to. A gate set is named after who runs it: one person's command, or one CI job's."
           },
-          "collects": {
-            "type": "string",
-            "description": "Names a gate set this task is the composite of — it needs every task in that set. Spelled nothing like `gate:` on purpose: the two mean opposite things."
+          "serial": {
+            "type": "boolean",
+            "description": "Whether this task's `each:` members must not overlap. `-j` says how much may happen at once; this says whether these particular members may happen together at all — one shared `pub` cache, one git index. Getting it wrong makes a run flaky rather than slow, which is why it is in the file and the number is not."
+          },
+          "interruptible": {
+            "type": "boolean",
+            "description": "Whether a failure elsewhere may stop this task where it stands. A run does not reach into what is already running, because a build killed half-way leaves whatever it was doing in whatever state that half is — this is the author saying a read-only check leaves nothing. A `do:` cannot carry it: stopping a Dart function from outside is not something Dart can do."
+          },
+          "exclusive": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tokens this task holds alone while it runs. Two tasks the graph calls independent may still share a port or a browser; naming what they share is what keeps them apart."
           },
           "timeout": {
             "type": "integer",

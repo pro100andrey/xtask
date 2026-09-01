@@ -4,6 +4,8 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/executables.dart';
 
+import 'helpers.dart';
+
 /// A resolver over a made-up filesystem.
 ///
 /// The whole point of the seam: every case below runs identically on macOS,
@@ -39,24 +41,30 @@ void main() {
 
     test('finds a bare name in the first directory that has it', () {
       final r = withPath('/a:/b', {'/b/dart', '/a/other'});
-      expect(r.resolve('dart'), '/b/dart');
+      expect(r.resolve('dart', from: '/repo'), '/b/dart');
     });
 
     test('prefers the earlier directory', () {
       final r = withPath('/a:/b', {'/a/dart', '/b/dart'});
-      expect(r.resolve('dart'), '/a/dart');
+      expect(r.resolve('dart', from: '/repo'), '/a/dart');
     });
 
     test('answers null when nothing has it', () {
-      expect(withPath('/a:/b', {'/a/other'}).resolve('dart'), isNull);
+      expect(
+        withPath('/a:/b', {'/a/other'}).resolve('dart', from: '/repo'),
+        isNull,
+      );
     });
 
     test('skips empty PATH entries rather than searching the root', () {
-      expect(withPath('/a::', {'dart'}).resolve('dart'), isNull);
+      expect(withPath('/a::', {'dart'}).resolve('dart', from: '/repo'), isNull);
     });
 
     test('never appends a suffix', () {
-      expect(withPath('/a', {'/a/dart.exe'}).resolve('dart'), isNull);
+      expect(
+        withPath('/a', {'/a/dart.exe'}).resolve('dart', from: '/repo'),
+        isNull,
+      );
     });
 
     test('walks past a name-match that cannot be started', () {
@@ -70,18 +78,56 @@ void main() {
         windows: false,
         isRunnable: (path) => path == '/real/dart',
       );
-      expect(r.resolve('dart'), '/real/dart');
+      expect(r.resolve('dart', from: '/repo'), '/real/dart');
     });
   });
 
   group('a name that is already a path', () {
-    test('is used as given, not searched for', () {
+    test('is read from the directory the body will run in', () {
       final r = resolver(
         windows: false,
         environment: {'PATH': '/a'},
-        runnable: {'./tool/gen', '/a/gen'},
+        runnable: {'/repo/tool/gen', '/a/gen'},
       );
-      expect(r.resolve('./tool/gen'), './tool/gen');
+      expect(r.resolve('./tool/gen', from: '/repo'), '/repo/tool/gen');
+    });
+
+    test('and it comes back in the separators the machine writes', () {
+      // The file speaks POSIX and the machine may not. Joined onto a native
+      // directory without re-splitting, `./tool/gen` came back as
+      // `C:\repo/tool/gen` — which Windows accepts, which `--dry-run` printed
+      // back at a reader as the plan, and which matches no path this engine
+      // builds any other way. `boundary.dart` draws that line for `in:` and
+      // for `remove`; this was the one place that joined without it.
+      final r = resolver(
+        windows: true,
+        environment: {'PATH': r'C:\bin', 'PATHEXT': '.EXE'},
+        runnable: {r'C:\repo\tool\gen'},
+      );
+      expect(r.resolve('./tool/gen', from: r'C:\repo'), r'C:\repo\tool\gen');
+      expect(r.resolve('tool/gen', from: r'C:\repo'), r'C:\repo\tool\gen');
+    });
+
+    test('so the same name under two directories is two programs', () {
+      // The cache is keyed on the pair for this reason. Keyed on the name
+      // alone, the second task here answered with the first one's program —
+      // silently, and with a plausible-looking run.
+      final r = resolver(
+        windows: false,
+        environment: {'PATH': '/a'},
+        runnable: {'/repo/a/x', '/repo/b/x'},
+      );
+      expect(r.resolve('./x', from: '/repo/a'), '/repo/a/x');
+      expect(r.resolve('./x', from: '/repo/b'), '/repo/b/x');
+    });
+
+    test('an absolute one is not joined to anything', () {
+      final r = resolver(
+        windows: false,
+        environment: {'PATH': '/a'},
+        runnable: {'/opt/gen'},
+      );
+      expect(r.resolve('/opt/gen', from: '/repo'), '/opt/gen');
     });
 
     test('missing is missing — PATH is not consulted as a fallback', () {
@@ -92,16 +138,19 @@ void main() {
         environment: {'PATH': '/a'},
         runnable: {'/a/gen'},
       );
-      expect(r.resolve('./tool/gen'), isNull);
+      expect(r.resolve('./tool/gen', from: '/repo'), isNull);
     });
 
     test('a Windows backslash path counts as a path', () {
       final r = resolver(
         windows: true,
         environment: {'PATH': r'C:\bin'},
-        runnable: {r'tool\gen.bat'},
+        runnable: {r'C:\repo\tool\gen.bat'},
       );
-      expect(r.resolve(r'tool\gen.bat'), r'tool\gen.bat');
+      expect(
+        r.resolve(r'tool\gen.bat', from: r'C:\repo'),
+        r'C:\repo\tool\gen.bat',
+      );
     });
   });
 
@@ -118,12 +167,12 @@ void main() {
     test('a bare name matches a batch shim — the case that broke §5.2', () {
       final r = windowsWith({r'C:\sdk\dart.bat'});
       // `.BAT`, not `.bat`: the suffix comes from PATHEXT, not from disk.
-      expect(r.resolve('dart'), r'C:\sdk\dart.BAT');
+      expect(r.resolve('dart', from: r'C:\repo'), r'C:\sdk\dart.BAT');
     });
 
     test('splits PATH on `;`, not `:` — a drive letter is not a separator', () {
       final r = windowsWith({r'C:\sdk\dart.exe'});
-      expect(r.resolve('dart'), r'C:\sdk\dart.EXE');
+      expect(r.resolve('dart', from: r'C:\repo'), r'C:\sdk\dart.EXE');
     });
 
     test('honours the machine PATHEXT over the default', () {
@@ -131,7 +180,7 @@ void main() {
         {r'C:\bin\tool.ps1'},
         environment: {'PATH': r'C:\bin', 'PATHEXT': '.PS1'},
       );
-      expect(r.resolve('tool'), r'C:\bin\tool.PS1');
+      expect(r.resolve('tool', from: r'C:\repo'), r'C:\bin\tool.PS1');
     });
 
     test('a PATHEXT that omits .BAT means .bat does not resolve', () {
@@ -139,7 +188,7 @@ void main() {
         {r'C:\bin\tool.bat'},
         environment: {'PATH': r'C:\bin', 'PATHEXT': '.EXE'},
       );
-      expect(r.resolve('tool'), isNull);
+      expect(r.resolve('tool', from: r'C:\repo'), isNull);
     });
 
     test('falls back to the documented default when PATHEXT is unset', () {
@@ -147,7 +196,7 @@ void main() {
         {r'C:\bin\tool.CMD'},
         environment: {'PATH': r'C:\bin'},
       );
-      expect(r.resolve('tool'), r'C:\bin\tool.CMD');
+      expect(r.resolve('tool', from: r'C:\repo'), r'C:\bin\tool.CMD');
     });
 
     test('an EMPTY PATHEXT also means the default, as it does to Windows', () {
@@ -160,7 +209,7 @@ void main() {
         {r'C:\bin\dart.bat'},
         environment: {'PATH': r'C:\bin', 'PATHEXT': ''},
       );
-      expect(r.resolve('dart'), r'C:\bin\dart.BAT');
+      expect(r.resolve('dart', from: r'C:\repo'), r'C:\bin\dart.BAT');
     });
 
     test('tries PATHEXT in the order the machine gives', () {
@@ -168,7 +217,7 @@ void main() {
         {r'C:\bin\tool.CMD', r'C:\bin\tool.EXE'},
         environment: {'PATH': r'C:\bin', 'PATHEXT': '.CMD;.EXE'},
       );
-      expect(r.resolve('tool'), r'C:\bin\tool.CMD');
+      expect(r.resolve('tool', from: r'C:\repo'), r'C:\bin\tool.CMD');
     });
 
     test("the answer carries PATHEXT's spelling, not the disk's", () {
@@ -179,14 +228,14 @@ void main() {
         {r'C:\bin\tool.bat'},
         environment: {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
       );
-      expect(r.resolve('tool'), r'C:\bin\tool.BAT');
+      expect(r.resolve('tool', from: r'C:\repo'), r'C:\bin\tool.BAT');
     });
 
     test('a name written with its extension resolves to itself', () {
       // Not `tool.exe.COM`. The reference this was ported from tries only the
       // PATHEXT suffixes and would miss `run: [tool.exe, ...]`.
       final r = windowsWith({r'C:\bin\tool.exe'});
-      expect(r.resolve('tool.exe'), r'C:\bin\tool.exe');
+      expect(r.resolve('tool.exe', from: r'C:\repo'), r'C:\bin\tool.exe');
     });
 
     test('a bare name does NOT match an extensionless file beside a shim', () {
@@ -200,7 +249,10 @@ void main() {
         {r'C:\src\flutter\bin\flutter', r'C:\src\flutter\bin\flutter.bat'},
         environment: {'PATH': r'C:\src\flutter\bin'},
       );
-      expect(r.resolve('flutter'), r'C:\src\flutter\bin\flutter.BAT');
+      expect(
+        r.resolve('flutter', from: r'C:\repo'),
+        r'C:\src\flutter\bin\flutter.BAT',
+      );
     });
 
     test('reads `Path`, which is how Windows actually spells it', () {
@@ -208,7 +260,7 @@ void main() {
         {r'C:\bin\dart.bat'},
         environment: {'Path': r'C:\bin'},
       );
-      expect(r.resolve('dart'), r'C:\bin\dart.BAT');
+      expect(r.resolve('dart', from: '/repo'), r'C:\bin\dart.BAT');
     });
   });
 
@@ -264,7 +316,7 @@ void main() {
         environment: {'PATH': '/a:/b:/c'},
         runnable: {},
       );
-      final message = r.missingToolMessage('dart');
+      final message = r.missingToolMessage('dart', from: '/repo');
       expect(message, contains('`dart`'));
       expect(message, contains('3 directories'));
     });
@@ -275,7 +327,10 @@ void main() {
         environment: {'PATH': r'C:\bin', 'PATHEXT': '.EXE;.BAT'},
         runnable: {},
       );
-      expect(r.missingToolMessage('dart'), contains('.EXE, .BAT'));
+      expect(
+        r.missingToolMessage('dart', from: '/repo'),
+        contains('.EXE, .BAT'),
+      );
     });
 
     test('and does not trail off when PATHEXT is empty', () {
@@ -285,7 +340,7 @@ void main() {
         environment: {'PATH': r'C:\bin', 'PATHEXT': ''},
         runnable: {},
       );
-      final message = r.missingToolMessage('dart');
+      final message = r.missingToolMessage('dart', from: '/repo');
       expect(message, isNot(endsWith('with any of ')));
       expect(message, contains('.BAT'));
     });
@@ -296,8 +351,8 @@ void main() {
         environment: {'PATH': '/a'},
         runnable: {},
       );
-      final message = r.missingToolMessage('./tool/gen');
-      expect(message, contains('no file at `./tool/gen`'));
+      final message = r.missingToolMessage('./tool/gen', from: '/repo');
+      expect(message, contains('no file at `./tool/gen` under `/repo`'));
       expect(message, isNot(contains('directories on PATH')));
     });
   });
@@ -309,8 +364,7 @@ void main() {
     // answer. These walk a real PATH, so the wiring is actually exercised.
     late Directory dir;
 
-    setUp(() => dir = Directory.systemTemp.createTempSync('xtask_resolve_'));
-    tearDown(() => dir.deleteSync(recursive: true));
+    setUp(() => dir = tempRepo('resolve'));
 
     void write(String name, {required bool executable}) {
       final file = File(p.join(dir.path, name))
@@ -329,7 +383,7 @@ void main() {
     test('finds a real executable by bare name on a real PATH', () {
       write('xtask-probe', executable: true);
       expect(
-        hostWithPath().resolve('xtask-probe'),
+        hostWithPath().resolve('xtask-probe', from: dir.path),
         p.join(dir.path, 'xtask-probe'),
       );
     });
@@ -338,22 +392,25 @@ void main() {
       // The failure this is about, on an actual filesystem rather than a fake
       // one: a stale non-executable wrapper is not a program.
       write('xtask-probe', executable: false);
-      expect(hostWithPath().resolve('xtask-probe'), isNull);
+      expect(hostWithPath().resolve('xtask-probe', from: dir.path), isNull);
     });
 
     test('a directory on PATH is not a program', () {
       Directory(p.join(dir.path, 'xtask-probe')).createSync();
-      expect(hostWithPath().resolve('xtask-probe'), isNull);
+      expect(hostWithPath().resolve('xtask-probe', from: dir.path), isNull);
     });
 
     test('finds the Dart running this test, given as a path', () {
       final dart = Platform.resolvedExecutable;
-      expect(ExecutableResolver.forHost().resolve(dart), dart);
+      expect(ExecutableResolver.forHost().resolve(dart, from: dir.path), dart);
     });
 
     test('does not find a name nothing answers to', () {
       expect(
-        ExecutableResolver.forHost().resolve('xtask-no-such-program-4f3a9'),
+        ExecutableResolver.forHost().resolve(
+          'xtask-no-such-program-4f3a9',
+          from: dir.path,
+        ),
         isNull,
       );
     });

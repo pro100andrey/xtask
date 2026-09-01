@@ -1,8 +1,21 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/xtask.dart';
+
+import 'helpers.dart';
+
+/// The gate the pipe tests run: four tasks, each touching a marker, so that a
+/// failure can say how far the run got instead of only that it did not finish.
+const _marks = ['one', 'two', 'three', 'four'];
+
+/// One of them, as the file writes it.
+String _aTask(String name) =>
+    '  $name: {desc: $name, gate: [check], '
+    'run: [sh, -c, "sleep 0.3; touch ran-$name"]}\n';
 
 void main() {
   group('dart run :xtask', () {
@@ -115,6 +128,7 @@ void main() {
       final dart = Platform.resolvedExecutable;
       File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
         'version: 1\n'
+        'gates: [both]\n'
         'tasks:\n'
         '  one:\n'
         '    desc: first\n'
@@ -123,10 +137,7 @@ void main() {
         '  two:\n'
         '    desc: second\n'
         '    gate: [both]\n'
-        "    run: ['$dart', --version]\n"
-        '  both:\n'
-        '    desc: everything\n'
-        '    collects: both\n',
+        "    run: ['$dart', --version]\n",
       );
       run = await Process.run(
         dart,
@@ -134,7 +145,8 @@ void main() {
           'run',
           p.join(Directory.current.path, 'bin', 'xtask.dart'),
           'both',
-          '--parallel',
+          '-j',
+          'auto',
         ],
         workingDirectory: root.path,
         // **Named, not inherited.** Which markers a run prints is read off the
@@ -187,8 +199,7 @@ void main() {
     // own, as a separate process, and it finds the file there.
     late Directory root;
 
-    setUp(() => root = Directory.systemTemp.createTempSync('xtask_public_'));
-    tearDown(() => root.deleteSync(recursive: true));
+    setUp(() => root = tempRepo('public'));
 
     test(
       'a project with no verbs still gets the built-ins and the file',
@@ -211,5 +222,103 @@ void main() {
         expect(await runXtask(['a'], workingDirectory: root.path), 2);
       },
     );
+  });
+
+  group('a reader that goes away is an ordinary end', () {
+    // `xtask check | head -1` ran no tasks at all and exited non-zero without
+    // a word: the flush that orders this process's output against an inherited
+    // child threw `EPIPE` before the first child was started, the fan-out
+    // caught it as the body having thrown, and the failure went down the
+    // stdout that had just closed. `xtask check | head` is an ordinary thing
+    // to type.
+    late Directory root;
+
+    setUp(() {
+      root = tempRepo('epipe');
+      // **Four, not two.** With two, a failure says only "it stopped" — and
+      // whether the run stops at the same task every time or at whichever one
+      // the pipe happened to close under is the difference between a decision
+      // and a race, which is the first thing worth knowing about it.
+      File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
+        'version: 1\ngates: [check]\ntasks:\n${_marks.map(_aTask).join()}',
+      );
+    });
+
+    /// **Its stderr is kept, not drained.** Drained, this test could say only
+    /// that the run stopped at the pipe — which is the one thing already
+    /// obvious from the assertion, while the sentence the run printed about
+    /// WHY is exactly what a reader needs and is the thing being thrown away.
+    /// It failed on two CI runners and passed everywhere else, and there was
+    /// nothing in the report to work from.
+    Future<({int code, String errors, Duration took})> piped(
+      List<String> args,
+    ) async {
+      final began = DateTime.now();
+      final xtask = await Process.start(
+        Platform.resolvedExecutable,
+        ['run', p.join(Directory.current.path, 'bin', 'xtask.dart'), ...args],
+        workingDirectory: root.path,
+      );
+      final head = await Process.start('head', const ['-1']);
+      final errors = xtask.stderr.transform(utf8.decoder).join();
+      unawaited(xtask.stdout.pipe(head.stdin).catchError((Object _) {}));
+      unawaited(head.stdout.drain<void>());
+      await head.exitCode;
+      final code = await xtask.exitCode;
+      // **How long it took, which is the one thing still observable.** What
+      // the run writes after the reader goes is lost by construction — that
+      // is the scenario — so its side effects are all there is, and its
+      // duration is one of them. Each task sleeps; four of them take four
+      // times as long as one. A run that stops after the first is short, and
+      // a run that finishes with its markers missing is not.
+      return (
+        code: code,
+        errors: await errors,
+        took: DateTime.now().difference(began),
+      );
+    }
+
+    /// The same run with nobody closing the pipe: the control this test had
+    /// no way to state, and without which a failure cannot say whether the
+    /// pipe is implicated at all.
+    Future<({int code, String out})> whole(List<String> args) async {
+      final log = File(p.join(root.path, 'out.log'));
+      final xtask = await Process.start(
+        Platform.resolvedExecutable,
+        ['run', p.join(Directory.current.path, 'bin', 'xtask.dart'), ...args],
+        workingDirectory: root.path,
+      );
+      final written = xtask.stdout.pipe(log.openWrite());
+      unawaited(xtask.stderr.drain<void>().catchError((Object _) {}));
+      final code = await xtask.exitCode;
+      await written;
+      return (code: code, out: log.readAsStringSync());
+    }
+
+    bool ran(String marker) => File(p.join(root.path, marker)).existsSync();
+
+    /// Which of the four touched their marker, in order.
+    String reached() => [
+      for (final n in _marks)
+        if (ran('ran-$n')) n,
+    ].join(', ');
+
+    test('and the same run with nobody closing the pipe does too', () async {
+      // The control. If this fails as well, the pipe is not what stopped the
+      // run and the sentence the other test prints is about the wrong thing.
+      final run = await whole(['check']);
+      expect(reached(), _marks.join(', '), reason: run.out);
+      expect(run.code, 0, reason: run.out);
+    }, testOn: '!windows');
+
+    test('every task still runs, and the run still answers 0', () async {
+      final run = await piped(['check']);
+      final said =
+          'reached: <<${reached()}>>, exit ${run.code}, '
+          'took ${run.took.inMilliseconds}ms for ${_marks.length} tasks '
+          'sleeping 300ms each, stderr: <<${run.errors.trim()}>>';
+      expect(reached(), _marks.join(', '), reason: said);
+      expect(run.code, 0, reason: said);
+    }, testOn: '!windows');
   });
 }

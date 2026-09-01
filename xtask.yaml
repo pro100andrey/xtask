@@ -18,6 +18,11 @@
 # yaml-language-server: $schema=./xtask.schema.json
 version: 1
 
+# Declared, so that a misspelling here or in a task's `gate:` is a refusal
+# rather than a new gate set nobody runs. The order is the one a report
+# groups by.
+gates: [check, release]
+
 tasks:
   # Order inside the gate is the order written here, and it is the one place
   # ordering is implicit (§4.3). Cheapest first: an unformatted file is one
@@ -43,9 +48,6 @@ tasks:
     gate: [check]
     run: [dart, test]
 
-  check:
-    desc: everything that must pass before work is called done
-    collects: check
 
   # In its own gate set, and that is the whole point — which trying the other
   # arrangement taught, in four seconds.
@@ -72,9 +74,6 @@ tasks:
     gate: [release]
     run: [dart, pub, publish, --dry-run]
 
-  release:
-    desc: everything that must hold before this package can be published
-    collects: release
 
   # A person's convenience, and the one task in this file no gate reaches.
   #

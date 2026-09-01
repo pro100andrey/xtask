@@ -9,6 +9,7 @@ import 'package:xtask/src/graph.dart';
 import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/primitives.dart';
+import 'package:xtask/src/request.dart';
 import 'package:xtask/src/schema.dart';
 import 'package:xtask/src/sets.dart';
 import 'package:xtask/src/validate.dart';
@@ -54,7 +55,7 @@ void main() {
       // broken task file cannot be green. This project registers no verbs of
       // its own (§9), so what a `do:` may name is the built-in list.
       final report = validateFile(
-        withCollectedGates(file),
+        file,
         knownVerbs: builtInVerbNames,
         sets: SetExpander(root: root),
       );
@@ -62,12 +63,12 @@ void main() {
     });
 
     test('and every gate it declares gathers something', () {
-      // A composite over an empty gate is the failure this whole tool is
-      // about: a command that passes having examined nothing. Asked of every
-      // collected gate rather than of `check` by name — naming them here
-      // would be a list of gates beside the file's own, and the second one is
-      // always the one that stops being updated.
-      final gates = collectedGates(file);
+      // A gate set with no members is the failure this whole tool is about: a
+      // command that passes having examined nothing. Asked of every declared
+      // gate rather than of `check` by name — naming them here would be a
+      // list of gates beside the file's own, and the second one is always the
+      // one that stops being updated.
+      final gates = file.gates.keys;
       expect(gates, isNotEmpty);
       for (final gate in gates) {
         expect(tasksInGate(file, gate), isNotEmpty, reason: 'gate `$gate`');
@@ -85,18 +86,13 @@ void main() {
       // A test that asked about `check` would have called a task CI runs on
       // every push "typed by hand", and the word would have been wrong.
       //
-      // Planned from each composite's own name rather than from the gate's:
-      // they happen to match in this file and nothing makes them.
-      //
       // What is left is equality, not containment. A task added and forgotten
       // fails here, and so does a name left behind after the task it excused
       // is gone. It is not a second copy of any gate: their members are
       // exactly what is not written on this line.
       const typedByHand = {'aot'};
-      final collected = withCollectedGates(file);
       final reached = {
-        for (final task in file.tasks.values)
-          if (task.collects != null) ...planRun(collected, task.name).names,
+        for (final gate in file.gates.keys) ...planGate(file, gate).names,
       };
       expect(
         file.tasks.keys.toSet().difference(reached),
@@ -179,6 +175,58 @@ void main() {
     });
   });
 
+  group('the README shows this engine answering, not a description of it', () {
+    // Both blocks were wrong, and wrong the way prose about output goes wrong:
+    // `--dry-run check` was shown planning `check` itself, which is a gate set
+    // and never a step, and `--why` was shown printing `check needs lint` — a
+    // shape no gate set can produce, in a README that says two paragraphs
+    // later that there is no composite task.
+    //
+    // Derived, not listed. Writing the members here would be the third copy of
+    // the gate that this file opens by refusing to make.
+
+    /// What the README shows under somebody typing [command].
+    ///
+    /// By the line typed rather than by a heading: both blocks sit under one
+    /// heading, and `_fencedBlockAfter` answers with the first of them.
+    List<String> shown(String command) {
+      final lines = File(
+        p.join(root, 'README.md'),
+      ).readAsStringSync().split('\n');
+      final at = lines.indexOf(r'$ ' + command);
+      expect(at, isNonNegative, reason: 'README.md never shows `$command`');
+      final closed = lines.indexWhere((line) => line.startsWith('```'), at);
+      expect(closed, isNonNegative, reason: 'the block under it is unclosed');
+      return lines.sublist(at + 1, closed);
+    }
+
+    test('the plan it shows is the plan this file makes', () {
+      final planLine = shown(
+        'xtask --dry-run check',
+      ).firstWhere((line) => line.startsWith('plan: '));
+      expect(
+        planLine,
+        'plan: ${planGate(file, 'check').names.join(', ')}',
+        reason:
+            'the README shows a plan for `check` that this file does not '
+            'make. A gate set is never a step in its own plan.',
+      );
+    });
+
+    test('and the routes it shows are the routes this file has', () {
+      const asked = 'test';
+      expect(
+        shown(
+          'xtask --why $asked',
+        ).where((line) => !line.startsWith(' ')),
+        routesTo(file, asked).keys,
+        reason:
+            'the README shows entry points for `$asked` that this file does '
+            'not have. `--why` keys a gate set entry as `gate <name>`.',
+      );
+    });
+  });
+
   group("the README's own examples are files this engine would accept", () {
     // Written after both defects in one example: it had no `version:` at all,
     // and it wrote a glob as a plain list, which is a literal member that
@@ -202,11 +250,29 @@ void main() {
         reason: 'the README used to carry two whole files; find them again',
       );
       for (final block in blocks) {
+        // **Validated, not merely parsed.** Parsing says the shape is right;
+        // §8's checks are what a reader meets the moment they copy the block
+        // and run the first gate this document tells them to adopt. The
+        // declared-gates rule landed in `--validate` and the flagship example
+        // was left using `gate:` without a `gates:` line, so the document's
+        // own first instruction refused the document's own first file. Only a
+        // check that asks the same question a reader will ask can catch that.
+        late final XtaskFile file;
         expect(
-          () => parseXtaskFile(block, sourceUrl: Uri.parse('README.md')),
+          () => file = parseXtaskFile(block, sourceUrl: Uri.parse('README.md')),
           returnsNormally,
           reason: block,
         );
+        final report = validateFile(
+          file,
+          knownVerbs: {
+            ...builtInVerbNames,
+            ...file.tasks.values.map(
+              (task) => task.body is DoBody ? (task.body! as DoBody).verb : '',
+            ),
+          }..remove(''),
+        );
+        expect(report.ok, isTrue, reason: '$block\n$report');
       }
     });
   });

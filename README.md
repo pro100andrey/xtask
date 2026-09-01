@@ -34,6 +34,8 @@ Then write `xtask.yaml` at the repository root. This is a whole one:
 ```yaml
 version: 1
 
+gates: [check]
+
 tasks:
   lint:
     desc: check the style
@@ -45,9 +47,6 @@ tasks:
     gate: [check]
     run: [pytest, -q]
 
-  check:
-    desc: everything that must pass before work is called done
-    collects: check
 ```
 
 Those two are a Python repository's tools; put in whatever your own repository
@@ -70,13 +69,11 @@ before calling work done — and also the whole of the CI job, the same command,
 because there is only one list and it is not in either of them. `xtask --list`
 prints the tasks with their descriptions.
 
-Two keys in that file are doing the work, and they point in opposite
-directions. `gate: [check]` is written on a check and means *I am a member of
-the group called `check`*. `collects: check` is written on the task you type
-and means *I run that whole group*, in the order the file writes it. A task
-named `check` collecting a gate named `check` is the ordinary case and not a
-cycle — [Gate sets](#gate-sets-and-ci) says why, and why the
-whole tool exists for those two keys.
+Two lines in that file are doing the work. `gates: [check]` at the top says
+which groups this repository has; `gate: [check]` on a task says it is in one.
+`xtask check` then runs the group, in the order the file writes it — a gate set
+is not a task and needs none. [Gate sets](#gate-sets-and-ci) says why the whole
+tool exists for those two lines.
 
 ## Using it from Dart
 
@@ -162,7 +159,12 @@ A verb is ordinary Dart — testable, typed, debuggable:
 ```dart
 Future<int> regen(VerbContext context) async {
   context.log('regenerating ${context.args.length} files');
-  // context.args     `args:`, then the expanded `argv-from`, then anything
+  // context.member   which member of `each:` this run is for, or null
+  // context.run(...)  a program, started the way a `run:` body is —
+  //                   PATH, PATHEXT, the batch rule, the exit codes.
+  //                   `workingDirectory:` is a path from the repository
+  //                   root, and stays inside it; left out, it is the task's
+  // context.args     `args:` with `$all` expanded, then anything
   //                  the command line passed after `--`
   // context.env      this machine's environment, with `env:` winning a clash
   // context.workingDirectory
@@ -174,17 +176,21 @@ The engine ships **no** project verbs — `regen` above is one repository's
 business, not the tool's. Its only built-in is `remove`.
 
 The file name *is* the declaration: `dart run :xtask` resolves to
-`bin/xtask.dart` and nothing else, so no manifest entry names it.
+`bin/xtask.dart` and nothing else, so nothing has to name it to make that work.
+(`pubspec.yaml` does carry an `executables:` entry, and it is there for
+`dart install` — which fails outright without one — not for `dart run`.)
 
 ## The command
 
 ```shell
 xtask <task>                 run a task and everything it needs
 xtask <task> -- <args>       and pass those arguments to its body
-xtask <task> --keep-going    report every failure, not just the first
-xtask <task> --parallel      run independent tasks at once — which costs
-                             seeing their output as it arrives
-xtask --list                 every task, with its description
+xtask <task> --keep-going    report every failure, not just the first —
+                             across tasks and across an `each:`
+xtask <task> -j <n>          run n at once — which costs seeing their
+                             output as it arrives. `-j auto` picks one
+xtask --list                 every task, grouped under its gate set,
+                             in the order `gates:` declares
 xtask --list --gate <name>   only the tasks in that gate set
 xtask --gate-members <name>  the tasks in that gate set, one per line
 xtask --why <task>           what puts that task in a plan, and by which
@@ -203,7 +209,7 @@ command works from a subdirectory and every path inside the file stays relative
 to the repository root.
 
 Everything after `--` reaches the body of the **named** task, after its `args:`
-and its expanded `argv-from`, and nothing else in the plan sees it — so
+and its expanded `all:`, and nothing else in the plan sees it — so
 `xtask test -- -n "one test"` narrows the tests without also handing `-n` to
 the formatter. A task with no body of its own is refused rather than
 swallowing them.
@@ -220,15 +226,37 @@ The task names below are this repository's own, from [`xtask.yaml`](xtask.yaml):
 
 ```shell
 $ xtask --dry-run check
-plan: format, analyze, test, check
+plan: format, analyze, test
 format
   run  /opt/homebrew/bin/dart format --output=none --set-exit-if-changed .
-  in   /home/you/xtask
+  in   /Users/you/xtask
 analyze
   run  /opt/homebrew/bin/dart analyze --fatal-infos
-  in   /home/you/xtask
+  in   /Users/you/xtask
 ...
 ```
+
+The plan names the tasks, not the gate set: `check` is what you asked for, and
+what a run does is its members.
+
+A `do: remove` block goes further and says what it would delete. The one verb
+this engine ships is the one that deletes recursively, and a plan showing only
+the pattern told you least about the operation you most need to check. In a
+project whose file has a `clean` task built on the `remove` verb:
+
+```shell
+$ xtask --dry-run clean
+plan: clean
+clean
+  do   remove build coverage **/*.tmp
+  in   /home/you/that-project
+  del  build
+  del  coverage
+  del  src/a.tmp
+```
+
+Nothing is run to work that out — it is the reading the verb itself does — and
+a tree that is already clean says so rather than printing nothing.
 
 Because it resolves them, `--dry-run` answers `3` when a program is not
 installed yet, naming the one it could not find. That is the same answer a real
@@ -241,23 +269,43 @@ the route edge by edge, saying which kind each edge is, because "it runs before
 this" and "it runs after this" are opposite answers:
 
 ```shell
-$ xtask --why lint
-check
-  check needs lint
+$ xtask --why test
+gate check
+  gate check runs test
+test
+  nothing else names it: `test` is where a run starts
 ```
+
+Two routes, because there are two: the gate set reaches it, and so does
+somebody typing its name. An edge says which kind it is — `runs`, `needs`,
+`then` — because "it runs before this" and "it runs after this" are the two
+answers a single word would blur.
 
 ## Gate sets, and CI
 
 A gate set is named after **who runs it** — one person's command, or one CI
-job's. A task lists the sets it belongs to; a composite `collects:` a set and
-therefore needs every task in it, in the order they appear in the file (cheap
-gates before slow ones).
+job's. Every set the file has is declared once, at the top:
 
-`collects:` names **one** set, not a list — a composite is the thing you type,
-and one command gathering two unrelated sets is two commands wearing one name.
-And the composite named after its own set, which the first example writes, is
-not the cycle it looks like: the engine drops a composite from the members it
-gathers, because gathering a set does not mean gathering yourself.
+```yaml
+gates: [check, release]
+```
+
+Names only — a gate set is not a task and has nothing to describe. Declaring
+them is what makes a misspelling a refusal: a gate that came into existence by
+being mentioned could not be misspelled, because the misspelling was a new
+gate. The order is the author's, and is the order `--list` groups by.
+
+A task lists the sets it belongs to, and `xtask check` runs every task in
+`check`, in the order they appear in the file (cheap gates before slow ones) —
+except where a `needs:` or a `then:` between two of them says otherwise, since
+"it runs before this" is an order too, and the one the file states outright.
+A declared set nothing is in is refused, for the reason the empty-set rule
+exists: a gate that examined nothing reports the same green as one that passed.
+
+There is no composite task, and nothing to keep in step with the declaration. A
+gate set and a task may not share a name — a person types one word — and
+`needs:` may not name a gate set, because an edge runs between tasks and a gate
+set is a list rather than a step.
 
 That is the whole mechanism for removing the duplicate list. A CI job runs
 **one invocation**:
@@ -269,7 +317,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
-      - run: xtask check
+      - run: dart run :xtask check
 ```
 
 Run-once still holds, because a job is one invocation. Parallelism is preserved,
@@ -287,7 +335,54 @@ one invocation of one gate set is refused, because that is exactly how the
 duplicate list grows back — somebody writes `- run: dart analyze` instead of
 adding a task. A gate set no job runs is reported rather than refused: gate
 sets are named after who runs them, and that is the jobs *plus the people*,
-which nothing in the file distinguishes.
+which nothing in the file distinguishes. A step that asks xtask a question —
+`--validate`, `--check-ci` itself — is reported the same way: it names no
+command that could drift, so there is nothing to move into the file.
+
+The rule is blanket, and the exception is written where the exception is:
+
+```yaml
+- run: dart run :xtask check
+# xtask: not a gate — the browser driver, which no action installs
+- run: npx playwright install --with-deps
+```
+
+The marker goes on the step's own line, or on a line of its own directly above
+it — not on a line inside another step's script, which is that script's
+comment and not this file's.
+
+A `run: |` block is read the way a shell reads it: line by line, with a `\` at
+the end of one joining it to the next, so a long command line is one step and
+not two — and a line is cut again at `&&`, `||`, `;` and `|`, because those are
+the other places a command begins. A separator inside quotes is text, and a
+segment that only moves the shell (`cd`, `export`) runs nothing. The same two placements hold inside a block — a marker at the end of a
+line excuses that line, and a marker on a line of its own excuses the command
+under it — and it has to be a comment where it stands. A marker inside a quoted
+string is what the step prints, not what the step claims, and excuses
+nothing.
+
+**The reason is required.** A marker with nothing after it is refused, because
+a marker with nothing after it is what this becomes when it is reached for to
+make a red gate green.
+
+**And it only excuses a step that would otherwise be reported as a command**,
+which is the one thing it claims: that xtask misread this step. On a step that
+does reach xtask it is refused, whatever it says — one that runs a gate set,
+one that names a gate set under a mode, one that asks a question, one the
+command line itself turns away, one that names a gate set with a typo in it.
+Otherwise the marker is a way of making a job that runs nothing pass, which is
+the failure this whole mode exists to catch.
+
+Every exemption is printed with its reason next to the jobs that passed, so a
+workflow that has quietly exempted its way to green says so in the same
+breath. And a workflow whose every `run:` step is exempted invokes xtask
+nowhere, which is refused as it was before: the marker cannot stand in for the
+invocation.
+
+The rule stays blanket rather than growing a sense of which steps are
+"infrastructure" because no tool anywhere has one: the axis does not exist, and
+a checker inventing it would be classifying shell — the second grammar this
+mode is written not to keep.
 
 It does not generate the workflow. Doing that would mean generating the
 checkout, the toolchain and the artifact upload too, which needs a template
@@ -308,6 +403,32 @@ web-e2e:
 
 which turns "a browser test failed somewhere inside" into "task `web-e2e`
 requires `CHROMEDRIVER`, which is not set".
+
+`interruptible: true` is the third of these, and it gives back what `-j`
+otherwise costs. A run does not reach into what is already running, because a
+build killed half-way leaves whatever it was doing in whatever state that half
+is. That is right for a build and wrong for a check: `dart format
+--output=none`, `dart analyze` and `dart test` write nothing a half-run would
+leave behind, and the engine cannot tell the two apart while the person who
+wrote the task can. Sequentially a format failure at 0.4s means the rest never
+run; in parallel they run to the end anyway and the machine spends the whole
+budget to learn what it knew in a tenth of a second. With the key, the fast
+answer arrives at the fast answer's price. `--keep-going` stops nothing at all,
+which is the whole of what that flag says.
+
+`-j` says **how many**; the file says **whether**. `serial: true` is one task
+whose members must not overlap — six packages sharing one `~/.pub-cache`, or
+one git index, where `git add` fails outright rather than waiting.
+`exclusive: [chromedriver]` is the same fact between tasks: two suites the
+graph calls independent may still drive the one browser on the machine — and
+because the token is held by the task, a task that holds one runs its own
+`each:` members one at a time as well. Naming a browser and then driving it
+from four members at once would be the guarantee said and not kept. Both
+can only ever make a run slower, never change its result, which is the right
+property for something every machine reads — and getting them wrong makes a
+run **flaky**, which is a different kind of wrong from making it slow. A number
+would be one machine's width written into a file the rest of them share, so
+there is no key for it.
 
 ## Reading a run
 
@@ -344,8 +465,10 @@ because a task that silently did not happen reads exactly like one that passed.
 It is off by default, because a pipeline wants the earliest possible red
 rather than a broken run read to the end.
 
-`--parallel` runs tasks that do not depend on each other at once, up to the
-number of processors or `--parallel=N`. It is **not** the default, and the
+`-j <n>` runs tasks that do not depend on each other at once — and the members
+of one `each:` at once. `-j auto` is this machine's processors, capped at 8,
+because one unit here is a whole `dart test` or `dart analyze` rather than a
+thread; `-j N` is the number you write. It is **not** the default, and the
 reason is a real cost rather than caution: normally a task's output passes
 through as it arrives and each task is a section that folds, and two tasks
 writing to one terminal at once break both — the transcript belongs to neither.
@@ -422,15 +545,17 @@ registry will not accept that version again.
 | `run` | an external program as **argv** — the program, then its arguments, each its own entry. Never a command line; nothing splits a string and no shell sees it |
 | `do` | a verb: `remove`, or one this project registered |
 | `args` | extra arguments appended to the body |
-| `argv-from` | a set whose members are appended as arguments, already expanded |
-| `each` | a set whose members the body runs once per, sequentially |
-| `in` | where the body runs, relative to the root — or the literal `$each` |
+| `all` | a set whose members replace the `$all` marker, in one invocation — a whole argument, written once |
+| `each` | a set whose members the body runs once per, with `$each` standing for the member |
+| `in` | where the body runs, relative to the root — may end with `$each` |
 | `env` | environment for this task only |
 | `env-required` | variables that must already be set, checked before the body runs |
 | `needs` | direct requirements, run before this task, once per invocation |
 | `then` | continuations, run **after** this task's body |
 | `gate` | the gate sets this task belongs to |
-| `collects` | names a gate set this task is the composite of |
+| `serial` | this task's `each:` members must not overlap, whatever `-j` says |
+| `exclusive` | tokens this task holds alone while it runs — which makes its own `each:` members serial too |
+| `interruptible` | a failure elsewhere may stop this task where it stands |
 | `timeout` | seconds a `run:` body may take before it is killed — per member under `each:` |
 
 `timeout:` is asked of the process, not waited out by the engine: the body is
@@ -442,7 +567,7 @@ spawns a server and hangs may leave the server behind. A `do:` cannot carry a
 and a limit that passed while the verb kept writing to disk would be worse than
 none. That is refused when the file is read, not discovered at runtime.
 
-The example at the top uses four keys because four is what that repository
+The example at the top uses three keys because three is what that repository
 needs. Here is one using the rest — a release, which is where `needs:`,
 `then:` and a verb all earn their keep at once:
 
@@ -471,21 +596,30 @@ tasks:
   announce:
     desc: post the release note
     do: notify
-    argv-from: packages
+    all: packages
+    args: [$all]
 ```
 
-`each:` runs the body once per member, sequentially, with `in: $each` putting
-each run in that member's own directory. `needs:` is "before, and once however
+`each:` runs the body once per member — in the order the set gives them, and
+one at a time unless `-j` says otherwise. `$each` is that member,
+and it may stand as a whole argument or **end** one — `packages/$each`,
+`--flavor=$each` — with nothing after it. That line is the same line twice: a
+prefix lets a set hold the part a path cannot be derived from, the bare name,
+so one task can have both `in: packages/$each` and `--name $each`; and no
+suffix is what keeps `build/$each.dart` out, because deriving a path from a
+value is a computation, a computation wants a modifier, and a modifier wants a
+language. Deriving belongs in a verb. `needs:` is "before, and once however
 many tasks ask for it"; `then:` is "after, and only if the body worked" —
 which is the whole reason exit code `4` exists, because `publish` succeeding
 and `announce` failing is a third ending and not a failure to publish.
 `env-required:` is checked before that task's body runs — not at the start of
 the run — so a missing token is a sentence rather than a broken upload. `do:`
 names a verb the project wrote in Dart and handed to `runXtask`, and
-`argv-from:` hands it the expanded set as arguments.
+`all:` hands it the expanded set, wherever `$all` is written.
 
-A set is a list of members or a glob with exclusions, expanded by the engine
-rather than by a shell, in a deterministic order:
+A set is a list of paths, a glob with exclusions, or `values:` for members that
+are not paths at all. The first two are expanded by the engine rather than by a
+shell, in a deterministic order:
 
 ```yaml
 sets:
@@ -494,7 +628,57 @@ sets:
   sources:
     include: ['{templates,packages}/**/*.lake']
     exclude: ['**/test_data/**']
+
+  flavours:
+    values: [dev, staging, prod]
 ```
+
+`**/` means **none or more** directories, as bash and git read it — so
+`packages/**/*.lake` finds `packages/x.lake` too. That is two readings of one
+pattern: it with the `**/` kept, and it with the `**/` dropped. A pattern
+carrying more than a handful of them is refused rather than matched, because
+every reading becomes a glob compared against every file the walk touches. The
+readings are counted rather than estimated as `2ⁿ` — they collapse, and
+`a/**/**/b` has three and not four — so the limit turns away what is actually
+expensive and nothing else.
+
+`values:` is a declaration, not decoration. Every other kind of set holds
+paths, and the engine treats them as paths — it refuses one that reaches
+outside the repository, and it can say a glob matched nothing. Neither
+question means anything about `dev`, and asking the first refused `a:b` for
+looking like a Windows drive. It is also what lets a set hold the bare name a
+path cannot be derived from, with `in: packages/$each` composing the path
+around it.
+
+A member a **glob** found that begins with `-` is refused where it would reach
+a program's arguments: a file called `-n.dart` is a path to you and an option to
+almost everything else. Write `--` before the marker, where a command line says
+its operands begin — the engine will not add it for you, because that would
+change the argv the task wrote. A member you wrote out yourself is not refused:
+you can see it, and a `values:` set holding `-v` is somebody passing a flag on
+purpose.
+
+**A set is read when the task that names it is about to run**, and at no other
+time. `--validate` and `--dry-run` happen before that, so a set the run itself
+produces says so:
+
+```yaml
+sets:
+  generated:
+    include: ['build/**/*.dart']
+    produced: true
+```
+
+That buys exactly one thing: the **emptiness** of this set is not judged before
+its task runs. `--validate` passes over it and `--dry-run` prints `cannot be
+resolved yet` with the reason under it, instead of calling a working file
+broken. Everything else about the set is still checked by both — a pattern that
+leaves the repository, a pattern that is not a pattern — and a run still
+refuses it empty, whatever was hoped for it.
+
+Said rather than guessed, because the engine cannot know. Inferring it from
+`needs:` looked reasonable and exempted `analyze: {needs: [pub-get], all:
+sources}` — the ordinary shape — taking a typo through with it.
 
 A set that expands to nothing is an **error**: a task given no files checked
 nothing, and a gate that examined nothing is worse than no gate.
@@ -517,8 +701,9 @@ version: 1
 The schema knows the **shape** of the file: it completes a task's keys, and
 underlines `dsec:` or a `gate:` written as a string, while you type. Everything
 that needs the graph or the filesystem — a cycle, a `needs:` pointing at
-nothing, an orphan gate, a glob matching nothing, an unregistered verb — is what
-`--validate` answers. A schema catches a mistyped **key**; `--validate` catches
+nothing, an undeclared or empty gate set, an orphan gate, a glob matching
+nothing, an unregistered verb, an `in:` that reaches outside the repository —
+is what `--validate` answers. A schema catches a mistyped **key**; `--validate` catches
 a mistyped **name**.
 
 The schema describes one version of the engine, which is why it is generated
@@ -552,7 +737,7 @@ them existing only because `package.json` scripts are shell.
 - **Not a package manager and not a monorepo tool.** `melos` runs shell across
   packages; `xtask` runs a graph without one. They do not overlap.
 - **Not parallel by default.** Tasks run in order, one at a time, and
-  parallelism belongs to the CI system, which already has it. `--parallel` is
+  parallelism belongs to the CI system, which already has it. `-j` is
   there for the local loop and costs watching the output arrive.
 - **No plugins, no dynamic loading, no expression language.** Verbs are code the
   project links; everything else is data.

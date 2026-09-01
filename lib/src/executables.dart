@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'errors.dart';
+import 'exit_codes.dart';
+
 /// Finding the program a task's `run:` names.
 ///
 /// This is the one place in the engine that knows starting a program means
@@ -55,6 +58,14 @@ final class ExecutableResolver {
 
   final p.Context _paths;
 
+  /// What each written name resolved to, this run.
+  ///
+  /// **The answer cannot change while a run is happening**, and finding it
+  /// costs a `stat` per directory on `PATH` — nineteen of them on an ordinary
+  /// machine, about 39µs. It was paid once per `run:` body, which under
+  /// `each:` is once per member, and again for every program a verb starts.
+  final _resolved = <(String, String), String?>{};
+
   /// The default `PATHEXT`, used when the machine does not set a usable one.
   static const defaultPathExt = '.COM;.EXE;.BAT;.CMD';
 
@@ -80,7 +91,19 @@ final class ExecutableResolver {
   /// `dart.BAT`. NTFS does not care and the path starts either way, but
   /// `--dry-run` prints this string (§7), so it is behaviour rather than an
   /// implementation detail, and a test pins it.
-  String? resolve(String executable) {
+  String? resolve(String executable, {required String from}) =>
+      // **Keyed on the directory only where the directory is part of the
+      // answer.** A bare name is looked up on `PATH`, which `from` does not
+      // touch, so keying every lookup on the pair missed the cache once per
+      // member of an `each:` — `in: packages/$each` gives each member its own
+      // directory — and re-walked `PATH` for a result that could not differ.
+      // That is the per-member cost this cache was added to remove.
+      _resolved.putIfAbsent(
+        (executable, _needsTheDirectory(executable) ? from : ''),
+        () => _find(executable, from),
+      );
+
+  String? _find(String executable, String from) {
     if (executable.isEmpty) {
       return null;
     }
@@ -88,8 +111,32 @@ final class ExecutableResolver {
     // A name that is already a path is used as given (§5.4, rule 1) — the
     // author said where it is, and searching `PATH` for it would be
     // second-guessing a statement of fact.
-    if (_paths.split(executable).length > 1) {
-      return isRunnable(executable) ? executable : null;
+    //
+    // **Where it is, is where the body runs.** This asked the question of the
+    // process's own directory, while the body is started with
+    // `workingDirectory:` set to the root or to `in:` — so `run:
+    // ['./tool/build.sh']` worked when somebody typed `xtask` at the root and
+    // was refused, as a missing tool, from any subdirectory of the same
+    // repository. `findRoot` exists so that the command can be typed from
+    // anywhere; a check that reads the directory it was typed in takes that
+    // back. `Process.start` resolves a relative executable against the
+    // directory it is handed, so this is the check agreeing with the run it is
+    // checking rather than a rule of its own.
+    //
+    // **What comes back is the resolved path, and that is deliberate.** It
+    // reaches `--dry-run` and every echoed command line, so those become
+    // checkout-dependent for a `run: ['./tool/gen']` — raised twice as a
+    // reproducibility defect, and it is not one. `--dry-run` answers "what
+    // would happen on THIS machine", a name found on `PATH` has always
+    // rendered as `/usr/bin/dart` for the same reason, and printing one of
+    // them as written while the other resolves would be two rules where §5.4
+    // has one. A transcript that compares across machines is not a thing this
+    // mode ever promised: `PATH` differs, and so does the answer.
+    if (_isAPath(executable)) {
+      final candidate = _paths.isAbsolute(executable)
+          ? executable
+          : _paths.normalize(_paths.joinAll([from, ..._written(executable)]));
+      return isRunnable(candidate) ? candidate : null;
     }
 
     // Read once. They are getters over the environment, and leaving them
@@ -105,6 +152,34 @@ final class ExecutableResolver {
     }
     return null;
   }
+
+  /// Whether [executable] is a name that already says where it is.
+  ///
+  /// §5.4 rule 1, asked once. It was written out at three sites — the cache
+  /// key, the resolution and the message — and a change to it in two of them
+  /// is a cache that disagrees with the answer it caches.
+  bool _isAPath(String executable) => _paths.split(executable).length > 1;
+
+  /// [written]'s segments, read the way the file writes them.
+  ///
+  /// **The file speaks POSIX and the machine may not.** Every path in
+  /// `xtask.yaml` is written with `/`, because the file is committed and read
+  /// on three platforms. Joined onto a native directory without re-splitting,
+  /// `./tool/gen` came out as `C:\repo/tool/gen` — which Windows accepts and
+  /// `--dry-run` then printed back at a reader as the plan, and which no
+  /// comparison against a path this engine built any other way matches.
+  /// `boundary.dart` draws the same line for `in:` and for `remove`; this was
+  /// the one place that joined without it.
+  List<String> _written(String written) => p.posix.split(written);
+
+  /// Whether the answer for [executable] can depend on where the body runs.
+  ///
+  /// Only a RELATIVE path can: a bare name is looked up on `PATH` and an
+  /// absolute one is returned as written, and keying either on the directory
+  /// stored one entry per member of an `each:` for a lookup that cannot
+  /// differ — which is the cost the key was narrowed to remove.
+  bool _needsTheDirectory(String executable) =>
+      _isAPath(executable) && !_paths.isAbsolute(executable);
 
   /// Whether starting [resolvedPath] has to go through the system shell.
   ///
@@ -128,17 +203,28 @@ final class ExecutableResolver {
   ///
   /// Says where it looked, because the two cures are different: install the
   /// tool, or put the directory it is already in on `PATH`.
-  String missingToolMessage(String executable) {
-    final where = _paths.split(executable).length > 1
-        ? 'no file at `$executable`, or it is not executable'
-        : 'nothing runnable by that name in the '
-              '${_searchPath.length} directories on PATH';
+  String missingToolMessage(String executable, {required String from}) {
+    if (_isAPath(executable)) {
+      // **No suffix list here.** A name that is already a path is tried once,
+      // exactly as written — `_find` appends nothing to it — so naming
+      // `PATHEXT` would tell a Windows reader with `tool\\gen.bat` on disk
+      // that it had been looked at and was not there.
+      //
+      // The directory is named, because the path is read relative to it and a
+      // reader standing somewhere else cannot tell which `./tool/gen` was
+      // meant. An absolute one says where it is by itself.
+      final where = _paths.isAbsolute(executable)
+          ? 'no file at `$executable`, or it is not executable'
+          : 'no file at `$executable` under `$from`, or it is not executable';
+      return '`$executable` is not installed, or is not on PATH — $where';
+    }
     final tried = _suffixesFor(executable).where((s) => s.isNotEmpty);
     final suffixes = windows && tried.isNotEmpty
         ? ', with any of ${tried.join(', ')}'
         : '';
-    return '`$executable` is not installed, or is not on PATH — $where'
-        '$suffixes';
+    return '`$executable` is not installed, or is not on PATH — nothing '
+        'runnable by that name in the ${_searchPath.length} directories on '
+        'PATH$suffixes';
   }
 
   List<String> get _searchPath => [
@@ -208,3 +294,50 @@ bool _executableOnPosix(String path) {
 /// that before this is asked.
 bool _existsOnWindows(String path) =>
     FileStat.statSync(path).type == FileSystemEntityType.file;
+
+/// Characters `cmd.exe` acts on rather than passes along.
+const _cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"'};
+
+/// Refuses an argument the shell would reinterpret, when the shell is
+/// unavoidable — §5.4, rule 3.
+///
+/// A batch shim cannot be started by `CreateProcess`, so its arguments are
+/// parsed by `cmd.exe` whatever the caller intended, and Dart's own
+/// documentation says so. That leaves two ways to be wrong and one to be
+/// honest:
+///
+/// - quote for `cmd.exe` here **and** let `Process.start` quote for
+///   `CreateProcess` as well, which is two layers of quoting nobody can
+///   verify from a machine that is not Windows;
+/// - pass them through and let `&` end the command and start another one,
+///   silently, which is the worst outcome available;
+/// - refuse, name the character, and say what it would have done.
+///
+/// This takes the third. It costs a task that genuinely wants `&` in an
+/// argument to a `.bat` — which it can have by pointing at a `.exe`, or by
+/// making the job a verb, where R1 says logic belongs anyway. It is a
+/// **stated** limit rather than an untested claim of correctness, and it
+/// stops being needed the day this runs on a Windows CI machine that can
+/// prove an escaping pass right.
+void refuseShellMetacharacters(
+  String task,
+  String executable,
+  List<String> arguments,
+) {
+  for (final argument in arguments) {
+    for (final character in _cmdMetacharacters) {
+      if (!argument.contains(character)) {
+        continue;
+      }
+      throw RunFailure(
+        ExitCode.invalidFile,
+        'task `$task` passes `$argument` to `$executable`, which is '
+        'a batch file. Windows starts one through the shell whatever the '
+        'caller asks for, so `$character` in that argument would be read as '
+        'a shell operator rather than as text. Point the task at a real '
+        'executable, or make it a verb — a Dart function is where logic '
+        'belongs anyway',
+      );
+    }
+  }
+}

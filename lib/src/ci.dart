@@ -9,6 +9,15 @@
 /// the first `${...}` in it is the start of the expression language R1 exists
 /// to prevent.
 ///
+/// **And what belongs to the workflow, this must not refuse.** Two of those
+/// four arrive as `uses:` and are passed over here; a browser driver does not
+/// — Playwright's own action says "you don't need this GitHub Action" and
+/// sends you to `npx playwright install --with-deps` — and neither does a line
+/// writing `$GITHUB_ENV`. So the rule below is blanket and [exemptionMarker]
+/// is what it costs, rather than a rule that tries to tell infrastructure from
+/// logic. Nothing does: no workflow linter classifies a `run:` step that way,
+/// and one inventing the axis here would be reading shell.
+///
 /// A check closes the same drift and needs none of that. It reads the workflow
 /// that a person wrote and compares it with the gate sets, in both directions.
 library;
@@ -16,26 +25,161 @@ library;
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:source_span/source_span.dart';
 import 'package:yaml/yaml.dart';
 
+import 'boundary.dart';
 import 'errors.dart';
 import 'gates.dart';
 import 'model.dart';
+import 'request.dart';
 
 /// Where a workflow lives, relative to the repository root.
 const workflowDirectory = '.github/workflows';
 
 /// One shell step of one job.
 final class CiStep {
-  const CiStep(this.workflow, this.job, this.command);
+  const CiStep(
+    this.workflow,
+    this.job,
+    this.command, {
+    this.exemption,
+    this.exemptionIsShared = false,
+    this.exemptionIsFirst = true,
+  });
 
   /// The file it came from, relative to the repository root.
   final String workflow;
 
   final String job;
 
-  /// The `run:` line, trimmed.
+  /// One command line of a `run:`, trimmed, with any trailing comment off.
+  ///
+  /// A `run: |` block yields one step per line — GitHub writes the whole of it
+  /// to a file and runs it as a script, and a line is where a command begins.
+  /// That is the only thing this reads into a script: what a line MEANS is
+  /// still the shell's, and a line this misreads is a line to exempt.
   final String command;
+
+  /// The reason written beside it, when a person said this step is not a gate.
+  ///
+  /// Null unless the step carries [exemptionMarker].
+  final String? exemption;
+
+  /// Whether that reason was written for more than this one command.
+  ///
+  /// **Because "it excuses nothing" is a sentence about a marker, not about
+  /// each command under one.** A marker beside `run: |` covers the script, and
+  /// one at the end of a line covers the commands chained on it — so a line
+  /// like `cp ./xtask /tmp/x && ./xtask check # …` has a marker that is right
+  /// about its first half and necessarily idle over its second. Reported per
+  /// command, the author was told their marker excused nothing, about a marker
+  /// that excused the command they wrote it for.
+  final bool exemptionIsShared;
+
+  /// Whether this is the first command that reason covers.
+  ///
+  /// Only for saying a thing once: a marker with no reason is one mistake
+  /// however many commands it stands over.
+  final bool exemptionIsFirst;
+}
+
+/// What a person writes beside a `run:` step that is not a gate set.
+///
+/// **A blanket rule, paid for out loud.** The rule below is that a `run:` step
+/// is one invocation of one gate set, and it is kept blanket on purpose: a
+/// checker that tried to tell a step installing a browser driver from a step
+/// running the build would be classifying shell, which nothing does and this
+/// least of all. So the rule stays absolute and the exception is written
+/// where the exception is, by the person who knows why.
+///
+/// The reason is required. An exemption whose reason is missing is refused
+/// like any other bad step, because a marker with nothing after it is the
+/// form this grows into when it is used to make a red gate green.
+const exemptionMarker = '# xtask: not a gate';
+
+/// Why a shell step is not a job running a gate set.
+///
+/// **A value, not a sentence.** This module computed the prose as well as the
+/// finding, while `report.dart` is the declared home of everything the tool
+/// says to a person — and built the same `workflow: job … runs` prefix a
+/// fourth time for the one case that is not a problem. A reason that carries
+/// its own facts cannot be put into the wrong sentence.
+sealed class CiProblem {
+  const CiProblem(this.step);
+
+  /// The step it is about.
+  final CiStep step;
+}
+
+/// A step that names a command rather than a gate set.
+///
+/// The duplicate list growing back, and it grows exactly like this: somebody
+/// adds `- run: dart analyze` instead of a task to the file.
+final class RunsACommand extends CiProblem {
+  const RunsACommand(super.step);
+}
+
+/// A step the command line itself would turn away.
+///
+/// It may name a gate set correctly and still exit before doing anything —
+/// `-j abc`, a trailing `-j`, arguments after `--` for a gate set that has no
+/// body. [refusal] is the command line's own sentence about it.
+final class RunsSomethingRefused extends CiProblem {
+  const RunsSomethingRefused(super.step, this.refusal);
+
+  final String refusal;
+}
+
+/// A step that names a gate set in a mode, so the job does not run it.
+///
+/// `xtask --dry-run ci-analyze` reads, in a job called `ci-analyze`, as though
+/// the gate is covered; nothing of it happens. It is the shape a step takes
+/// when somebody was debugging and did not take the flag back out, and the
+/// green tick afterwards is the whole problem.
+final class NamesAGateWithoutRunningIt extends CiProblem {
+  const NamesAGateWithoutRunningIt(super.step, this.mode, this.named);
+
+  /// The mode flag that made it a question rather than a run.
+  final String mode;
+
+  /// The gate set or task the step named.
+  final String named;
+}
+
+/// An exemption marker with nothing after it.
+///
+/// The reason is the whole price of the exemption, so a marker without one is
+/// refused rather than honoured: `# xtask: not a gate` alone is what this
+/// grows into when somebody reaches for it to make a red gate green.
+final class ExemptsWithoutSaying extends CiProblem {
+  const ExemptsWithoutSaying(super.step);
+}
+
+/// An exemption on a step that reaches xtask after all.
+///
+/// The marker says the step is not a gate set. On a step that names one — or
+/// asks xtask a question — it says something untrue, and excuses nothing: the
+/// step was never going to be reported as a command. Refused, because a marker
+/// that excuses nothing is how the load-bearing ones become impossible to
+/// find, and because it was hiding real findings — a misspelled gate set
+/// stopped being reported the moment somebody wrote one above it.
+final class ExemptsNothing extends CiProblem {
+  const ExemptsNothing(super.step, this.reaches);
+
+  /// What the step turned out to be: a gate set, or the mode it asks for.
+  final String reaches;
+}
+
+/// A step naming a gate set this file does not declare — so the job runs
+/// nothing.
+final class RunsAnUndeclaredGate extends CiProblem {
+  const RunsAnUndeclaredGate(super.step, this.gate, this.declared);
+
+  final String gate;
+
+  /// The gate sets the file does declare, for the message to name.
+  final Set<String> declared;
 }
 
 /// What `--check-ci` found.
@@ -44,13 +188,36 @@ final class CiReport {
     required this.invocations,
     required this.problems,
     required this.unrun,
+    // Required, like the rest. Defaulted, a construction that forgets them
+    // reports no exemptions at all — which is the "exempted its way to green
+    // and nobody saw" state `exempted` exists to make visible.
+    required this.questions,
+    required this.exempted,
   });
 
   /// Every shell step that is a well-formed invocation, by gate set.
   final List<({CiStep step, String gate})> invocations;
 
-  /// Steps that are not one, and gates named by one that nothing collects.
-  final List<String> problems;
+  /// Steps that reach xtask without running a gate — `--validate`, `--list`,
+  /// `--check-ci`.
+  ///
+  /// **Reported and not judged**, like [unrun] and for a related reason. Such
+  /// a step names no command that could drift from the task file: it names
+  /// this tool, asking it a question. Filing it under "what runs belongs in
+  /// the task file" sent a reader to move something that is not a task and
+  /// has nowhere to be moved to — and said it about `--check-ci` itself, the
+  /// step §7.1 asks a project to add.
+  final List<({CiStep step, String mode})> questions;
+
+  /// Steps a person exempted, with the reason each gave.
+  ///
+  /// Counted here rather than passed over silently: an exemption nobody can
+  /// see is one nobody revisits, and the count is what makes a workflow that
+  /// has quietly exempted its way to green visible in one line.
+  final List<CiStep> exempted;
+
+  /// Steps that are not one, and gates named by one that is not declared.
+  final List<CiProblem> problems;
 
   /// Gate sets no job runs.
   ///
@@ -72,16 +239,7 @@ final class CiReport {
 /// repository this question has an answer for — and answering 0 would let a
 /// gate that asks it pass after somebody deleted the CI file.
 CiReport checkCi(XtaskFile file, {required String root}) {
-  final directory = Directory(
-    p.join(
-      root,
-      p.joinAll(
-        p.posix.split(
-          workflowDirectory,
-        ),
-      ),
-    ),
-  );
+  final directory = Directory(underRoot(root, workflowDirectory));
   if (!directory.existsSync()) {
     throw XtaskFormatException(
       'there is no `$workflowDirectory` under `$root`, so there is nothing to '
@@ -89,10 +247,32 @@ CiReport checkCi(XtaskFile file, {required String root}) {
     );
   }
 
-  final collected = collectedGates(file);
+  final declared = file.gates.keys.toSet();
 
+  final List<FileSystemEntity> present;
+  try {
+    present = directory.listSync();
+  } on FileSystemException catch (problem) {
+    // Unguarded, this ended `--check-ci` on a stack trace and exit 255 — from
+    // the gate the README tells every project to run in CI, about the very
+    // directory it was pointed at. `existsSync` above is also a window: it can
+    // be true and this still fail.
+    throw XtaskFormatException(
+      'cannot read `$workflowDirectory` under `$root`: '
+      '${problem.osError?.message ?? problem.message}',
+    );
+  }
+
+  // **Sorted, because `listSync` answers in the filesystem's order.** Two
+  // workflows with findings printed in one order on one machine and the other
+  // on the next, so any diff or golden of `--check-ci` was unstable for a
+  // reason nothing in the repository explains. `sets.dart` sorts its own walk
+  // and says why: a walk that descends in that order is a walk whose failure
+  // messages arrive in it too.
+  final files = present.whereType<File>().toList()
+    ..sort((a, b) => a.path.compareTo(b.path));
   final steps = <CiStep>[];
-  for (final workflow in directory.listSync().whereType<File>()) {
+  for (final workflow in files) {
     final name = p.basename(workflow.path);
     if (!name.endsWith('.yml') && !name.endsWith('.yaml')) {
       continue;
@@ -101,78 +281,344 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   }
 
   final invocations = <({CiStep step, String gate})>[];
-  final problems = <String>[];
+  final questions = <({CiStep step, String mode})>[];
+  final exempted = <CiStep>[];
+  final problems = <CiProblem>[];
 
   for (final step in steps) {
-    final gate = _gateOf(step.command);
-    if (gate == null) {
-      // The duplicate list growing back, and it grows exactly like this:
-      // somebody adds `- run: dart analyze` instead of a task to the file.
+    final read = _readStep(step.command, declared);
+    final written = step.exemption;
+
+    // **The exemption is asked last, and only of a step that would otherwise
+    // be a command.** Asked first, it swallowed everything: a marker on
+    // `xtask check -j abc` hid the command line's own refusal, and a marker on
+    // `xtask chekc` hid a misspelled gate set — so a job that runs nothing
+    // passed, which is the silent green this mode exists to prevent. What the
+    // marker says is "this step is not a gate set", and that is a sentence
+    // about exactly one of the outcomes below.
+    // **Said wherever it is true, not only where nothing else is.** The
+    // reason is the whole price of the marker, and the test for it lived in
+    // the last branch — so a marker with nothing after it was reported as
+    // missing its reason only on the steps this mode already passes, and then
+    // not at all on one covering more than one command: a reasonless marker
+    // beside a `run: |` block made the whole block vanish with no finding, no
+    // exemption and nothing said, which is the cheapest way there has ever
+    // been to turn a red gate green.
+    if (written != null && written.isEmpty && step.exemptionIsFirst) {
+      problems.add(ExemptsWithoutSaying(step));
+    }
+    // And it excuses nothing, so everything below reads as though it had not
+    // been written. An exemption IS its reason; without one there is no
+    // exemption to weigh, only a marker to report.
+    final exemption = written == null || written.isEmpty ? null : written;
+
+    if (read.refused case final refusal?) {
+      problems.add(RunsSomethingRefused(step, refusal));
+      // Said as well, not instead. The refusal is the finding; that a marker
+      // was written over it and excused nothing is a second fact, and the
+      // reader who wrote the marker is the one who needs to hear it.
+      if (exemption != null && !step.exemptionIsShared) {
+        problems.add(ExemptsNothing(step, 'a step the command line refuses'));
+      }
+      continue;
+    }
+    if (read.gate case final gate?) {
+      // The same policy, on the branch that did not have it: a marker used to
+      // REPLACE the undeclared-gate finding, so a misspelled `ci-analyse`
+      // under one was diagnosed as a marker-placement mistake and the reader
+      // was never told the name is not a gate set this file has — about a job
+      // that runs nothing.
+      final undeclared = !declared.contains(gate);
+      if (undeclared) {
+        problems.add(RunsAnUndeclaredGate(step, gate, declared));
+      }
+      if (exemption != null && !step.exemptionIsShared) {
+        problems.add(ExemptsNothing(step, gate));
+      } else if (!undeclared) {
+        invocations.add((step: step, gate: gate));
+      }
+      continue;
+    }
+    // Both at once, because `named` is only ever set beside the mode that
+    // named it — `_names` is its one producer. Read as two questions it
+    // carried a `?? ''` for a case that cannot arise, which a reader has to
+    // check every construction site to find out.
+    if ((read.named, read.mode) case (final named?, final mode?)) {
       problems.add(
-        '${step.workflow}: job `${step.job}` runs `${step.command}`. What runs '
-        'belongs in the task file as a task in a gate set; a job runs the '
-        'gate, so that the two cannot drift apart',
+        exemption != null && !step.exemptionIsShared
+            ? ExemptsNothing(step, named)
+            : NamesAGateWithoutRunningIt(step, mode, named),
       );
       continue;
     }
-    if (!collected.contains(gate)) {
-      problems.add(
-        '${step.workflow}: job `${step.job}` runs the gate set `$gate`, which '
-        'no task collects — so the job runs nothing'
-        '${collected.isEmpty ? '' : '. Collected: '
-                  '${(collected.toList()..sort()).join(', ')}'}',
-      );
+    if (read.mode case final mode?) {
+      if (exemption != null && !step.exemptionIsShared) {
+        problems.add(ExemptsNothing(step, mode));
+      } else {
+        questions.add((step: step, mode: mode));
+      }
       continue;
     }
-    invocations.add((step: step, gate: gate));
+    if (exemption != null) {
+      exempted.add(step);
+      continue;
+    }
+    problems.add(RunsACommand(step));
   }
 
+  // **Only a run or a finding counts as something to check against.** Neither
+  // an exemption nor a question is: a step somebody marked as not a gate does
+  // not invoke xtask, and a step that asks xtask a question runs no gate — so
+  // a workflow of nothing but `- run: xtask --check-ci`, which is the step
+  // §7.1 asks every project to add, would pass with its actual invocation
+  // deleted. That is precisely what this throw exists to prevent.
   if (invocations.isEmpty && problems.isEmpty) {
     throw XtaskFormatException(
-      'nothing under `$workflowDirectory` invokes xtask, so there is nothing '
-      'to check this file against',
+      questions.isEmpty
+          ? 'nothing under `$workflowDirectory` invokes xtask, so there is '
+                'nothing to check this file against'
+          // False as the sentence above, about a file whose `--check-ci` step
+          // is on the reader's screen: it sent them looking for an invocation
+          // they can see. What is missing is a job that RUNS a gate set.
+          : 'nothing under `$workflowDirectory` runs a gate set — the steps '
+                'there ask xtask questions, and a question checks nothing '
+                'against this file',
     );
   }
 
   final run = {for (final invocation in invocations) invocation.gate};
   return CiReport(
     invocations: List.unmodifiable(invocations),
+    questions: List.unmodifiable(questions),
+    exempted: List.unmodifiable(exempted),
     problems: List.unmodifiable(problems),
     unrun: List.unmodifiable([
-      for (final gate in collected.toList()..sort())
+      for (final gate in declared.toList()..sort())
         if (!run.contains(gate) && tasksInGate(file, gate).isNotEmpty) gate,
     ]),
   );
 }
 
-/// The gate set [command] invokes, or null if it is not an invocation at all.
+/// Whether [word] is how this project reaches xtask.
 ///
-/// Deliberately loose about HOW xtask is reached — `dart run :xtask check`,
-/// `dart run bin/xtask.dart check`, a compiled `./xtask check` — because §9
-/// leaves the entry point to the project and a checker that only recognised
-/// one spelling would report a working workflow as broken.
-String? _gateOf(String command) {
-  final words = command.split(RegExp(r'\s+'));
-  final at = words.indexWhere(
-    (word) =>
-        word == 'xtask' ||
-        word.endsWith(':xtask') ||
-        word.endsWith('xtask.dart') ||
-        word.endsWith('/xtask'),
-  );
-  if (at == -1 || at + 1 != words.length - 1) {
-    // The name has to be there, and exactly one thing after it: a step doing
-    // two things is a step this cannot vouch for.
-    return null;
+/// Deliberately loose about HOW — `dart run :xtask check`, `dart run
+/// bin/xtask.dart check`, a compiled `./xtask check` — because §9 leaves the
+/// entry point to the project and a checker that only recognised one spelling
+/// would report a working workflow as broken.
+bool _namesXtask(String word) =>
+    word == 'xtask' ||
+    word.endsWith(':xtask') ||
+    word.endsWith('xtask.dart') ||
+    word.endsWith('/xtask');
+
+/// Where in [words] xtask is being **run**, or null.
+///
+/// **Naming it is not running it.** Any word matching was taken as the
+/// invocation, so `chmod +x ./xtask`, `cp ./xtask /usr/local/bin` and `dart
+/// compile exe bin/xtask.dart -o xtask` were each read as an xtask command
+/// line and reported for whatever `parseArguments` made of the words after —
+/// `cp` was told it ran a gate set called `/usr/local/bin`. Those steps are
+/// ordinary commands that happen to mention the binary, which a repository
+/// building its own copy of it does in the same workflow.
+///
+/// **But position alone was the wrong depth.** Requiring word zero or one of a
+/// handful of runner names turned down `cd sub && ./xtask ci-web`, `timeout
+/// 600 ./xtask ci-web`, `xvfb-run ./xtask ci-web` and even `dart
+/// bin/xtask.dart ci-web` — a spelling [_namesXtask]'s own doc promises to
+/// accept — and told each of them to move a gate set that is already in the
+/// task file. Naming every prefix a workflow might use is a list that is never
+/// finished.
+///
+/// So position is one of two answers, and what the words say is the other: a
+/// step whose remaining words parse into a gate set THIS FILE DECLARES, or
+/// into a mode, is running xtask wherever the word sits. Nothing else can make
+/// those words by accident, and a mention as an operand — `/usr/local/bin` —
+/// names no gate this file has, so it falls back to position and is the
+/// ordinary command it looks like.
+///
+/// **Every mention is tried, not the first one that is not in position.**
+/// Keeping only the first meant `cp ./xtask /tmp/x && ./xtask check` was read
+/// from the `cp` and reported as a command that belongs in the task file, with
+/// its gate counted as unrun — a false red about a workflow that runs the
+/// gate, and precisely the shape this reading was written to support.
+///
+/// **And a word that was written in quotes is data.** `echo "run xtask check"`
+/// — a banner line — parsed into `check`, a declared gate set, and the job was
+/// reported as running a gate that nothing in it runs. That is the silent
+/// green this mode exists to prevent, reached from a line somebody writes to
+/// be helpful. The rule is one sentence and holds for the word before it too:
+/// a `run` that is part of a string does not put the next word in command
+/// position.
+///
+/// The price is `sh -c "dart run :xtask check"`, which really is an
+/// invocation and is now read as an ordinary command. Telling it from `echo
+/// "…"` means knowing which programs take a command as an argument, which is
+/// the list this doc has already refused to keep twice. It is a step that
+/// wants a marker, or wants writing plainly — and either way it is answered,
+/// which is the half that matters.
+StepReading? _invocationIn(List<_Word> words, Set<String> declared) {
+  for (var at = 0; at < words.length; at++) {
+    final word = words[at];
+    if (word.quoted || !_namesXtask(word.text)) {
+      continue;
+    }
+    final after = [for (final rest in words.skip(at + 1)) rest.text];
+    final before = at == 0 ? null : words[at - 1];
+    if (before == null || (!before.quoted && _runsWhatFollows(before.text))) {
+      return _readWords(after);
+    }
+    final read = _readWords(after);
+    final names = read.gate ?? read.named;
+    if ((names != null && declared.contains(names)) || read.mode != null) {
+      return read;
+    }
   }
-  final gate = words.last;
-  return gate.startsWith('-') ? null : gate;
+  return null;
+}
+
+/// Whether [word] is a thing whose next argument is a command to run.
+bool _runsWhatFollows(String word) => const {
+  'run',
+  'exec',
+  'npx',
+  'bunx',
+  'pnpx',
+  'dlx',
+}.contains(word);
+
+/// What one shell step turns out to be.
+typedef StepReading = ({
+  /// The gate set it runs, if it runs one.
+  String? gate,
+
+  /// Why the command line itself would turn it away.
+  String? refused,
+
+  /// The mode it asks for, if it asks a question rather than running a gate.
+  String? mode,
+
+  /// The gate set a mode names without running it.
+  String? named,
+});
+
+/// A step that is not an xtask invocation at all.
+///
+/// **Named once.** The record was spelled out at five sites with the fields in
+/// three different orders, which is how a null ends up in the wrong slot.
+const StepReading _notAnInvocation = (
+  gate: null,
+  refused: null,
+  mode: null,
+  named: null,
+);
+
+StepReading _gate(String name) => (
+  gate: name,
+  refused: null,
+  mode: null,
+  named: null,
+);
+
+StepReading _refused(String why) => (
+  gate: null,
+  refused: why,
+  mode: null,
+  named: null,
+);
+
+StepReading _question(String mode) => (
+  gate: null,
+  refused: null,
+  mode: mode,
+  named: null,
+);
+
+StepReading _names(String mode, String what) => (
+  gate: null,
+  refused: null,
+  mode: mode,
+  named: what,
+);
+
+/// What shell step [command] turns out to be.
+///
+/// **Decided by parsing it, not by reading it a second way.** This used to walk
+/// the words itself — attached values against separate ones, `--jobs=` against
+/// `-j4`, a lone `-`, a second operand — which is the command line's grammar
+/// written twice, in a checker whose whole job is that one thing is not written
+/// twice. Both copies had already been wrong: `-j4` swallowed the gate set
+/// after it, and a lone `-` raised a `RangeError` out of `--check-ci`.
+///
+/// So the words go to the parser the command line uses, and the answer's TYPE
+/// is what says which of the four outcomes this is. Reading the mode back off
+/// the words instead missed every `--mode=value` spelling the parser accepts —
+/// `--why=check` reported a gate set named under an empty flag — and had
+/// nothing to say about `--help`, which is not in `modes`.
+StepReading _readStep(String command, Set<String> declared) =>
+    _invocationIn(_lex(command).words, declared) ?? _notAnInvocation;
+
+/// What [arguments] make of themselves, read by the command line's own parser.
+StepReading _readWords(List<String> arguments) {
+  final request = parseArguments(
+    // Their quotes are already off: they are the shell's and not the parser's,
+    // and `-j "2"` is an ordinary thing to write while `2` is what the child
+    // sees.
+    arguments,
+    // The number is discarded — only whether it PARSES is being asked — and a
+    // check that read this machine's width would vouch differently for one
+    // workflow on two runners.
+    processors: () => 1,
+  );
+  return switch (request) {
+    RunTask(:final task, arguments: []) => _gate(task),
+    // A gate set has no body, so the arguments reach nothing and the step
+    // exits 2. The command line does not refuse this — only the file can say
+    // whether the name has a body — so the sentence is written here.
+    RunTask() => _refused(
+      'a gate set gathers tasks and runs nothing of its own, so there is '
+      'nothing for the arguments after `--` to be arguments to',
+    ),
+    // Everything the command line itself would turn away, in its own words.
+    ShowUsage(problem: final problem?) => _refused(problem),
+
+    // **The one mode that reads as a run and is not one.** `--dry-run
+    // ci-analyze`, in a job called `ci-analyze`, is the shape a step takes
+    // when somebody was debugging and left the flag in — and the green tick
+    // after it is the whole problem. Its siblings are not: `--gate-members`
+    // and `--list` and `--why` are inspection, and a job that reports on a
+    // gate set never claimed to run it.
+    DryRunTask(:final task) => _names('--dry-run', task),
+
+    // **A step that asks xtask a question is not a broken one.** This said so
+    // in a comment and answered otherwise, so `- run: xtask --validate` was
+    // filed under "what runs belongs in the task file" — and so was
+    // `--check-ci`, the step §7.1 asks a project to add.
+    ShowUsage() => _question('--help'),
+    ListTasks() => _question('--list'),
+    GateMembers() => _question('--gate-members'),
+    WhyTask() => _question('--why'),
+    Validate() => _question('--validate'),
+    CheckCi() => _question('--check-ci'),
+    ShowVersion() => _question('--version'),
+    EmitSchema() => _question('--emit-schema'),
+  };
 }
 
 Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
+  final String source;
+  try {
+    source = workflow.readAsStringSync();
+  } on FileSystemException catch (problem) {
+    // A workflow that is not UTF-8, or that this process may not open. Only
+    // `YamlException` was caught, so either ended the run at 255.
+    throw XtaskFormatException(
+      '$name: ${problem.osError?.message ?? problem.message}',
+    );
+  }
+
   final YamlNode document;
   try {
-    document = loadYamlNode(workflow.readAsStringSync());
+    document = loadYamlNode(source);
   } on YamlException catch (e) {
     throw XtaskFormatException('$name: ${e.message}');
   }
@@ -183,6 +629,7 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
   if (jobs is! YamlMap) {
     return;
   }
+  final lines = source.split('\n');
   for (final entry in jobs.entries) {
     final job = entry.value;
     if (job is! YamlMap) {
@@ -192,13 +639,384 @@ Iterable<CiStep> _shellSteps(File workflow, String name) sync* {
     if (steps is! YamlList) {
       continue;
     }
+    // Where the previous step's `run:` block ended. A `#` line inside one is
+    // shell, not a YAML comment, and belongs to the script it is written in.
+    var previousEnded = -1;
     for (final step in steps) {
       if (step is! YamlMap) {
         continue;
       }
       if (step['run'] case final String command) {
-        yield CiStep(name, '${entry.key}', command.trim());
+        final span = step.nodes['run']?.span;
+        // **One step per line of the block.** GitHub writes the whole `run:`
+        // to a file and runs it as a script, and taking it as one opaque
+        // string made the answer depend on the order inside it: `echo start`
+        // then the gate was refused, the gate then `dart analyze` passed —
+        // the same duplicated command, hidden by being second. A line is
+        // where a command begins, which is the only thing this needs to know
+        // about a script, and a line it misreads is a line somebody exempts.
+        final written = _commandLines(command);
+        // **The marker beside `run:` is about the step, and a block is one
+        // step.** Read only for the block's first line, it excused `npm ci`
+        // and left `npm run build` under the same marker reported — so a
+        // multi-line setup script could not be exempted at all, and the place
+        // the author would obviously write the marker was the one place that
+        // half-worked.
+        final beside = _exemptionNear(lines, span, after: previousEnded);
+        // Read in full before any of it is yielded, because whether a marker
+        // covers more than one command is a fact about the block and not
+        // about the line it is written on.
+        final read = <({String? own, List<String> commands})>[];
+        var inTheBlock = 0;
+        for (var at = 0; at < written.length; at++) {
+          final line = written[at].trim();
+          if (line.isEmpty || line.startsWith('#')) {
+            continue;
+          }
+          final own =
+              _exemptionIn(line) ??
+              // The line above counts only when it is nothing but a comment —
+              // the same rule the YAML comment above the block gets. Without
+              // it, a marker trailing one command exempted the command under
+              // it, which is the leak this rule was written for arriving one
+              // level in.
+              (at > 0 && written[at - 1].trimLeft().startsWith('#')
+                  ? _exemptionIn(written[at - 1])
+                  : null);
+          // The marker is the line's, so it is every command on it: cutting a
+          // line into commands must not leave the ones before the marker
+          // unexcused.
+          final commands = _commandsOn(_withoutTrailingComment(line));
+          inTheBlock += commands.length;
+          read.add((own: own, commands: commands));
+        }
+        final under = <String>{};
+        for (final line in read) {
+          final exemption = line.own ?? beside;
+          for (final one in line.commands) {
+            yield CiStep(
+              name,
+              '${entry.key}',
+              one,
+              exemption: exemption,
+              exemptionIsShared:
+                  exemption != null &&
+                  (line.own != null ? line.commands.length : inTheBlock) > 1,
+              exemptionIsFirst: exemption != null && under.add(exemption),
+            );
+          }
+        }
+        previousEnded = span?.end.line ?? previousEnded;
       }
     }
   }
 }
+
+/// One word of a shell line, with its quotes off and where they were noted.
+final class _Word {
+  const _Word(
+    this.text, {
+    required this.quoted,
+    required this.at,
+    required this.end,
+  });
+
+  /// The word as the child would see it — quotes removed, escapes applied.
+  final String text;
+
+  /// Whether any part of it was written inside quotes.
+  ///
+  /// Which makes it data rather than something the step runs: `echo "run
+  /// xtask check"` is a banner, and reading it as an invocation reported a
+  /// gate as covered that nothing in the job runs.
+  final bool quoted;
+
+  /// Where it begins in the line, so a command can be quoted back as written.
+  final int at;
+
+  /// Where it ends, exclusive.
+  final int end;
+}
+
+/// A shell line, read at the lexical level and no further.
+///
+/// **One reading of one line, because there were three and they disagreed.**
+/// This module grew a scanner for quotes inside the invocation finder, another
+/// inside the command splitter, and a third inside the comment finder. None
+/// knew about `\` escapes, they answered the same question differently, and
+/// the two silent greens and the two false reds of the last review each came
+/// from one of them being right where another was wrong. The doc on the
+/// comment finder had already argued that two readings of one `#` is a defect;
+/// three readings of one quote is the same defect, three times.
+///
+/// This is the lexical level and nothing above it: words, quotes, operators,
+/// and where a comment starts. Nothing here asks what a command MEANS — which
+/// program takes another as an argument, which builtin does no work — because
+/// that is the list this module has refused to keep since it started.
+///
+/// Redirections are recognised so they can be dropped: `dart run :xtask check
+/// 2>&1` is one of the most ordinary lines in a workflow, and splitting it on
+/// the `&` cut it into `dart run :xtask check 2>` and `1`, reported a command
+/// nobody wrote, and counted the gate unrun.
+({List<_Word> words, List<int> breaks, String? comment}) _lex(String line) {
+  final words = <_Word>[];
+  // Where a control operator ended a command: an index into [words].
+  final breaks = <int>[];
+  String? comment;
+
+  final text = StringBuffer();
+  var began = -1;
+  var quoted = false;
+  // The word so far is all digits and unquoted, so a `>` or `<` next takes it
+  // as the file descriptor it redirects.
+  var digits = true;
+
+  // The next word belongs to a redirection rather than to the command, so it
+  // is read like any other word and then dropped. Skipped with a scan of its
+  // own instead, that scan was a fifth place in this module that knew what a
+  // quote is — which is the shape of every defect the lexer replaced.
+  var dropNext = false;
+
+  void endWord(int at) {
+    if (began != -1 && !dropNext) {
+      words.add(_Word(text.toString(), at: began, end: at, quoted: quoted));
+    }
+    if (began != -1) {
+      dropNext = false;
+    }
+    text.clear();
+    began = -1;
+    quoted = false;
+    digits = true;
+  }
+
+  for (var i = 0; i < line.length; i++) {
+    final c = line[i];
+    if (c == "'" || c == '"') {
+      final close = line.indexOf(c, i + 1);
+      final to = close == -1 ? line.length : close;
+      if (began == -1) {
+        began = i;
+      }
+      // A double-quoted string keeps `\` before the few characters a shell
+      // lets it escape; anywhere else the backslash is literal.
+      for (var at = i + 1; at < to; at++) {
+        if (c == '"' && line[at] == r'\' && at + 1 < to) {
+          at++;
+        }
+        text.write(line[at]);
+      }
+      quoted = true;
+      digits = false;
+      i = to;
+      continue;
+    }
+    if (c == r'\' && i + 1 < line.length) {
+      if (began == -1) {
+        began = i;
+      }
+      text.write(line[i + 1]);
+      digits = false;
+      i++;
+      continue;
+    }
+    if (c == ' ' || c == '\t') {
+      endWord(i);
+      continue;
+    }
+    if (c == '#' && began == -1) {
+      // A comment opens where a word does. `red#1` is one word to a shell as
+      // it is to YAML, and cutting there reported a fragment nobody wrote.
+      comment = line.substring(i);
+      break;
+    }
+    if (c == '>' || c == '<') {
+      // The file descriptor in front of it belongs to the redirect too, and
+      // it is what makes `2>&1` one operator rather than a `2` the command
+      // was handed and an `&` that ends it.
+      if (digits && began != -1) {
+        text.clear();
+        began = -1;
+        quoted = false;
+      }
+      endWord(i);
+      dropNext = true;
+      final next = i + 1 < line.length ? line[i + 1] : '';
+      i += (next == c || next == '&' || next == '|') ? 1 : 0;
+      continue;
+    }
+    if (c == '&' || c == '|' || c == ';') {
+      endWord(i);
+      dropNext = false;
+      if (breaks.isEmpty || breaks.last != words.length) {
+        breaks.add(words.length);
+      }
+      final next = i + 1 < line.length ? line[i + 1] : '';
+      i += (next == c && c != ';') ? 1 : 0;
+      continue;
+    }
+    if (began == -1) {
+      began = i;
+    }
+    text.write(c);
+    if (c.codeUnitAt(0) < 0x30 || c.codeUnitAt(0) > 0x39) {
+      digits = false;
+    }
+  }
+  endWord(line.length);
+  return (words: words, breaks: breaks, comment: comment);
+}
+
+/// The commands written on one line of a script.
+///
+/// **The same argument the newline gets, and the same shallow rule.** A block
+/// is read a line at a time because a line is where a command begins; `&&`,
+/// `||`, `;` and `|` are the other places one begins, and reading past them
+/// made the answer depend on the order inside the line. `dart analyze &&
+/// dart run :xtask check` passed green with the duplicated `dart analyze`
+/// never mentioned, while the same two the other way round were refused for
+/// the operands after the gate — one line, two answers, decided by which half
+/// came first.
+///
+/// Each command comes back as the text it was written as, so a report quotes
+/// the line rather than a rebuilt version of it.
+///
+/// A segment that only moves the shell is dropped, and [_movesTheShell] is
+/// where that list is argued for.
+List<String> _commandsOn(String line) {
+  final read = _lex(line);
+  final commands = <String>[];
+  var from = 0;
+  for (final to in [...read.breaks, read.words.length]) {
+    if (to > from) {
+      final one = line
+          .substring(read.words[from].at, read.words[to - 1].end)
+          .trim();
+      if (one.isNotEmpty && !_movesTheShell(one)) {
+        commands.add(one);
+      }
+    }
+    from = to;
+  }
+  return commands;
+}
+
+/// Whether [command] only moves the shell it runs in.
+///
+/// **A closed list, and that is why it may exist at all.** The doc on
+/// [_invocationIn] argues against naming the prefixes a workflow might put in
+/// front of xtask, because any program can run another and the list is never
+/// finished. This is the opposite kind of set: a shell builtin that changes
+/// the shell's own state and does no work, of which there are these. Without
+/// it, cutting a line into commands turned `cd sub && ./xtask ci-web` — the
+/// shape this checker's own history says it must accept — into a report about
+/// `cd sub` belonging in the task file.
+bool _movesTheShell(String command) {
+  final word = command.split(RegExp(r'\s+')).first;
+  return const {'cd', 'export', 'set', 'unset', 'source', '.', ':'}.contains(
+    word,
+  );
+}
+
+/// [command]'s lines, with a shell's line continuations joined.
+///
+/// A `\` at the end of a line means the next one is the same command, and
+/// splitting on the newline anyway read `dart run :xtask \` and `ci-analyze`
+/// as two — reporting an undeclared gate set named `\` and telling the reader
+/// their gate was unrun, about a workflow that runs it. Continuations are
+/// ubiquitous in a `run:` block, because that is what a long command line
+/// looks like.
+List<String> _commandLines(String command) {
+  final joined = <String>[];
+  for (final line in command.split('\n')) {
+    if (joined.isNotEmpty && joined.last.endsWith(r'\')) {
+      final held = joined.removeLast();
+      joined.add(
+        '${held.substring(0, held.length - 1).trimRight()} '
+        '${line.trim()}',
+      );
+      continue;
+    }
+    joined.add(line.trimRight());
+  }
+  return joined;
+}
+
+/// The reason written on [line] itself, if it carries the marker.
+///
+/// The block's own lines are read here rather than through a span: a block
+/// scalar's indentation is stripped by the parse, so where one of its lines
+/// began in the source is not recoverable — which is why actionlint reports
+/// shellcheck's findings against the `run:` key rather than the line. The
+/// text is enough, because the marker is in it.
+String? _exemptionIn(String line) {
+  if (_lex(line).comment case final comment?) {
+    final marker = comment.indexOf(exemptionMarker);
+    if (marker != -1) {
+      return _reasonAfter(comment.substring(marker + exemptionMarker.length));
+    }
+  }
+  return null;
+}
+
+/// [line] without a trailing `#` comment, so a marker is not read as argv.
+String _withoutTrailingComment(String line) {
+  final comment = _lex(line).comment;
+  return comment == null
+      ? line
+      : line.substring(0, line.length - comment.length).trimRight();
+}
+
+/// The reason written beside the `run:` key at [span], if there is one.
+///
+/// **Read out of the source, because the parse does not keep it.**
+/// `package:yaml` discards comments — there is no comment on a `YamlNode` to
+/// ask — so the only place [exemptionMarker] survives is the text, and a span
+/// is what says which text. Looked for on the `run:` line itself and on the
+/// line above it, which are the two places a person writes a note about a
+/// step; anywhere further and it stops being beside the thing it excuses.
+///
+/// A marker with nothing after it comes back as the empty string rather than
+/// null, so that the caller can tell "no exemption" from "an exemption that
+/// gave no reason" and refuse the second.
+String? _exemptionNear(
+  List<String> lines,
+  SourceSpan? span, {
+  required int after,
+}) {
+  if (span == null) {
+    return null;
+  }
+  // A block scalar's span starts at the `|`, and the marker belongs to the
+  // line that carries the key. Both candidates are read for that reason.
+  final at = span.start.line;
+  for (final line in [
+    if (at < lines.length) lines[at],
+    // **Only when the line above is a YAML comment of its own.** Taken as
+    // written, a marker trailing one step's own line was also found by the
+    // step below it: `- run: npm ci # xtask: not a gate — deps` exempted the
+    // `- run: dart analyze` beneath it, which is the duplicate list growing
+    // back, green, under somebody else's reason.
+    //
+    // Starting with `#` is not enough on its own — a `#` line inside the
+    // previous step's `run: |` block is shell, and belongs to that script.
+    // [after] is where that block ended.
+    if (at > 0 &&
+        at - 1 > after &&
+        at - 1 < lines.length &&
+        lines[at - 1].trimLeft().startsWith('#'))
+      lines[at - 1],
+  ]) {
+    if (_exemptionIn(line) case final reason?) {
+      return reason;
+    }
+  }
+  return null;
+}
+
+/// What somebody wrote after the marker, as the report should print it.
+///
+/// The dash or colon between the marker and the reason is punctuation, and the
+/// report supplies its own — kept, it renders as `exempts `x` — — the reason`.
+String _reasonAfter(String written) =>
+    written.replaceFirst(RegExp(r'^[\s\u2014\u2013:,-]+'), '').trim();

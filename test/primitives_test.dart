@@ -3,22 +3,19 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/context.dart';
+import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/primitives.dart';
+
+import 'helpers.dart';
 
 void main() {
   late Directory root;
   late List<String> logged;
 
   setUp(() {
-    root = Directory.systemTemp.createTempSync('xtask_remove_');
+    root = tempRepo('remove');
     logged = [];
-  });
-
-  tearDown(() {
-    if (root.existsSync()) {
-      root.deleteSync(recursive: true);
-    }
   });
 
   void given(List<String> paths) {
@@ -42,6 +39,8 @@ void main() {
       env: const {},
       workingDirectory: root.path,
       log: logged.add,
+      start: (_, {workingDirectory}) async =>
+          throw StateError('`remove` starts nothing'),
     ),
     root: root.path,
   );
@@ -113,6 +112,23 @@ void main() {
       expect(exists('vscode/keep.js'), isTrue);
     });
 
+    test('`**/` reads as none-or-more here too, not one-or-more', () async {
+      // The divergence this closes: `sets:` corrected `package:glob`'s
+      // reading of `**/` and this verb did not, so the same pattern in the
+      // same file matched a different set of paths depending on which key it
+      // was written under. `packages/coverage` is the case that tells them
+      // apart — one-or-more never reaches it.
+      given([
+        'packages/coverage/f',
+        'packages/one/coverage/f',
+        'packages/one/lib/keep.dart',
+      ]);
+      await remove(['packages/**/coverage']);
+      expect(exists('packages/coverage'), isFalse);
+      expect(exists('packages/one/coverage'), isFalse);
+      expect(exists('packages/one/lib/keep.dart'), isTrue);
+    });
+
     test('a star in the middle matches directories', () async {
       // §12's `packages/*/coverage`, which is the reason this has to reach
       // directories and not only files.
@@ -180,8 +196,7 @@ void main() {
     // deletes recursively, and §6's "a missing path is not an error" means a
     // path taken on trust would be followed without a word.
     test('an absolute path', () async {
-      final outside = Directory.systemTemp.createTempSync('xtask_outside_');
-      addTearDown(() => outside.deleteSync(recursive: true));
+      final outside = tempRepo('outside');
       expect(await remove([outside.path]), ExitCode.invalidFile);
       expect(outside.existsSync(), isTrue);
       expect(logged.join('\n'), contains('outside the repository'));
@@ -213,6 +228,148 @@ void main() {
         );
       },
     );
+  });
+
+  group('the walk is pruned, as `sets:` prunes it', () {
+    test('a subtree no pattern can reach is not read', () {
+      // Not a timing assertion — the point is that the ANSWER is unchanged
+      // while the reading is not. Include patterns were used to match and
+      // never to prune here, so `do: remove build/**` read all of
+      // `node_modules` and all of `.git` on every invocation to find nothing
+      // there by construction: 0.19s against 0.01s on eighteen thousand files.
+      given([
+        'build/out/a.o',
+        'build/keep/b.o',
+        'node_modules/pkg/lib/src/deep.js',
+        '.git/objects/ab/cdef',
+      ]);
+      // The directories themselves, not their contents: a match is about to
+      // be deleted whole, so the walk does not descend into one.
+      expect(pathsMatching('build/**', root: root.path), [
+        'build/keep',
+        'build/out',
+      ]);
+    });
+
+    test('and a pattern that can reach anywhere still does', () {
+      given(['a/b/c/x.tmp', 'y.tmp', 'node_modules/pkg/z.tmp']);
+      expect(pathsMatching('**/*.tmp', root: root.path), [
+        'a/b/c/x.tmp',
+        'node_modules/pkg/z.tmp',
+        'y.tmp',
+      ]);
+    });
+  });
+
+  group('a path named twice is one path', () {
+    test('a literal and a glob that both reach it', () {
+      // `found` was seeded with the literals and then appended to by the walk,
+      // so `--dry-run` printed `del build` twice and the verb issued a second
+      // delete of a path it had just removed.
+      given(['build/out.js']);
+      expect(pathsMatchingAll(['build', 'build*'], root: root.path), ['build']);
+    });
+  });
+
+  group('the answer is sorted, whatever the arguments look like', () {
+    test('literals alone come back in order, not in written order', () {
+      // The invariant is stated where the walk sorts — everything sorts,
+      // literals included — and the early answer for a call with no glob in it
+      // was the one place it did not hold. So `remove` printed one order for
+      // `[coverage, build]` and another for `[coverage, build, '**/*.tmp']`,
+      // and a `--dry-run` of one block could not be compared with another's.
+      expect(pathsMatchingAll(['coverage', 'build'], root: root.path), [
+        'build',
+        'coverage',
+      ]);
+    });
+
+    test('and a glob beside them does not change the order of the rest', () {
+      given(['a.tmp']);
+      expect(
+        pathsMatchingAll(['coverage', 'build', '**/*.tmp'], root: root.path),
+        ['a.tmp', 'build', 'coverage'],
+      );
+    });
+  });
+
+  group('a pattern that will not compile is a sentence, not a stack trace', () {
+    test('the verb says which argument and why', () async {
+      // Uncaught, `[` left the verb as a raw `FormatException` whose "line 1,
+      // column 2" points inside the pattern string rather than at anything in
+      // the file — reported as "task threw FormatException", which sends the
+      // reader to look at this engine.
+      given(['a.txt']);
+      expect(await remove(['a{b']), ExitCode.invalidFile);
+      expect(logged.join('\n'), contains('a{b'));
+      expect(logged.join('\n'), contains('not a valid pattern'));
+      expect(exists('a.txt'), isTrue, reason: 'it deleted something anyway');
+    });
+  });
+
+  group('what a dry run may say it would delete', () {
+    test('is what is on disk, and nothing that is not', () {
+      given(['build/out/a.o', 'keep.txt']);
+      final would = removeWouldDelete(
+        ['build', 'coverage', 'keep.txt'],
+        root: root.path,
+      );
+      expect(
+        would.paths,
+        ['build', 'keep.txt'],
+        reason: '`coverage` is not there, and a missing path is not deleted',
+      );
+      expect(would.refused, isNull);
+    });
+
+    test('and where the run would refuse, it says why in the same words', () {
+      // It used to answer an empty list here, which the caller renders as
+      // "nothing of these is on disk, which is not an error" — a positive
+      // assurance about a recursive delete aimed outside the repository.
+      given(['a.txt']);
+      final outside = removeWouldDelete(['../etc'], root: root.path);
+      expect(outside.paths, isEmpty);
+      expect(outside.refused, contains('outside the repository'));
+      expect(outside.refused, contains('../etc'));
+
+      final bad = removeWouldDelete(['a{b'], root: root.path);
+      expect(bad.paths, isEmpty);
+      expect(bad.refused, contains('not a valid pattern'));
+    });
+
+    test('and it deletes nothing itself', () {
+      given(['build/out/a.o']);
+      removeWouldDelete(['build'], root: root.path);
+      expect(exists('build/out/a.o'), isTrue);
+    });
+  });
+
+  group('a delete that could not happen', () {
+    test('is a sentence about the path, not about the verb', () async {
+      // Unguarded, a permission error came out through the general handler as
+      // "the project's own verb threw PathAccessException", which sends the
+      // reader to look at a verb the engine ships.
+      given(['build/inner/f.txt']);
+      final build = Directory(p.join(root.path, 'build'));
+      Process.runSync('chmod', ['500', build.path]);
+      addTearDown(() => Process.runSync('chmod', ['755', build.path]));
+
+      await expectLater(
+        remove(['build']),
+        throwsA(
+          isA<RunFailure>().having(
+            (f) => f.message,
+            'message',
+            allOf(contains('could not delete'), contains('build')),
+          ),
+        ),
+      );
+      expect(
+        logged.join('\n'),
+        isNot(contains('removed')),
+        reason: 'it announced a deletion that did not happen',
+      );
+    }, testOn: '!windows');
   });
 
   group('the closed list §6 promises', () {

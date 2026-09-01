@@ -1,13 +1,22 @@
-/// Running the bodies a plan resolved to.
+/// Walking a plan: what may start, what must not, and how the run ends.
+///
+/// **The walk, and nothing below it.** What one body comes to is
+/// `body_runner.dart`, the members of one task under the budget are
+/// `fanout.dart`, and what the tasks of a run share is `budget.dart`. All
+/// three were frames of this class, which is why "is more than one thing
+/// writing at once" had three answers and why the place a task holds was a
+/// flag passed three levels down with a guard at the bottom.
 library;
 
-import 'dart:convert';
-import 'dart:io';
+import 'dart:async';
 
 import 'bodies.dart';
+import 'body_runner.dart';
+import 'budget.dart';
 import 'context.dart';
 import 'errors.dart';
 import 'exit_codes.dart';
+import 'fanout.dart';
 import 'graph.dart';
 import 'markers.dart';
 import 'model.dart';
@@ -63,6 +72,42 @@ final class Executor {
   /// pipeline wants the earliest possible red.
   final bool keepGoing;
 
+  /// Whether this run has decided the answer is known.
+  final _givenUp = GivenUp();
+
+  /// The named mutexes this run's tasks share.
+  final _exclusive = Exclusive();
+
+  /// The run's budget, spent by units of work rather than by tasks.
+  late final _slots = Slots(concurrency);
+
+  /// What one body comes to on this machine.
+  late final _runner = BodyRunner(
+    bodies: bodies,
+    starter: starter,
+    log: log,
+    givenUp: _givenUp,
+  );
+
+  /// The members of one task, under the budget above.
+  late final _fanout = Fanout(
+    runner: _runner,
+    slots: _slots,
+    log: log,
+    now: now,
+    keepGoing: keepGoing,
+  );
+
+  /// How much work each task's members added up to, where there was more than
+  /// one of them.
+  ///
+  /// **The number `-j` is for.** A task's own row is how long you waited; over
+  /// forty packages at four at a time, how much work there WAS is the other
+  /// number, and it was nowhere. Filled in from what a fan-out answers with
+  /// rather than written into from inside one, which is what let the number
+  /// survive a task that failed.
+  final _work = <String, ({Duration spent, int members})>{};
+
   /// How many tasks may be in flight at once. 1 is §5.2's run.
   ///
   /// **This is the one place a documented promise is deliberately broken, and
@@ -96,10 +141,19 @@ final class Executor {
 
     // **Asked once, here, and handed down.** Two tasks writing to one terminal
     // is what buffering is for, and a plan of one task cannot have two: asking
-    // for `--parallel` on a single task would otherwise cost §5.2's live
+    // for `-j` above 1 on a single task would otherwise cost §5.2's live
     // output and buy nothing at all. It is also what the announcement is
     // about, so computing it twice would be two answers to one question.
-    final concurrent = concurrency > 1 && plan.steps.length > 1;
+    //
+    // **A fanned-out task is two things in flight too**, and whether a task is
+    // one is [Fanout.couldOverlap] — the same question the fan-out itself asks
+    // one member count later. This used to spell it out again, so `xtask fmt
+    // -j 4` over one `each:` task buffered every member and printed nothing at
+    // all until the first ended, with no announcement, because the
+    // announcement was the copy that had not been updated.
+    final concurrent =
+        (concurrency > 1 && plan.steps.length > 1) ||
+        plan.steps.any((step) => Fanout.couldOverlap(step.task, concurrency));
 
     // Before the walk, so it is the first thing on the stream rather than the
     // first thing after a wait it was meant to explain.
@@ -108,17 +162,31 @@ final class Executor {
     }
 
     final began = now();
-    final code = await _walk(
-      plan,
-      took,
-      failed,
-      skipped,
-      concurrent: concurrent,
-    );
-    timing(took, now().difference(began), concurrent: concurrent).forEach(log);
-    // Last, because it is the part somebody has to act on and the terminal
-    // scrolls. The timing above is background; this is the work.
-    summary(failed, skipped).forEach(log);
+    final int code;
+    try {
+      code = await _walk(
+        plan,
+        took,
+        failed,
+        skipped,
+        concurrent: concurrent,
+      );
+    } finally {
+      // **Printed on the way out, whichever way that is.** `_runOne` rethrows
+      // an `XtaskFormatException` for `cli.dart` to answer, and under `-j` it
+      // arrives through `Future.any` and unwinds the walk — so the run left
+      // without a word about the tasks that had already finished, failed or
+      // been skipped, which the summary is the only place that mentions.
+      timing(
+        took,
+        now().difference(began),
+        _work,
+        concurrent: concurrent,
+      ).forEach(log);
+      // Last, because it is the part somebody has to act on and the terminal
+      // scrolls. The timing above is background; this is the work.
+      summary(failed, skipped).forEach(log);
+    }
     return code;
   }
 
@@ -147,36 +215,60 @@ final class Executor {
     required bool concurrent,
   }) async {
     final waiting = [...plan.steps];
+    // Where each task sits in the plan, so a failure can be placed in it
+    // without an O(n) lookup per completion.
+    final order = {
+      for (var at = 0; at < plan.steps.length; at++)
+        plan.steps[at].task.name: at,
+    };
     final running = <String, Future<void>>{};
     final finished = <String>{};
+    // **One set, kept as things stop.** This was rebuilt from two maps for
+    // every step on every admission pass — at four thousand steps and `-j 8`,
+    // eight million set literals, about half the time the walk spent.
+    final stopped = <String>{};
 
     // **Buffering is the price of running two at once, so it is paid only
     // then.** At one task in flight §5.2 holds unchanged: the lines go
     // straight out as they arrive, because there is no second task whose
     // output they could be confused with.
-    int? answer;
+    // **Which failure answers for the run, in the plan's order.** Taking the
+    // first to FINISH made the exit code depend on scheduling: under `-j`, two
+    // tasks failing with 3 and 1 answered whichever ended sooner, so the same
+    // file answered differently on a busier machine. The plan's order is the
+    // one thing about a run that does not move.
+    final failures = <int, int>{};
 
     while (waiting.isNotEmpty || running.isNotEmpty) {
       var began = false;
       for (var at = 0; at < waiting.length; at++) {
+        // **Still a gate, and still the same number.** It is what keeps a
+        // sequential run sequential: at one task in flight a failure is
+        // observed before the next is admitted, which is what "a failure stops
+        // what has not started" rests on. What changed is one level down —
+        // the budget it names is now spent by UNITS, so `-j 4` over a single
+        // fanned-out task admits the one task and lets its members have all
+        // four, where before they took turns and the flag did nothing.
         if (running.length >= concurrency) {
           break;
         }
         final step = waiting[at];
-        final blocker = _blockedBy(step, {...failed.keys, ...skipped.keys});
+        final blocker = _blockedBy(step, stopped);
         if (blocker != null) {
           // Named, not dropped. A task that silently did not happen is
           // indistinguishable from one that passed, which is the whole failure
           // this tool is about.
           skipped[step.task.name] = blocker;
+          stopped.add(step.task.name);
           waiting.removeAt(at--);
           began = true;
           continue;
         }
-        if (answer != null && !keepGoing) {
+        if (failures.isNotEmpty && !keepGoing) {
           // Something has failed and this run is not keeping going: what has
           // not started must not start. What IS running is left alone.
           skipped[step.task.name] = const RunStopped();
+          stopped.add(step.task.name);
           waiting.removeAt(at--);
           began = true;
           continue;
@@ -186,20 +278,65 @@ final class Executor {
                 !finished.contains(step.continuationOf))) {
           continue;
         }
+        if (!_exclusive.tryHold(step.task.exclusive)) {
+          // Left where it is rather than admitted and blocked: an admitted
+          // task holds one of `-j`'s places whether or not it is doing
+          // anything, so three tasks sharing a browser at `-j 3` kept every
+          // independent task out of the run.
+          continue;
+        }
         waiting.removeAt(at--);
         began = true;
         final name = step.task.name;
-        running[name] = _runOne(step, took, failed, buffered: concurrent).then((
-          code,
-        ) {
-          // `removeWhere`, not `remove`: the map's values are futures, so
-          // `remove` hands one back and dropping it is a discarded future.
-          running.removeWhere((running, _) => running == name);
-          finished.add(name);
-          if (code != null) {
-            answer ??= code;
-          }
-        });
+        running[name] =
+            _runOne(
+              step,
+              took,
+              failed,
+              // **Only where a second TASK could interleave.** The members of
+              // one task buffer themselves one level down, so buffering the
+              // task as well took §5.2's live output from a one-step plan and
+              // bought nothing — the announcement promising output as each
+              // member ends while none of it arrived until the task did.
+              buffered: concurrent && plan.steps.length > 1,
+            ).then((
+              code,
+            ) {
+              // A statement, so the future `remove` hands back is not an
+              // expression to discard. `removeWhere` avoided that too and
+              // paid a scan of the in-flight map per completion for it — and
+              // shadowed the map with its own parameter, which is how the
+              // `written`/`asked` mix-up in `request.dart` happened once
+              // already.
+              unawaited(running.remove(name));
+              finished.add(name);
+              if (code != null) {
+                // `_runOne` has already written `failed[name]`; this is the
+                // same fact, kept where the admission pass reads it.
+                stopped.add(name);
+                // Kept by plan position rather than by the order they
+                // finish in: under `--keep-going` those differ, and which
+                // failure answers for the run must not depend on which
+                // machine ran it. What is done with them is below.
+                // A key outside the plan's own range where a step somehow
+                // has no position, so that a made-up key cannot collide with
+                // a real one and quietly overwrite the failure it belongs to
+                // — the map is keyed by plan position, and `failures.length`
+                // is a value from that same space.
+                failures[order[name] ?? plan.steps.length + failures.length] =
+                    code;
+                if (!keepGoing) {
+                  // **Reaching into what is running, but only where the file
+                  // said it may.** A build killed half-way leaves whatever it
+                  // was doing in whatever state that half is; a read-only
+                  // check leaves nothing. Sequentially a format failure at
+                  // 0.4s meant analyze and test never ran at all; in parallel
+                  // they ran to the end anyway, and the machine spent the
+                  // whole budget to learn what it knew in a tenth of a second.
+                  _givenUp.now();
+                }
+              }
+            });
       }
 
       if (running.isEmpty && !began) {
@@ -207,16 +344,58 @@ final class Executor {
         // on something that will never finish.
         for (final step in waiting) {
           skipped[step.task.name] = const NeverStartable();
+          stopped.add(step.task.name);
         }
         waiting.clear();
         break;
       }
       if (running.isNotEmpty) {
-        await Future.any(running.values);
+        try {
+          await Future.any(running.values);
+        } on Object {
+          // **Nothing is reported while tasks are still running.** `_runOne`
+          // rethrows an `XtaskFormatException` for `cli.dart` to answer, and
+          // it arrives here through `Future.any` — so the summary printed on
+          // the way out was a mid-run snapshot, with the other tasks missing
+          // from it and their output still arriving after it. They are let
+          // finish first; each of them records its own outcome, so what is
+          // printed afterwards is the whole run.
+          await Future.wait(
+            running.values,
+          ).catchError((Object _) => const <void>[]);
+          // **And what never started is named too.** Letting the running
+          // tasks finish gave the summary their outcomes and left everything
+          // still queued out of it entirely — in neither `failed` nor
+          // `skipped` — so the report this unwind exists to complete still
+          // said nothing about the tasks the refusal stopped. The ordinary
+          // give-up path fills these in for exactly this reason.
+          for (final step in waiting) {
+            skipped[step.task.name] = const RunStopped();
+          }
+          waiting.clear();
+          rethrow;
+        }
       }
     }
 
-    return answer ?? ExitCode.success;
+    if (failures.isEmpty) {
+      return ExitCode.success;
+    }
+    // **A plain failure takes the answer from a continuation, and the plan's
+    // order decides among failures of the same kind.** Keying these by plan
+    // position said only the second half, and the first half is the one that
+    // matters: a continuation always sits in the plan BEFORE the unrelated
+    // tasks that come after its origin, so `a`, `a then a_check`, `b` with
+    // both `a_check` and `b` failing answered 4 — "the body succeeded and only
+    // a `then:` after it did not", said of a run where an ordinary task failed
+    // too. 4 is unrecoverable in the wrong direction, and it is the one code
+    // that must not be claimed loosely.
+    final plain = failures.entries.where(
+      (failure) => failure.value != ExitCode.continuationFailed,
+    );
+    return (plain.isEmpty ? failures.entries : plain)
+        .reduce((a, b) => a.key <= b.key ? a : b)
+        .value;
   }
 
   /// One task, timed, and reported where the mode says to report it.
@@ -228,11 +407,61 @@ final class Executor {
   }) async {
     final lines = buffered ? <String>[] : null;
     final say = lines == null ? log : lines.add;
+
+    // **Waited for, not held.** A task admitted by the walk could still be
+    // queued behind another task's members, and that wait was billed to it: a
+    // one-second process reported two seconds, and the total — documented as
+    // how much WORK there was — double-counted idling. So the clock starts
+    // when there is capacity to start.
+    //
+    // Taken and HANDED ON: the first member runs on this place and gives it
+    // back when it ends. Giving it back here instead left the body to queue
+    // again behind whoever was already waiting, so the wait this was meant to
+    // stop billing was billed anyway — a one-second task reported four. And
+    // holding it for the task's whole life, rather than for its first member,
+    // is a deadlock two two-member tasks at `-j 2` duly found.
+    final lease = await _slots.take();
+
+    // The tokens are already held: the walk took them before admitting this,
+    // so waiting for somebody else's browser happens in the queue rather than
+    // here, where it would occupy a place and be billed as this task's work.
     final started = now();
     try {
-      await _runTask(step.task, lines?.add);
+      await _runTask(step.task, lease, lines?.add);
       return null;
-    } on RunFailure catch (failure) {
+    } on Object catch (thrown, stack) {
+      // **One clause, because there is one ending.** `on RunFailure` alone
+      // left every other exception to leave the process at 255 — a number
+      // §5.3 does not have — with the section still open, because only the
+      // annotation below emits `::endgroup::`. A verb is arbitrary project
+      // Dart (§9) and can throw anything; so, being honest about it, can a
+      // fault in this engine. Neither is an exit code, and both are a task
+      // that failed.
+      if (thrown is XtaskFormatException) {
+        // Not this method's to answer. §8's code 2 belongs to the file being
+        // wrong, and `cli.dart` is where that sentence is written.
+        //
+        // Closed on the way past, though. Only `markers.error` below emits
+        // `::endgroup::`, so leaving through here left the section open —
+        // reintroducing, for one exception type, exactly the failure this
+        // block was written to remove.
+        markers.close().forEach(say);
+        rethrow;
+      }
+      final failure = thrown is RunFailure
+          ? thrown
+          : bodyThrew(step.task, thrown);
+      if (thrown is! RunFailure) {
+        // **Into the section, not into the annotation.** A trace is the only
+        // thing that locates a fault in this engine, and dropping it left the
+        // report the line above claims to be giving with nothing to act on.
+        // It does not belong in the `::error::` though: GitHub reads a
+        // workflow command to the end of its line, so twenty frames become one
+        // escaped line nobody can read. Said first, so it lands inside the
+        // fold that `markers.error` is about to close.
+        say('$stack');
+      }
+
       // Closes the open section and annotates, in that order and for that
       // reason: an `::error::` inside a group is folded away with it, so the
       // one line somebody needs would be the one they have to expand a
@@ -257,6 +486,13 @@ final class Executor {
       // summary is where the others are.
       return failure.code;
     } finally {
+      // Unconditionally, because the place knows whether a member has already
+      // given it back. Nothing may have reached one — a body that could not
+      // resolve, or a task with none — and this used to be an `if` over a flag
+      // the fan-out cleared four frames down, which is a leak the day somebody
+      // adds a return above it.
+      lease.release();
+      _exclusive.release(step.task.exclusive);
       // In a `finally`, so the task that FAILED is timed too. Where the run
       // spent itself before it broke is most of what somebody wants from a red
       // job.
@@ -288,260 +524,58 @@ final class Executor {
         : null;
   }
 
-  Future<void> _runTask(Task task, [void Function(String line)? sink]) async {
+  Future<void> _runTask(
+    Task task,
+    Lease lease, [
+    void Function(String line)? sink,
+  ]) async {
     // **A section per task, opened before anything that can fail inside it.**
     // §7.1 rests on this: a CI job is one invocation, and what keeps that no
     // worse than a step per task is that each task folds and the failing one
     // is annotated. It is closed here on success and by `markers.error` on
     // failure — never twice, which is what the ordering inside
     // [GitHubMarkers.error] is for.
-    //
     final say = sink ?? log;
     markers.open(task.name).forEach(say);
-    await _runTaskBody(task, sink);
+    await _runTaskBody(task, lease, sink);
     markers.close().forEach(say);
   }
 
-  Future<void> _runTaskBody(Task task, void Function(String line)? sink) async {
+  /// Resolves [task] and hands its bodies to the fan-out.
+  ///
+  /// The two things this level still owns are the two that are about the task
+  /// rather than about its members: whether there is anything to run at all,
+  /// and how much work the members turned out to be.
+  Future<void> _runTaskBody(
+    Task task,
+    Lease lease,
+    void Function(String line)? sink,
+  ) async {
     // Every way this task could turn out to be unrunnable is answered by one
     // call, and answered the same way `--dry-run` is answered — because it is
     // the same call.
-    final bodies = this.bodies.resolveTask(task);
-    if (bodies.isEmpty) {
+    final resolved = bodies.resolveTask(task);
+    if (resolved.isEmpty) {
       // A pure composite. Its `needs:` have already run; there is nothing of
       // its own to do, and saying so is more useful than silence.
-      (sink ?? log)('${task.name}: nothing of its own to run');
+      (sink ?? log)(nothingToRun(task.name));
       return;
     }
 
-    for (final body in bodies) {
-      await _runBody(body, sink);
+    final outcome = await _fanout.run(task, resolved, lease: lease, sink: sink);
+    // Recorded before anything is raised: the members accounted for their work
+    // whether or not one of them failed, and where the run spent itself before
+    // it broke is most of what somebody wants from a red job.
+    final work = outcome.work;
+    if (work != null) {
+      _work[task.name] = work;
+    }
+    final failure = outcome.failure;
+    if (failure != null) {
+      // Raised here rather than answered with, because `_runOne` is where a
+      // failing task becomes a section, an annotation and an exit code — and
+      // it is one clause for every way a body can end.
+      throw failure;
     }
   }
-
-  Future<void> _runBody(
-    Resolved resolved,
-    void Function(String line)? sink,
-  ) async {
-    final task = resolved.task;
-    final member = resolved.member;
-    final code = await _perform(resolved, sink);
-    if (code != ExitCode.success) {
-      // **A killed process is reported as killed, not as "exit code 124".**
-      // The number is what a killed process answers with and what a shell
-      // wrapping this already checks for, but it is a number nobody reads as
-      // "it hung". Recognised rather than proved: a program that genuinely
-      // exits 124 while carrying a `timeout:` would be described wrongly, and
-      // it would still be the right task on the right line.
-      final killed =
-          code == SystemProcessStarter.timedOut &&
-          resolved is ResolvedProcess &&
-          resolved.timeout != null;
-      final what = killed
-          ? 'did not finish inside its `timeout: ${task.timeout}`, '
-                'and was killed'
-          : 'failed with exit code $code';
-
-      // **A verb's code is a decision; a process's code is data.** They were
-      // the same line and should not have been. A verb is the project's own
-      // Dart, written against §5.3 — `remove` answering 2 for a path outside
-      // the repository is saying "the FILE is wrong", and flattening that to 1
-      // sends whoever reads the exit code looking for a task that ran and
-      // failed. An external program has never heard of §5.3: its 2 means
-      // whatever its author meant, so the number belongs in the message and
-      // the run answers 1.
-      //
-      // Before this, both were true at once — the message said "exit code 2"
-      // and the process answered 1, in the same run, out loud.
-      final answers = resolved is ResolvedVerb ? code : ExitCode.taskFailed;
-
-      throw RunFailure(
-        answers,
-        [
-          // The member is named, because §5.2 says a failure under `each:`
-          // stops at that member — and "the tests failed" over six packages is
-          // a report that makes somebody run all six again by hand.
-          if (member == null)
-            'task `${task.name}` $what'
-          else
-            'task `${task.name}` at `$member` $what',
-          // **The line that says it broke is the line that reproduces it.**
-          // On a host that folds, the failing task's output is collapsed and
-          // the annotation is all somebody sees; without the command and the
-          // directory, "how do I run this myself" means expanding the fold and
-          // hunting upwards for it. Rendered by `describe`, so what a failure
-          // reports and what `--dry-run` promised cannot disagree.
-          ...describe(resolved, header: false),
-        ].join('\n'),
-      );
-    }
-  }
-
-  /// Does what [body] resolved to, and answers with its exit code.
-  Future<int> _perform(Resolved body, void Function(String line)? sink) {
-    final say = sink ?? log;
-    switch (body) {
-      case ResolvedVerb(:final implementation):
-        return implementation(
-          VerbContext(
-            args: body.arguments,
-            env: body.environment,
-            workingDirectory: body.workingDirectory,
-            log: say,
-          ),
-        );
-
-      case ResolvedProcess(
-        :final executable,
-        :final runInShell,
-        :final timeout,
-      ):
-        // The member is named here for the same reason §5.2 names it in a
-        // failure: six identical lines from one `each:` over six packages is
-        // a log that makes somebody run all six again to find out which.
-        final member = body.member;
-        say(
-          '${body.task.name}${member == null ? '' : ' [$member]'}: '
-          '${[executable, ...body.arguments].join(' ')}',
-        );
-        return starter.start(
-          executable,
-          body.arguments,
-          workingDirectory: body.workingDirectory,
-          environment: body.environment,
-          runInShell: runInShell,
-          timeout: timeout,
-          output: sink,
-        );
-    }
-  }
-}
-
-/// The starter that runs real processes.
-final class SystemProcessStarter implements ProcessStarter {
-  const SystemProcessStarter({this.grace = const Duration(seconds: 5)});
-
-  /// How long a process that has been asked to stop is given to do it.
-  ///
-  /// A parameter so a test can prove the escalation without waiting out a
-  /// realistic one. The default is what a test runner needs to write its
-  /// partial output and a compiler to remove a half-written file.
-  final Duration grace;
-
-  @override
-  Future<int> start(
-    String executable,
-    List<String> arguments, {
-    required String workingDirectory,
-    required Map<String, String> environment,
-    required bool runInShell,
-    Duration? timeout,
-    void Function(String line)? output,
-  }) async {
-    // One question, asked once: it decides the flush above and the mode below,
-    // and two spellings of it are two things that can disagree.
-    final inherits = output == null;
-
-    // **Flushed before the child starts, and only when the child inherits.**
-    // Dart's `stdout` is asynchronous when it is a pipe, which is what it is
-    // on CI, and an inheriting child writes to that same descriptor directly:
-    // without this the `::group::` line for a task can arrive after the output
-    // it is supposed to be folding, which turns §7.1's readable failure into a
-    // jumble exactly where nobody can reproduce it.
-    //
-    // A piped child never touches this process's stdout, so there is nothing
-    // to order against — and flushing anyway is not merely wasted. `flush()`
-    // marks the sink bound for as long as it is in flight, so a task ending
-    // and writing its buffered block while another task is starting throws
-    // `Bad state: StreamSink is bound to a stream` and takes the run with it.
-    // Concurrency is the only way to have both at once, and concurrency is
-    // exactly when nobody inherits.
-    if (inherits) {
-      await stdout.flush();
-    }
-
-    Future<void>? collecting;
-    final process = await Process.start(
-      executable,
-      arguments,
-      workingDirectory: workingDirectory,
-      environment: environment,
-      runInShell: runInShell,
-      // **Streaming, by not being in the way.** §5.2 requires a task's output
-      // to pass through as it arrives and never be buffered to the end,
-      // because a long test run has to be watchable. Inheriting the streams
-      // gives that for nothing: the child writes to this process's own stdout,
-      // with no copy, no line buffer and nothing to get the ordering of two
-      // streams wrong.
-      // **Streaming by not being in the way, unless somebody asked for
-      // parallelism.** Inheriting gives §5.2's promise for nothing: the child
-      // writes to this process's own stdout, with no copy, no line buffer and
-      // nothing to get the ordering of two streams wrong. A parallel run
-      // cannot have that — two children writing to one terminal produce a
-      // transcript belonging to neither — so it pipes instead, and pays for it
-      // by not seeing anything until the task ends.
-      mode: inherits ? ProcessStartMode.inheritStdio : ProcessStartMode.normal,
-    );
-
-    if (output != null) {
-      // Both streams into one buffer, in arrival order, because that is what
-      // a terminal would have shown. Kept as futures so the collecting is not
-      // waited on before the process is.
-      collecting = Future.wait([
-        process.stdout
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .forEach(output),
-        process.stderr
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .forEach(output),
-      ]);
-    }
-
-    if (timeout == null) {
-      final code = await process.exitCode;
-      await collecting;
-      return code;
-    }
-
-    // **Asked to stop, then made to.** SIGTERM lets a test runner write its
-    // partial output and a compiler remove a half-written file; SIGKILL is
-    // what happens to a process that ignores being asked. A short grace
-    // period between them is the whole difference between a killed run that
-    // leaves a corrupt artifact behind and one that does not.
-    //
-    // What this does NOT do is kill the process's own children. There is no
-    // portable way to reach them from here — Windows has job objects, POSIX
-    // has process groups, and neither is what `Process` exposes — so a task
-    // that spawns a server and hangs may leave the server behind. Stated
-    // rather than quietly hoped away.
-    final finished = await process.exitCode
-        .then<int?>((code) => code)
-        .timeout(timeout, onTimeout: () => null);
-    if (finished != null) {
-      await collecting;
-      return finished;
-    }
-
-    process.kill();
-    final stopped = await process.exitCode
-        .then<int?>((code) => code)
-        .timeout(grace, onTimeout: () => null);
-    if (stopped == null) {
-      process.kill(ProcessSignal.sigkill);
-      await process.exitCode;
-    }
-    await collecting;
-    return timedOut;
-  }
-
-  /// What a killed process answers with.
-  ///
-  /// 124 is what `timeout(1)` uses and what every script that wraps a command
-  /// in one already checks for. Borrowing it costs nothing and means a shell
-  /// around `xtask` does not have to learn a new number — while §5.3's own
-  /// codes are untouched, because the ENGINE still answers 1: a task that hung
-  /// is a task that failed, and the same person goes to look.
-  static const timedOut = 124;
 }
