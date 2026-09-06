@@ -30,7 +30,9 @@ here — a reader of 0.1.0 never saw them.
 
 - `values:` — a set that holds names rather than paths, so the boundary and the
   "expanded to nothing" rule are not asked of things that are not paths.
-- `produced:` on a glob set — what a task writes, so a later task can name it.
+- `produced-by:` on a glob set — which task writes it, so a later task can
+  name it, and so that `--validate` can ask that the later task `needs:` the
+  earlier one.
 - `$each` in a task's arguments, not only in its working directory, so per-file
   work can be written at all.
 - `exclusive: [token]` — tasks holding the same token never run together, and

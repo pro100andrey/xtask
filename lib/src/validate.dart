@@ -58,6 +58,7 @@ ValidationReport validateFile(
   }
 
   _checkGraph(file, problems);
+  _checkProducers(file, problems);
   _checkDeclaredGates(file, problems);
   _checkNoNameCollision(file, problems);
   _checkExclusive(file, problems);
@@ -109,19 +110,19 @@ void _checkWorkingDirectory(
     return;
   }
 
-  // **The composed form too, where the members are known here.** A `values:`
-  // set is deliberately exempt from the boundary — its members are not paths —
-  // and `in: sub/$each` builds one out of them. Checking only the written
-  // string reopened the gap this function was added to close: a file
-  // `--validate` called clean, refused by `--dry-run`. Those members are
-  // literal and sitting in the file, so composing them costs nothing and
-  // needs no filesystem.
+  // The composed form too, where the members are known here: a `values:` set
+  // is not asked the boundary — its members are not paths — and `in:
+  // sub/$each` builds one out of them. The members are literal and in the
+  // file, so the resolver's own substitution can be asked without a
+  // filesystem.
   final set = file.sets[task.each];
   final composed = [
     written,
-    if (written.endsWith(eachMarker) && set is ValueSet)
-      for (final value in set.values)
-        written.substring(0, written.length - eachMarker.length) + value,
+    ...substituted(
+      [written],
+      all: const [],
+      each: set is ValueSet ? set.values : const [],
+    ),
   ];
 
   for (final path in composed) {
@@ -159,30 +160,16 @@ void _checkRemoveArguments(
     return;
   }
 
-  // **The set's members too, where they are known here.** `$all` and `$each`
-  // stand for what a set holds, and a `values:` set is deliberately exempt
-  // from the boundary everywhere else — its members are not paths. Fed to
-  // this verb they are: `values: ['/etc']` with `args: [$all]` was called
-  // clean here and refused by the run, which is the gap this check was added
-  // to close, reopened one substitution along. Literal and sitting in the
-  // file, so composing them costs nothing and needs no filesystem.
-  //
-  // A glob set's members are the resolver's to check and it does; a list
-  // set's went through `_refuseUnrooted` when the file was read.
-  final substituted = file.sets[task.all ?? task.each];
+  // The set's members too, where they are known here. `$all` and `$each`
+  // stand for what a set holds, and a `values:` set is not asked the boundary
+  // anywhere else — its members are not paths. Fed to this verb they are, so
+  // every argument is asked as the resolver's own substitution would write
+  // it. A glob set's members are the resolver's to check, and it does.
+  final set = file.sets[task.all ?? task.each];
+  final values = set is ValueSet ? set.values : const <String>[];
   final written = [
     ...task.args,
-    if (substituted is ValueSet)
-      for (final argument in task.args)
-        // Composed, not only substituted whole. `_checkWorkingDirectory` does
-        // this for `in:` and this did not, so `args: ['out/$each']` over a
-        // `values:` set holding `../../etc` was called clean here and refused
-        // by the run as `out/../../etc`.
-        if (argument == allMarker || argument == eachMarker)
-          ...substituted.values
-        else if (argument.endsWith(eachMarker))
-          for (final value in substituted.values)
-            argument.substring(0, argument.length - eachMarker.length) + value,
+    ...substituted(task.args, all: values, each: values),
   ];
 
   // Distinct, because the span is the task's: `args: ['/etc', 'x', '/etc']`
@@ -326,6 +313,66 @@ void _checkDeclaredGates(XtaskFile file, List<XtaskFormatException> problems) {
         entry.value,
       ),
     );
+  }
+}
+
+/// A set a task produces is read only by tasks that run after it.
+///
+/// `produced-by:` names the task, and the name is what makes the edge
+/// checkable: a reader that does not reach its producer through `needs:`
+/// runs first sometimes — always under `-j`, whenever the file's order puts
+/// it first — and reads a set that is not there yet.
+void _checkProducers(XtaskFile file, List<XtaskFormatException> problems) {
+  for (final MapEntry(key: name, value: set) in file.sets.entries) {
+    if (set is! GlobSet || set.producedBy == null) {
+      continue;
+    }
+    final producer = set.producedBy!;
+    if (!file.tasks.containsKey(producer)) {
+      problems.add(
+        XtaskFormatException(
+          'set `$name` says `produced-by: $producer`, and there is no such '
+          'task',
+          set.span,
+        ),
+      );
+      continue;
+    }
+    for (final task in file.tasks.values) {
+      if (task.each != name && task.all != name) {
+        continue;
+      }
+      if (task.name == producer) {
+        problems.add(
+          XtaskFormatException(
+            'task `${task.name}` reads set `$name` and is the task that '
+            'produces it. A task cannot be given what it has not made yet',
+            task.span,
+          ),
+        );
+        continue;
+      }
+      final List<String> plan;
+      try {
+        plan = planRun(file, task.name).names;
+      } on XtaskFormatException {
+        // A cycle or a dangling name, which `_checkGraph` has reported.
+        continue;
+      }
+      if (plan.indexOf(producer) < plan.indexOf(task.name) &&
+          plan.contains(producer)) {
+        continue;
+      }
+      problems.add(
+        XtaskFormatException(
+          'task `${task.name}` reads set `$name`, which task `$producer` '
+          'produces, and nothing makes `$producer` run first. Name it in '
+          '`needs:`, so that the order holds under `-j` as it does in the '
+          'file',
+          task.span,
+        ),
+      );
+    }
   }
 }
 

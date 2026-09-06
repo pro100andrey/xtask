@@ -54,6 +54,41 @@ const allMarker = r'$all';
 /// it, and computing wants a modifier, and a modifier wants a language.
 const eachMarker = r'$each';
 
+/// [written] with a trailing `$each` standing for [member].
+///
+/// Only at the end, which the parser has already refused anything else for.
+/// The prefix survives, and that is the whole of what it buys: a set may hold
+/// the bare name a path cannot be derived from — `lake_cli` — and the path is
+/// composed where it is used, `in: packages/$each`.
+String withMember(String written, String member) => written.endsWith(eachMarker)
+    ? written.substring(0, written.length - eachMarker.length) + member
+    : written;
+
+/// Every string [written] can come to, with the markers standing for what
+/// they name.
+///
+/// **The one substitution rule.** The resolver asks it for a run, with the
+/// one member `$each` stands for; the validator asks it for a file, with
+/// every member a `values:` set holds, so that a path composed around a
+/// member is checked before anything runs. Two readings of one rule is how
+/// `--validate` came to call clean a file the run refused.
+///
+/// `$all` as a whole word is every member of [all]; a word ending in `$each`
+/// is that word with a member of [each] on the end, once per member.
+List<String> substituted(
+  Iterable<String> written, {
+  required List<String> all,
+  required List<String> each,
+}) => [
+  for (final word in written)
+    if (word == allMarker)
+      ...all
+    else if (word.endsWith(eachMarker) && each.isNotEmpty)
+      for (final member in each) withMember(word, member)
+    else
+      word,
+];
+
 /// Every key the document may carry at the top level (§4.1).
 const topLevelKeys = <String>{'version', 'gates', 'sets', 'tasks'};
 
@@ -62,7 +97,7 @@ const topLevelKeys = <String>{'version', 'gates', 'sets', 'tasks'};
 /// Here rather than beside the parser for the reason above: `--emit-schema`
 /// projects it into a JSON Schema, and a second spelling of `include` is a
 /// second spelling that an editor would accept and the engine would refuse.
-const globSetKeys = <String>{'include', 'exclude', 'produced'};
+const globSetKeys = <String>{'include', 'exclude', 'produced-by'};
 
 /// Every key a value set may carry (§4.2).
 const valueSetKeys = <String>{'values'};
@@ -164,23 +199,23 @@ final class GlobSet extends NamedSet {
   const GlobSet({
     required this.include,
     required this.exclude,
-    this.produced = false,
+    this.producedBy,
     super.span,
   });
 
   final List<String> include;
   final List<String> exclude;
 
-  /// Whether this set's members are made by the run itself.
+  /// The task that makes this set's members, or null when they are simply
+  /// there.
   ///
-  /// Said rather than guessed: the engine cannot tell, and inferring it from
-  /// `needs:` exempts `analyze: {needs: [pub-get], all: sources}` — the
-  /// ordinary shape — and takes a typo through with it.
-  ///
-  /// It buys exactly one thing: the emptiness of THIS set is not judged before
-  /// its task runs. Everything else about it still is, and the run still
-  /// refuses it empty.
-  final bool produced;
+  /// A name rather than a flag, so that the edge can be checked: `--validate`
+  /// asks that every task reading the set reaches its producer through
+  /// `needs:`, which is what keeps the order under `-j` as well as in the
+  /// file. It buys exactly one thing beyond that: the emptiness of THIS set
+  /// is not judged before its producer has run. Everything else about it
+  /// still is, and the run still refuses it empty.
+  final String? producedBy;
 }
 
 /// What a task does. Absent means a pure composite (§4.3).

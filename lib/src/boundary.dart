@@ -1,6 +1,8 @@
 /// Where the repository ends.
 library;
 
+import 'dart:io';
+
 import 'package:path/path.dart' as p;
 
 /// A bare drive letter — `C:x`, which is relative to that drive's own
@@ -30,7 +32,34 @@ bool leavesRoot(String path) =>
     p.posix.split(path).contains('..') ||
     p.windows.split(path).contains('..');
 
+/// Whether [path] is under [root] on this machine, with every link followed.
+///
+/// [leavesRoot] is asked of what the file WROTE, on every machine alike. This
+/// is asked of what the machine HAS: a directory inside the root that is a
+/// link to one outside it passes the written check, and a body — or a delete
+/// — would then happen wherever the link points. A path that is not there
+/// cannot lead anywhere, and is not refused for it.
+bool staysUnder(String root, String path) {
+  final realRoot = _real(root);
+  final real = _real(path);
+  if (realRoot == null || real == null) {
+    return true;
+  }
+  return p.equals(realRoot, real) || p.isWithin(realRoot, real);
+}
+
+String? _real(String path) {
+  try {
+    return File(path).resolveSymbolicLinksSync();
+  } on FileSystemException {
+    return null;
+  }
+}
+
 /// Why `in: [written]` on task [task] is refused.
+///
+/// [throughALink] says the file was fine and the machine was not: the
+/// directory is a link that leads outside the repository.
 ///
 /// Here rather than at either caller, because it was written at both: the
 /// resolver refuses this when a run reaches the task, `--validate` refuses it
@@ -39,8 +68,11 @@ bool leavesRoot(String path) =>
 String workingDirectoryLeavesRoot({
   required String task,
   required String written,
+  bool throughALink = false,
 }) =>
-    'task `$task` says `in: $written`, which reaches outside the repository. '
+    'task `$task` says `in: $written`, which reaches outside the repository'
+    '${throughALink ? ' on this machine: it is a link to a directory the '
+              'repository does not own' : ''}. '
     'A working directory is relative to the root and stays there — a task '
     'that runs somewhere the repository does not own is not something this '
     'file can vouch for';
@@ -106,9 +138,10 @@ const removeVerbName = 'remove';
 /// not carry out, and `--validate` answers the question without a filesystem
 /// at all. This is the verb that deletes recursively; three sentences drifting
 /// apart is the last place to allow it.
-String removeLeavesRoot({required String written}) =>
-    '`remove` refuses `$written`: it names a path outside the '
-    'repository. A verb that deletes recursively and treats a missing path '
+String removeLeavesRoot({required String written, bool throughALink = false}) =>
+    '`remove` refuses `$written`: it names a path outside the repository'
+    '${throughALink ? ' on this machine, through a link' : ''}. '
+    'A verb that deletes recursively and treats a missing path '
     'as ordinary is the last place to take a path on trust';
 
 /// [posixPath], written the way this machine writes paths, under [root].

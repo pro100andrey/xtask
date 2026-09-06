@@ -575,7 +575,7 @@ void main() {
         final code = await dry(
           'version: 1\n'
               "sets:\n  made:\n    include: ['build/*.txt']\n"
-              '    produced: true\n'
+              '    produced-by: make\n'
               'tasks:\n'
               '  make: {desc: p, run: [touch, build/a.txt]}\n'
               r'  use: {desc: c, needs: [make], all: made, run: [echo, $all]}'
@@ -603,7 +603,7 @@ void main() {
               final code = await dry(
                 'version: 1\n'
                     "sets:\n  made:\n    include: ['build/*.txt']\n"
-                    '    produced: true\n'
+                    '    produced-by: make\n'
                     'tasks:\n'
                     '  make: {desc: p, run: [touch, build/a.txt]}\n'
                     '$task\n',

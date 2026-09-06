@@ -709,7 +709,7 @@ void main() {
       // Only possible because the model now carries a span. Before, every
       // message raised after parsing said "somewhere in your file".
       final file = parseXtaskFile(
-        'version: 1\nsets:\n  pkgs: []\ntasks: {}\n',
+        'version: 1\nsets:\n  pkgs:\n    include: [nothing/*]\ntasks: {}\n',
       );
       expect(
         refusalOf(() => expander().expand('pkgs', file.sets['pkgs']!)),

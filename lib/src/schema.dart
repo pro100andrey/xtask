@@ -159,14 +159,16 @@ const _globSet = <String, Map<String, Object?>>{
         'directories, as bash and git read it — so `packages/**/x` finds '
         '`packages/x` too.',
   },
-  'produced': {
-    'type': 'boolean',
+  'produced-by': {
+    'type': 'string',
+    'minLength': 1,
     'description':
-        "Whether this set's members are made by the run itself. A set is "
-        'read when the task naming it is about to run, so `--validate` and '
-        '`--dry-run` see a different moment; this says so, and buys exactly '
-        'one thing — the emptiness of this set is not judged before then. '
-        'Everything else about it still is, and a run still refuses it empty.',
+        "The task that makes this set's members. A set is read when the task "
+        'naming it is about to run, so `--validate` and `--dry-run` see a '
+        'different moment; naming the producer buys exactly one thing — the '
+        'emptiness of this set is not judged before that task has run. Every '
+        'task reading the set has to reach the producer through `needs:`, '
+        'and a run still refuses the set empty.',
   },
   'exclude': {
     'type': 'array',
@@ -212,6 +214,9 @@ const _taskKeys = <String, Map<String, Object?>>{
   'desc': {
     'type': 'string',
     'minLength': 1,
+    // Not blank, as the parser reads it: a description of spaces is no
+    // description.
+    'pattern': r'\S',
     'description':
         'Required, one line, and what `--list` prints — so that a task cannot '
         'be added without saying what it is for.',

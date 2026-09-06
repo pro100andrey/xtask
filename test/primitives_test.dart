@@ -45,6 +45,37 @@ void main() {
     root: root.path,
   );
 
+  group('a link that leads outside the repository', () {
+    late Directory outside;
+
+    setUp(() {
+      outside = Directory.systemTemp.createTempSync('xtask_outside_');
+      addTearDown(() => outside.deleteSync(recursive: true));
+      File(p.join(outside.path, 'x')).writeAsStringSync('x');
+      Link(p.join(root.path, 'out')).createSync(outside.path);
+    });
+
+    test('is not followed by a delete', () async {
+      // The written fence is asked of the file and cannot see a link; this is
+      // the same fence asked of the machine, at the moment of the delete.
+      expect(await remove(['out/x']), ExitCode.invalidFile);
+      expect(File(p.join(outside.path, 'x')).existsSync(), isTrue);
+      expect(logged.join('\n'), contains('through a link'));
+    });
+
+    test('and the plan says so rather than promising the delete', () {
+      final would = removeWouldDelete(['out/x'], root: root.path);
+      expect(would.refused, contains('through a link'));
+      expect(would.paths, isEmpty);
+    });
+
+    test('while the link itself is removed and never followed', () async {
+      expect(await remove(['out']), ExitCode.success);
+      expect(exists('out'), isFalse);
+      expect(File(p.join(outside.path, 'x')).existsSync(), isTrue);
+    });
+  }, testOn: '!windows');
+
   group('deletes what it is given', () {
     test('a file', () async {
       given(['build/out.js', 'keep.txt']);

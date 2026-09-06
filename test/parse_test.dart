@@ -1237,12 +1237,67 @@ tasks: {}
     );
   });
 
+  group('a name is a name, and a set has members', () {
+    test('an environment variable name cannot hold an `=`', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], env: {"A=B": x}}\n',
+        ),
+      );
+      expect(message, contains('`A=B` in `env:` of task `a`'));
+    });
+
+    test('`in:`, `each:` and `all:` written empty are refused', () {
+      for (final key in ['in', 'each', 'all']) {
+        final message = refusalOf(
+          () => parseXtaskFile(
+            'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart], $key: ""}\n',
+          ),
+        );
+        expect(message, contains('`$key:` of task `a` is empty'), reason: key);
+      }
+    });
+
+    test('a set written with no members is refused where it is written', () {
+      // An empty set is refused wherever it is read; a list with nothing in
+      // it can be refused at its own line, before anything runs.
+      for (final set in [
+        's: []',
+        's:\n    values: []',
+        's:\n    include: []',
+      ]) {
+        final message = refusalOf(
+          () => parseXtaskFile(
+            'version: 1\nsets:\n  $set\ntasks:\n'
+            r'  a: {desc: x, all: s, run: [d, $all]}'
+            '\n',
+          ),
+        );
+        expect(message, contains('written with no members'), reason: set);
+      }
+    });
+
+    test('a marker in `env-required:` names no variable', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\nsets:\n  pkgs: [a, b]\ntasks:\n'
+          r'  u: {desc: u, each: pkgs, in: $each, env-required: [$each],'
+          ' run: [echo, hi]}\n',
+        ),
+      );
+      expect(message, contains('env-required:'));
+      expect(message, contains('no member for a marker to stand for'));
+    });
+  });
+
   group('a boolean key is a boolean', () {
     test('and a set is not called a task when one is wrong', () {
       expect(
         () => parseXtaskFile(
           'version: 1\n'
-          'sets:\n  s:\n    include: [a]\n    produced: yes\n'
+          'sets:\n  s:\n    include: [a]\n    produced-by: [make]\n'
           'tasks:\n'
           r'  a: {desc: x, all: s, run: [d, $all]}'
           '\n',

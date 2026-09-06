@@ -64,6 +64,13 @@ Future<int> removeVerb(VerbContext context, {required String root}) async {
       return ExitCode.invalidFile;
     }
     for (final path in paths) {
+      final refusal = _throughALink(root, path);
+      if (refusal != null) {
+        context.log(refusal);
+        return ExitCode.invalidFile;
+      }
+    }
+    for (final path in paths) {
       await _delete(underRoot(root, path), context);
     }
   }
@@ -216,10 +223,22 @@ bool _looksLikeGlob(String argument) =>
     argument.contains('[') ||
     argument.contains('{');
 
+/// Why [path] under [root] may not be deleted on this machine, or null.
+///
+/// The path's own last component is removed and never followed. What leads
+/// to it may be a link too, and one that leads outside the repository would
+/// take a recursive delete with it — so the fence the file was asked when the
+/// arguments were read is asked of the machine here, and by `--dry-run`, at
+/// the moment of the delete.
+String? _throughALink(String root, String path) =>
+    staysUnder(root, p.dirname(underRoot(root, path)))
+    ? null
+    : removeLeavesRoot(written: path, throughALink: true);
+
 Future<void> _delete(String path, VerbContext context) async {
-  // `Link` first, and by type rather than by asking the path: §6 says a
-  // symlink is removed and never followed, and `Directory(link).delete` on a
-  // link to a directory is exactly the "followed" case.
+  // `Link` first, and by type rather than by asking the path: a symlink is
+  // removed and never followed, and `Directory(link).delete` on a link to a
+  // directory is exactly the "followed" case.
   final type = FileSystemEntity.typeSync(path, followLinks: false);
   switch (type) {
     case FileSystemEntityType.notFound:
@@ -289,19 +308,24 @@ Future<void> _deleting(String path, Future<void> Function() delete) async {
   } on FormatException catch (problem) {
     return (paths: const [], refused: '`remove`: ${problem.message}');
   }
-  return (
-    refused: null,
-    paths: [
-      for (final path in matched)
-        // §6 says a missing path is not an error, so a literal that is not
-        // there is not something this would delete — and saying it would be a
-        // promise about a file that does not exist.
-        if (FileSystemEntity.typeSync(
-              underRoot(root, path),
-              followLinks: false,
-            ) !=
-            FileSystemEntityType.notFound)
-          path,
-    ]..sort(),
-  );
+  final present = [
+    for (final path in matched)
+      // A missing path is not an error, so a literal that is not there is not
+      // something this would delete — and saying it would be a promise about
+      // a file that does not exist.
+      if (FileSystemEntity.typeSync(
+            underRoot(root, path),
+            followLinks: false,
+          ) !=
+          FileSystemEntityType.notFound)
+        path,
+  ]..sort();
+  for (final path in present) {
+    // The same fence the verb asks of the machine, so the plan does not
+    // promise a delete the run refuses.
+    if (_throughALink(root, path) case final refusal?) {
+      return (paths: const [], refused: refusal);
+    }
+  }
+  return (refused: null, paths: present);
 }

@@ -243,7 +243,7 @@ void main() {
       final report = check(
         'version: 1\n'
         "sets:\n  made:\n    include: ['build/*.txt']\n"
-        '    produced: true\n'
+        '    produced-by: make\n'
         'tasks:\n'
         '  make: {desc: p, run: [touch, build/a.txt]}\n'
         r'  use: {desc: c, needs: [make], all: made, run: [echo, $all]}'
@@ -272,21 +272,63 @@ void main() {
       // and that fence exists because a set is fed to verbs that delete.
       final report = check(
         'version: 1\n'
-        "sets:\n  made:\n    include: ['/etc/host*']\n    produced: true\n"
+        "sets:\n  made:\n    include: ['/etc/host*']\n    produced-by: make\n"
         'tasks:\n'
-        r'  a: {desc: x, all: made, run: [echo, $all]}'
+        '  make: {desc: p, run: [touch]}\n'
+        r'  a: {desc: x, needs: [make], all: made, run: [echo, $all]}'
         '\n',
         withFilesystem: true,
       );
       expect(report.toString(), contains('reaches outside the repository'));
     });
 
+    test('the producer has to exist', () {
+      final report = check(
+        'version: 1\n'
+        "sets:\n  made:\n    include: ['build/*']\n    produced-by: mkae\n"
+        'tasks:\n'
+        '  make: {desc: p, run: [touch]}\n'
+        r'  a: {desc: x, needs: [make], all: made, run: [echo, $all]}'
+        '\n',
+      );
+      expect(report.toString(), contains('`produced-by: mkae`'));
+      expect(report.toString(), contains('no such task'));
+    });
+
+    test('and every reader reaches it through `needs:`', () {
+      // The name is what makes the edge checkable. In the file's order `make`
+      // runs first; under `-j` nothing says so, and a reader that does not
+      // need its producer reads a set that is not there yet.
+      final report = check(
+        'version: 1\n'
+        "sets:\n  made:\n    include: ['build/*']\n    produced-by: make\n"
+        'tasks:\n'
+        '  make: {desc: p, run: [touch]}\n'
+        r'  a: {desc: x, all: made, run: [echo, $all]}'
+        '\n',
+      );
+      expect(report.toString(), contains('nothing makes `make` run first'));
+      expect(report.toString(), contains('`needs:`'));
+    });
+
+    test('and a task cannot read the set it produces', () {
+      final report = check(
+        'version: 1\n'
+        "sets:\n  made:\n    include: ['build/*']\n    produced-by: make\n"
+        'tasks:\n'
+        r'  make: {desc: p, all: made, run: [touch, $all]}'
+        '\n',
+      );
+      expect(report.toString(), contains('is the task that produces it'));
+    });
+
     test('a pattern that is not a pattern is still reported', () {
       final report = check(
         'version: 1\n'
-        "sets:\n  made:\n    include: ['[']\n    produced: true\n"
+        "sets:\n  made:\n    include: ['[']\n    produced-by: make\n"
         'tasks:\n'
-        r'  a: {desc: x, all: made, run: [echo, $all]}'
+        '  make: {desc: p, run: [touch]}\n'
+        r'  a: {desc: x, needs: [make], all: made, run: [echo, $all]}'
         '\n',
         withFilesystem: true,
       );

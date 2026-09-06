@@ -254,9 +254,11 @@ final class SetExpander {
       // Blames the exclusion only when there was something for it to remove;
       // otherwise it points at a pattern that matched nothing, which is the
       // typo actually worth reporting.
-      GlobSet(:final include, :final exclude) =>
+      GlobSet(:final include, :final exclude, :final producedBy) =>
         'nothing under the repository root matches ${_quoted(include)}'
-            '${exclude.isEmpty ? '' : ', with or without ${_quoted(exclude)}'}',
+            '${exclude.isEmpty ? '' : ', with or without ${_quoted(exclude)}'}'
+            '${producedBy == null ? '' : ' — task `$producedBy` makes its '
+                      'members, and it has not run yet'}',
     };
     throw EmptySetException(
       'set `$name` is empty — $detail. An empty set is refused rather than '
@@ -268,7 +270,7 @@ final class SetExpander {
       // made by the run, so before the task that makes them has run this
       // emptiness is a moment rather than a mistake. Every reader used to
       // work that out again from the set it happened to be holding.
-      onlyYet: set is GlobSet && set.produced,
+      onlyYet: set is GlobSet && set.producedBy != null,
     );
   }
 

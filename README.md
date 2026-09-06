@@ -666,19 +666,22 @@ produces says so:
 sets:
   generated:
     include: ['build/**/*.dart']
-    produced: true
+    produced-by: codegen
 ```
 
 That buys exactly one thing: the **emptiness** of this set is not judged before
-its task runs. `--validate` passes over it and `--dry-run` prints `cannot be
-resolved yet` with the reason under it, instead of calling a working file
+`codegen` has run. `--validate` passes over it and `--dry-run` prints `cannot
+be resolved yet` with the reason under it, instead of calling a working file
 broken. Everything else about the set is still checked by both — a pattern that
 leaves the repository, a pattern that is not a pattern — and a run still
 refuses it empty, whatever was hoped for it.
 
-Said rather than guessed, because the engine cannot know. Inferring it from
-`needs:` looked reasonable and exempted `analyze: {needs: [pub-get], all:
-sources}` — the ordinary shape — taking a typo through with it.
+The producer is named rather than flagged, because a name is something the
+file can be checked against: every task that reads the set has to reach
+`codegen` through `needs:`, or `--validate` says so. In the file's order the
+producer may well come first anyway; under `-j` nothing but the edge says so,
+and a reader that does not need its producer reads a set that is not there
+yet.
 
 A set that expands to nothing is an **error**: a task given no files checked
 nothing, and a gate that examined nothing is worse than no gate.

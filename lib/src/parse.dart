@@ -156,13 +156,13 @@ Map<String, NamedSet> _sets(YamlMap root) {
 
 NamedSet _namedSet(YamlNode node, String name, SourceSpan keySpan) {
   if (node is YamlList) {
-    return ListSet(_stringList(node, 'set `$name`'), span: keySpan);
+    return ListSet(_members(node, 'set `$name`'), span: keySpan);
   }
   if (node is YamlMap) {
     if (node.nodes.containsKey('values')) {
       _refuseUnknownKeys(node, valueSetKeys, 'key in value set `$name`');
       return ValueSet(
-        _stringList(node.nodes['values']!, '`values:` of set `$name`'),
+        _members(node.nodes['values']!, '`values:` of set `$name`'),
         span: keySpan,
       );
     }
@@ -175,12 +175,19 @@ NamedSet _namedSet(YamlNode node, String name, SourceSpan keySpan) {
       );
     }
     final exclude = node.nodes['exclude'];
+    final producer = node.nodes['produced-by'];
     return GlobSet(
-      include: _stringList(include, '`include:` of set `$name`'),
+      include: _members(include, '`include:` of set `$name`'),
       exclude: exclude == null
           ? const []
           : _stringList(exclude, '`exclude:` of set `$name`'),
-      produced: _flag(node, 'produced', 'set `$name`'),
+      producedBy: producer == null
+          ? null
+          : _nonEmpty(
+              _string(producer, '`produced-by:` of set `$name`'),
+              producer,
+              '`produced-by:` of set `$name`',
+            ),
       span: keySpan,
     );
   }
@@ -439,6 +446,16 @@ Map<String, String> _env(YamlMap map, String taskName) {
   final env = <String, String>{};
   for (final key in _keyNodes(envMap)) {
     final name = _name(key, 'an environment variable name');
+    if (name.contains('=')) {
+      // `=` is what separates a name from its value in the environment the
+      // child is handed, so a name holding one reaches it as `A=B=x`.
+      throw XtaskFormatException(
+        '`$name` in `env:` of task `$taskName` has an `=` in it, and an '
+        'environment variable name cannot: it is what separates the name '
+        'from the value',
+        key.span,
+      );
+    }
     final valueNode = envMap.nodes[name]!;
     final value = valueNode.value;
     if (value is! String) {
@@ -531,7 +548,25 @@ String? _optionalString(YamlMap map, String key, String taskName) {
   if (node == null) {
     return null;
   }
-  return _string(node, '`$key:` of task `$taskName`');
+  final what = '`$key:` of task `$taskName`';
+  return _nonEmpty(_string(node, what), node, what);
+}
+
+/// [node] as the members of a set, of which there has to be at least one.
+///
+/// An empty set is refused wherever it is read, and a list written with no
+/// members can be refused here, at its own line, before anything runs.
+List<String> _members(YamlNode node, String what) {
+  final members = _stringList(node, what);
+  if (members.isEmpty) {
+    throw XtaskFormatException(
+      '$what is written with no members. Leave it out rather than declare '
+      'nothing: an empty set is refused wherever it is read, because a task '
+      'given nothing checks nothing',
+      node.span,
+    );
+  }
+  return members;
 }
 
 List<String> _optionalStringList(YamlMap map, String key, String taskName) {

@@ -260,27 +260,25 @@ final class BodyResolver {
     final members = task.all == null
         ? const <String>[]
         : _expand(task, task.all!);
-    List<String> substituted(Iterable<String> written) => [
-      for (final argument in written)
-        if (argument == allMarker)
-          ...members
-        else
-          _withMember(argument, member),
-    ];
+    // The one substitution rule, asked with the one member this body is for.
+    List<String> substitute(Iterable<String> written) =>
+        substituted(written, all: members, each: [?member]);
     final passed = passedThrough;
     // A value goes where a value goes, and an environment value is one:
     // `env: {FLAVOR: $each}` would otherwise reach the child as literal text.
     final declared = Map<String, String>.unmodifiable({
       for (final entry in task.env.entries)
-        entry.key: _withMember(entry.value, member),
+        entry.key: member == null
+            ? entry.value
+            : withMember(entry.value, member),
     });
     return (
       member: member,
       where: where,
       members: members,
-      substituted: substituted,
+      substituted: substitute,
       args: List<String>.unmodifiable([
-        ...substituted(task.args),
+        ...substitute(task.args),
         if (passed != null && passed.task == task.name) ...passed.arguments,
       ]),
       declared: declared,
@@ -405,61 +403,46 @@ final class BodyResolver {
     );
   }
 
-  /// [written] with a trailing `$each` replaced by [member].
-  ///
-  /// Only at the end, which `parse` has already refused anything else for.
-  /// The prefix survives, and that is the whole of what it buys: a set may
-  /// hold the bare name a path cannot be derived from — `lake_cli` — and the
-  /// path is composed where it is used, `in: packages/$each`. Both halves are
-  /// then available to one task, which nothing else in this design offers.
-  static String _withMember(String written, String? member) {
-    if (!written.endsWith(eachMarker)) {
-      return written;
-    }
-    if (member == null) {
-      // `parse` refuses this shape, so reaching it means the file said one
-      // thing and this read another.
-      throw StateError('`$eachMarker` with no member');
-    }
-    return written.substring(0, written.length - eachMarker.length) + member;
-  }
-
   /// Where a body runs. `$each` is the member; anything else is relative to
-  /// the repository root (§4.3).
+  /// the repository root.
+  ///
+  /// Asked the boundary twice: of what the file wrote, composed around the
+  /// member, and of what this machine has there — a directory inside the
+  /// root that is a link to one outside it passes the first and not the
+  /// second.
   String _workingDirectory(Task task, String? member) {
     final written = task.workingDirectory;
     if (written == null) {
       return root;
     }
-    // **The written string AND what it becomes.** A value set is deliberately
-    // not asked whether its members leave the repository — they are not paths
-    // — and `in: sub/$each` composes one out of them, after the only gate.
-    // `../../../etc` as a flavour then ran a body in `/etc` and answered 0,
-    // through the shape the README recommends.
-    if (leavesRoot(written) ||
-        (member != null && leavesRoot(_withMember(written, member)))) {
-      // The one path in the file that reached the filesystem without ever
-      // being asked whether it stayed inside: `in: ../..` ran a body two
-      // levels above the root, and answered 0.
+    if (member == null && written.endsWith(eachMarker)) {
+      // The parser refuses this shape; the resolver is a public seam and must
+      // not read a member that is not there.
+      throw RunFailure(
+        ExitCode.invalidFile,
+        'task `${task.name}` uses `in: $written` without an `each:` set, so '
+        'there is no member for it to stand for',
+      );
+    }
+    final composed = member == null ? written : withMember(written, member);
+    if (leavesRoot(composed)) {
+      throw RunFailure(
+        ExitCode.invalidFile,
+        workingDirectoryLeavesRoot(task: task.name, written: composed),
+      );
+    }
+    final where = underRoot(root, composed);
+    if (!staysUnder(root, where)) {
       throw RunFailure(
         ExitCode.invalidFile,
         workingDirectoryLeavesRoot(
           task: task.name,
-          written: member == null ? written : _withMember(written, member),
+          written: composed,
+          throughALink: true,
         ),
       );
     }
-    if (written.endsWith(eachMarker)) {
-      if (member == null) {
-        throw RunFailure(
-          ExitCode.invalidFile,
-          'task `${task.name}` uses `in: $written` without an `each:` set, so '
-          'there is no member for it to stand for',
-        );
-      }
-      return underRoot(root, _withMember(written, member));
-    }
-    return underRoot(root, written);
+    return where;
   }
 
   /// The members of set [name], as a failure of [task] when there are none.

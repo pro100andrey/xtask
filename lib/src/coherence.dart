@@ -49,7 +49,7 @@ List<XtaskFormatException> incoherences(
 }) => [
   ..._allMarker(task),
   ..._eachMarker(task),
-  ..._markerInExclusive(task),
+  ..._markerInAName(task),
   ..._bodyCannotHonourIt(task, keySpan),
 ];
 
@@ -104,33 +104,36 @@ Iterable<XtaskFormatException> _bodyCannotHonourIt(
   }
 }
 
-/// A marker written in `exclusive:`, where nothing can substitute it.
+/// A marker written where nothing stands for it.
 ///
-/// **Neither refused nor expanded, which is the one combination that says
-/// nothing.** Every other place a marker may be written is either substituted
-/// by the resolver or refused here; `exclusive:` was in neither list, so
-/// `exclusive: [lock-$each]` validated clean and reached the run as the
-/// literal text `lock-$each` for every member — a key that reads as a
-/// guarantee two things are kept apart while both hold the same token.
-///
-/// It cannot be substituted, either: a token is taken when the walk ADMITS a
-/// task, which is before its set has been read, so there is no member yet for
-/// one to stand for.
-Iterable<XtaskFormatException> _markerInExclusive(Task task) sync* {
-  final written = task.exclusive.where(
-    (token) => _bareMarker.hasMatch(token) || _bareEach.hasMatch(token),
-  );
-  if (written.isEmpty) {
-    return;
+/// `exclusive:`, `env-required:`, `needs:`, `then:` and `gate:` hold names,
+/// and a name is looked for as written: a token is taken when the walk
+/// admits a task, before its set has been read, so there is no member yet
+/// for `$each` to stand for; a variable, a task or a gate set called
+/// `$each` is one nobody has. Neither refused nor expanded is the one
+/// combination that says nothing — `exclusive: [lock-$each]` validated
+/// clean and made every member hold the same token.
+Iterable<XtaskFormatException> _markerInAName(Task task) sync* {
+  for (final (key, names) in [
+    ('exclusive', task.exclusive),
+    ('env-required', task.envRequired),
+    ('needs', task.needs),
+    ('then', task.then),
+    ('gate', task.gate),
+  ]) {
+    final written = names.where(
+      (name) => _bareMarker.hasMatch(name) || _bareEach.hasMatch(name),
+    );
+    if (written.isEmpty) {
+      continue;
+    }
+    yield XtaskFormatException(
+      'task `${task.name}` writes `${written.first}` in `$key:`, and a name '
+      'there is looked for as written: there is no member for a marker to '
+      'stand for, and left as text it names nothing. Write the name',
+      task.span,
+    );
   }
-  yield XtaskFormatException(
-    'task `${task.name}` writes `${written.first}` in `exclusive:`. A token is '
-    'held from the moment the task is admitted, which is before its set has '
-    'been read, so there is no member for a marker to stand for — and left as '
-    'text it makes every member hold the same token, which keeps nothing '
-    'apart. Name the thing they actually share',
-    task.span,
-  );
 }
 
 /// `each:` and its marker have to agree, and the marker has to END what it is

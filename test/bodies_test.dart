@@ -229,6 +229,22 @@ void main() {
       );
     });
 
+    test('an `in:` that is a link leading outside the repository', () {
+      // What the file wrote is fine; what this machine has there is not. The
+      // written fence is lexical, so a directory inside the root that links
+      // to one outside it passed it and ran a body wherever the link points.
+      final outside = Directory.systemTemp.createTempSync('xtask_outside_');
+      addTearDown(() => outside.deleteSync(recursive: true));
+      Link(p.join(root.path, 'out')).createSync(outside.path);
+      expect(
+        () => resolve(
+          'version: 1\ntasks:\n  a: {desc: x, in: out, run: [dart]}\n',
+          'a',
+        ),
+        refused(ExitCode.invalidFile, contains('it is a link')),
+      );
+    }, testOn: '!windows');
+
     test('a program nothing on PATH answers to', () {
       expect(
         () => resolve(
