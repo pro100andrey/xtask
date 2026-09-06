@@ -1,7 +1,7 @@
 /// Resolving what runs, and in what order.
 ///
 /// Planning is separate from running: this answers "what would happen", which
-/// is what `--dry-run` asks (§7) and what an execution needs before it starts.
+/// is what `--dry-run` asks  and what an execution needs before it starts.
 /// One implementation of the order, asked by both.
 library;
 
@@ -25,7 +25,7 @@ final class PlanStep {
   /// not run. What decides whether this step happens is whether the task whose
   /// `then:` opened the subtree succeeded.
   ///
-  /// Two things need it: §5.3 gives a continuation its own exit code, and
+  /// Two things need it: a continuation has an exit code of its own, and
   /// `--keep-going` must not announce a publish that failed.
   final String? continuationOf;
 
@@ -67,7 +67,7 @@ final class PlanEdge {
 /// The tasks nothing else names — the ones somebody types.
 ///
 /// A gate set's members are among them: typing `xtask format` is as real an
-/// entry as typing `xtask check`, and §7 says both are things a person does.
+/// entry as typing `xtask check`, and both are things a person does.
 /// What a gate set adds is a second way in, which `--why` reports separately.
 List<String> entryPoints(XtaskFile file) {
   final named = <String>{};
@@ -116,8 +116,8 @@ List<PlanEdge>? routeTo(
 
   /// The edges leading out of [at], `needs:` first, in declaration order.
   ///
-  /// A name with no task has none: a dangling `needs:` is §8's to report, and
-  /// this walk answers about routes.
+  /// A name with no task has none: a dangling `needs:` is `--validate`'s to
+  /// report, and this walk answers about routes.
   List<(String, String)> edgesOf(String at) {
     final task = file.tasks[at];
     if (task == null) {
@@ -145,7 +145,7 @@ List<PlanEdge>? routeTo(
         // **Taken off the path on the way out.** Kept, it marked every task a
         // dead branch had touched as unreachable for the rest of the search,
         // so a route that existed down a later edge was answered "nothing
-        // reaches it" — the one answer §8 says this question exists to
+        // reaches it" — the one answer this question exists to
         // prevent. `seen` is the path, not the visited set.
         seen.remove(hop.at);
         if (!cutShort) {
@@ -253,7 +253,7 @@ Plan planGate(XtaskFile file, String gate) {
 /// `needs:` and `then:` are one relation read from two ends — `x needs y` puts
 /// y before x, `x then y` puts x before y — so the members go in an order that
 /// relation allows, and among those it does not separate the file's own order
-/// stands. §4.3 makes that meaningful: cheap gates before slow ones.
+/// stands. the file's order is meaningful: cheap gates before slow ones.
 List<Task> _seedOrder(XtaskFile file, List<Task> members) {
   if (members.length < 2) {
     return members;
@@ -334,8 +334,8 @@ Set<String> _membersAfter(
 /// Built once, because the reverse of `needs:` is not a field and asking per
 /// task is a scan of the whole file, once per member per hop.
 ///
-/// A dangling name gets an empty entry: §8 reports it, and a name with no task
-/// is not in anybody's way here.
+/// A dangling name gets an empty entry: `--validate` reports it, and a name
+/// with no task is not in anybody's way here.
 Map<String, List<String>> _runsAfter(XtaskFile file) {
   final after = <String, List<String>>{};
   for (final task in file.tasks.values) {
@@ -349,7 +349,7 @@ Map<String, List<String>> _runsAfter(XtaskFile file) {
 
 /// The plan for [name], whether it is a gate set or a task.
 ///
-/// One name space, asked in one place: §7 says a person types what they want
+/// One name space, asked in one place: a person types what they want
 /// to happen, and a gate set is as much that as a task. `_checkNoNameCollision`
 /// in the validator is what keeps the question answerable.
 ///
@@ -361,9 +361,9 @@ Plan planFor(XtaskFile file, String name) {
     return planRun(file, name);
   }
   if (file.tasks.containsKey(name)) {
-    // §8 reports this too, but a run must not quietly pick one of them: the
-    // composite this replaced could not be ambiguous, and silently preferring
-    // the gate set would run a plan the reader did not ask for.
+    // `--validate` reports this too, but a run must not quietly pick one of
+    // them: the composite this replaced could not be ambiguous, and silently
+    // preferring the gate set would run a plan the reader did not ask for.
     throw bothAGateSetAndATask(name, file.gates[name]);
   }
   final plan = planGate(file, name);
@@ -430,11 +430,10 @@ Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
 
 /// The refusal for a name the file gives to a gate set and to a task.
 ///
-/// **One sentence, because a person types one name.** It was written out at
-/// three sites — the planner, the validator and the command line — in three
-/// wordings, and the third had drifted into being wrong: `--why check` on a
-/// colliding name answered "`check` is a gate set, not a task", which is false
-/// about a file that declares both.
+/// **One sentence, because a person types one name.** The planner, the
+/// validator and the command line all refuse this, and three wordings of one
+/// fact is how one of them comes to be wrong — "`check` is a gate set, not a
+/// task" is false about a file that declares both.
 XtaskFormatException bothAGateSetAndATask(String name, SourceSpan? span) =>
     XtaskFormatException(
       '`$name` is both a gate set and a task, and a person types one name. '
@@ -560,7 +559,7 @@ final class _Planner {
 
     if (_opened.contains(name)) {
       // Reached only through `needs`; a `then:` re-entry is handled where it
-      // is issued, below. §5.1 makes this a validation error and asks for the
+      // is issued, below. This is a validation error and asks for the
       // cycle itself, because "there is a cycle" leaves the reader to find it
       // in a file that just proved it is hard to read.
       throw XtaskFormatException(

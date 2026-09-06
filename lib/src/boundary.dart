@@ -61,10 +61,9 @@ String? _real(String path) {
 /// [throughALink] says the file was fine and the machine was not: the
 /// directory is a link that leads outside the repository.
 ///
-/// Here rather than at either caller, because it was written at both: the
-/// resolver refuses this when a run reaches the task, `--validate` refuses it
-/// when the file is read, and one boundary saying two slightly different
-/// sentences is how a diagnostic starts drifting from the rule it reports.
+/// Here rather than at either caller: the resolver refuses this when a run
+/// reaches the task, `--validate` refuses it when the file is read, and one
+/// boundary says one sentence.
 String workingDirectoryLeavesRoot({
   required String task,
   required String written,

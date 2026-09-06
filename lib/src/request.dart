@@ -10,15 +10,15 @@ library;
 
 import 'dart:io';
 
-/// The file, at the repository root (§4).
+/// The file, at the repository root .
 const xtaskFileName = 'xtask.yaml';
 
 /// What an invocation asked for.
 ///
-/// Parsed into a value first and acted on second, so that every refusal §7
-/// implies — two modes at once, a flag that is not one, `--gate` without the
-/// `--list` it narrows — can be asserted without a filesystem, a plan or a
-/// process anywhere near it.
+/// Parsed into a value first and acted on second, so that every refusal the
+/// command line implies — two modes at once, a flag that is not one, `--gate`
+/// without the `--list` it narrows — can be asserted without a filesystem, a
+/// plan or a process anywhere near it.
 sealed class Request {
   const Request();
 }
@@ -40,11 +40,11 @@ final class RunTask extends Request {
   /// `--keep-going`: report every failure rather than the first.
   final bool keepGoing;
 
-  /// `-j`: how many tasks may be in flight. 1 is §5.2's run.
+  /// `-j`: how many tasks may be in flight. 1 is the sequential run.
   final int concurrency;
 }
 
-/// `xtask --dry-run <task> [-- <args>]` — print what that would come to (§7).
+/// `xtask --dry-run <task> [-- <args>]` — print what that would come to .
 final class DryRunTask extends Request {
   const DryRunTask(this.task, [this.arguments = const []]);
 
@@ -66,7 +66,7 @@ final class ListTasks extends Request {
 ///
 /// **A window on the data, not the mechanism.** No pipeline consumes this:
 /// the duplicate list disappears because CI stops naming commands and runs one
-/// task per job (§7.1), not because something reads this output. That is why
+/// task per job, not because something reads this output. That is why
 /// the format is one name per line — right for a person reading, and wrong for
 /// feeding a build matrix, which it is not for.
 final class GateMembers extends Request {
@@ -75,12 +75,13 @@ final class GateMembers extends Request {
   final String gate;
 }
 
-/// `xtask --check-ci` — does the workflow still run the gate sets (§7.1)?
+/// `xtask --check-ci` — does the workflow still run the gate sets (one
+/// invocation per job)?
 final class CheckCi extends Request {
   const CheckCi();
 }
 
-/// `xtask --validate` — parse and check, run nothing (§8).
+/// `xtask --validate` — parse and check, run nothing.
 final class Validate extends Request {
   const Validate();
 }
@@ -120,7 +121,7 @@ final class ShowUsage extends Request {
   final String? problem;
 }
 
-/// The modes, exactly §7's list.
+/// The modes, exactly the usage's list.
 ///
 /// Public because the usage text has to name every one of them, and a test
 /// that checked it against a list of its own would be a third copy of this —
@@ -268,10 +269,9 @@ Request parseArguments(
 
     // **Both spellings, because `--gate` already took both.** A person who
     // learns `--gate=check` from the usage line writes `--why=test` next, and
-    // what they used to get was "`--why=test` is not an option xtask has" — a
-    // refusal that denies the flag exists rather than naming the form it
-    // wants. The value joins the operands, where the mode below reads it as
-    // if it had been written as its own word.
+    // "not an option xtask has" would deny the flag exists rather than name
+    // the form it wants. The value joins the operands, where the mode below
+    // reads it as if it had been written as its own word.
     final joined = modes.firstWhere(
       (mode) => argument.startsWith('$mode='),
       orElse: () => '',
@@ -280,12 +280,9 @@ Request parseArguments(
       written.add(joined);
       final value = argument.substring(joined.length + 1);
       // **Refused here for every mode, in the mode's own terms.** `--why=`
-      // became a request naming the empty string, and the reader was told
-      // there is no task called `` — a missing name reported where an
-      // argument is missing. Narrowed to the modes that take a name, the
-      // others reached the arm below and were told they had been given ``:
-      // the same empty interpolation, one sentence along. An empty value is a
-      // mistake in both cases; what differs is which mistake.
+      // names nothing, and `--list=` joins a value to a mode that takes none.
+      // An empty value is a mistake in both cases; what differs is which
+      // mistake, and neither is "there is no task called ``".
       if (value.isEmpty) {
         return ShowUsage(
           _modesTakingAName.contains(joined)
@@ -316,11 +313,8 @@ Request parseArguments(
   final mode = written.isEmpty ? null : written.single;
 
   if (narrowed && mode != '--list') {
-    // `--gate` is a modifier, not a mode. It used to be one letter away from
-    // `--gates`, which is why this refusal was written; the flag is now
-    // `--gate-members` and cannot be reached by a slip of the finger, but a
-    // `--gate` written without `--list` still has to be answered rather than
-    // quietly ignored or listed past.
+    // `--gate` is a modifier, not a mode: written without `--list` it has to
+    // be answered rather than quietly ignored or listed past.
     return const ShowUsage(
       '`--gate` narrows `--list`. For the members of one gate set on their '
       'own, write `--gate-members <name>`',
@@ -328,10 +322,10 @@ Request parseArguments(
   }
 
   if (jobsWritten && mode != null) {
-    // **Whether it was WRITTEN, not what it came to.** Testing the number let
-    // `--list -j 1` through in silence, and made `--list -j auto` a refusal on
-    // an eight-core machine and an acceptance on a one-core runner — the same
-    // command line answering differently depending on the host.
+    // **Whether it was WRITTEN, not what it came to.** Testing the number
+    // would let `--list -j 1` through in silence, and make `--list -j auto` a
+    // refusal on an eight-core machine and an acceptance on a one-core runner
+    // — the same command line answering differently depending on the host.
     return ShowUsage(
       '`-j` is about a run, and `$mode` does not run anything',
     );
@@ -426,10 +420,9 @@ Request parseArguments(
   }
 
   if (operands.isEmpty) {
-    // **Its own branch, because the other one has nothing to name.** Zero
-    // operands fell into "it was given" below and interpolated an empty list,
-    // so `xtask --keep-going` and `xtask -j 2` both printed a sentence that
-    // stopped mid-way and told the reader nothing about what was missing.
+    // **Its own branch, because the other one has nothing to name.**
+    // `xtask --keep-going` and `xtask -j 2` name no task, and "it was given"
+    // with an empty list to interpolate is a sentence that stops mid-way.
     return const ShowUsage(
       'a run needs the name of one task. `--keep-going` and `-j` say how a run '
       'happens, not what it runs — `xtask --list` shows what there is',
@@ -452,7 +445,7 @@ Request parseArguments(
 bool isAJobCount(String written) =>
     written == 'auto' || (int.tryParse(written) ?? 0) >= 1;
 
-/// §7's list, and the message a refused invocation prints.
+/// The modes, and the message a refused invocation prints.
 const usage = [
   'usage:',
   '  xtask <task>                 run a task and everything it needs',

@@ -21,7 +21,7 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
 
   // Before the parser, because afterwards there is nothing left to see: by the
   // time an [XtaskFile] exists, `package:yaml` has already expanded every
-  // alias into a copy and the evidence is gone. §8 specifies this as a scan of
+  // alias into a copy and the evidence is gone. This is a scan of
   // the raw text for exactly that reason, and this is the only function that
   // ever holds the raw text.
   refuseUnreadableSyntax(text, sourceUrl);
@@ -52,7 +52,7 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
   // know may be a perfectly ordinary key of the version the file declares, so
   // refusing it before reading the version would answer the wrong question —
   // and would answer it in the terms of a dialect nobody claimed to be
-  // writing. §4.1 makes an unknown version a hard refusal; it therefore has to
+  // writing. An unknown version is a hard refusal; it therefore has to
   // be the first refusal.
   final version = _version(root);
   _refuseUnknownKeys(root, topLevelKeys, 'top-level key');
@@ -60,9 +60,9 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
   return XtaskFile(
     version: version,
     gates: Map.unmodifiable(_gates(root)),
-    // Unmodifiable, and §4.3 is why for `tasks`: its ORDER is load-bearing —
-    // a gate set runs its tasks in the order they appear — and
-    // a map anybody downstream can reorder is an order nobody can rely on.
+    // Unmodifiable, and the order of `tasks` is why: its ORDER is load-bearing
+    // — a gate set runs its tasks in the order they appear — and a map anybody
+    // downstream can reorder is an order nobody can rely on.
     sets: Map.unmodifiable(_sets(root)),
     tasks: Map.unmodifiable(_tasks(root)),
   );
@@ -78,7 +78,8 @@ int _version(YamlMap root) {
       'reading is one that reads the next dialect wrong',
       // A point at the top of the file, not the file. `SourceSpan.message`
       // reprints everything its span covers, so handing it the root mapping
-      // answers "which line?" with all of them — on §12's example, ninety.
+      // answers "which line?" with all of them — on the README's example,
+      // ninety.
       root.span.start.pointSpan(),
     );
   }
@@ -101,9 +102,9 @@ int _version(YamlMap root) {
 ///
 /// **A list of names and nothing else.** A gate set is not a task: it has no
 /// description, no body and nothing to run of its own — it is the name of who
-/// runs a list, and the list is whichever tasks say they are in it. Giving it
-/// a description here would invite a second one on the composite that gathers
-/// it, and two descriptions of one thing is the defect §1 exists to remove.
+/// runs a list, and the list is whichever tasks say they are in it. Giving it a
+/// description here would invite a second one on the composite that gathers it,
+/// and two descriptions of one thing is the defect this tool exists to remove.
 Map<String, SourceSpan?> _gates(YamlMap root) {
   final node = root.nodes['gates'];
   if (node == null) {
@@ -206,10 +207,10 @@ Map<String, Task> _tasks(YamlMap root) {
   }
 
   final map = _asMap(node, '`tasks:`');
-  // Insertion order is document order, and §4.3 leans on it: a gate set runs
-  // its tasks in the order they appear, so that cheap gates come before slow
-  // ones. A test pins this rather than trusting it — the
-  // YAML specification does not promise a mapping keeps its order, every
+  // Insertion order is document order, and the gate order leans on it: a gate
+  // set runs its tasks in the order they appear, so that cheap gates come
+  // before slow ones. A test pins this rather than trusting it — the YAML
+  // specification does not promise a mapping keeps its order, every
   // implementation does, and the gap between those two sentences is exactly
   // where a gate would silently reorder.
   final tasks = <String, Task>{};
@@ -392,7 +393,7 @@ Body? _body(YamlMap map, String taskName) {
   return RunBody(List.unmodifiable(argv));
 }
 
-/// `desc:` — required, and one line (§4.3).
+/// `desc:` — required, and one line (a task's keys).
 String _description(YamlNode node, String taskName) {
   final desc = _nonEmpty(
     _string(node, '`desc:` of task `$taskName`'),
@@ -425,10 +426,10 @@ List<String> _names(YamlMap map, String key, String taskName) {
 
 /// [value], or a refusal naming [what].
 ///
-/// An empty string parses fine and means nothing, so without this a file
-/// defect travels on as a runtime one: an empty verb name reaches the registry
-/// as "no such verb", an empty executable reaches §5.4 as a missing tool
-/// (code 3) when the file was wrong (code 2).
+/// An empty string parses fine and means nothing, so without this a file defect
+/// travels on as a runtime one: an empty verb name reaches the registry as "no
+/// such verb", an empty executable reaches the resolver as a missing tool (code
+/// 3) when the file was wrong (code 2).
 String _nonEmpty(String value, YamlNode node, String what) {
   if (value.trim().isNotEmpty) {
     return value;
@@ -530,7 +531,7 @@ String _name(YamlNode key, String what) {
     // `--list` prints it beside the name; the name was not, so
     // `"a\nb": {…}` parsed. `--gate-members` writes one name per line and
     // `--list` pads a column with it, and a `::group::` is a workflow command
-    // GitHub reads to the end of ITS line — so §7.1's fold opened on `a` and
+    // GitHub reads to the end of ITS line — so the fold opened on `a` and
     // the runner printed `b` as a stray line of output.
     throw XtaskFormatException(
       'the file has $what that runs to more than one line. A name is printed '

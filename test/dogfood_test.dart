@@ -17,13 +17,14 @@ import 'package:xtask/src/version.dart';
 
 /// This repository's own `xtask.yaml`, checked by this repository's own suite.
 ///
-/// §13 item 9 asks xtask to be its first user, and the reason to spend a test
-/// file on it is that the first user is the one who finds out whether the
-/// design survives a real file. What is asserted here is deliberately about
-/// RELATIONS rather than contents: an assertion that the `check` gate holds
-/// `format`, `analyze` and `test` would be a third copy of the list — after
-/// the file itself and the CI workflow — which is the defect §1 exists to
-/// remove, written into the test that is supposed to guard against it.
+/// the anti-goals item 9 asks xtask to be its first user, and the reason to
+/// spend a test file on it is that the first user is the one who finds out
+/// whether the design survives a real file. What is asserted here is
+/// deliberately about RELATIONS rather than contents: an assertion that the
+/// `check` gate holds `format`, `analyze` and `test` would be a third copy of
+/// the list — after the file itself and the CI workflow — which is the defect
+/// the duplicate list exists to remove, written into the test that is supposed
+/// to guard against it.
 void main() {
   late String root;
   late XtaskFile file;
@@ -50,10 +51,10 @@ void main() {
       expect(file.tasks, isNotEmpty);
     });
 
-    test('and passes everything §8 refuses', () {
+    test('and passes everything `--validate` refuses', () {
       // The same check `--validate` does, run from inside the suite so that a
       // broken task file cannot be green. This project registers no verbs of
-      // its own (§9), so what a `do:` may name is the built-in list.
+      // its own , so what a `do:` may name is the built-in list.
       final report = validateFile(
         file,
         knownVerbs: builtInVerbNames,
@@ -76,8 +77,8 @@ void main() {
     });
 
     test('and running the gates reaches every task but the hand-typed one', () {
-      // The local half of §7.1's residual — a task no gate ever reaches is
-      // invisible, and it looks exactly like a task that is checked.
+      // The local half of what is left of the CI question — a task no gate ever
+      // reaches is invisible, and it looks exactly like a task that is checked.
       //
       // Every gate, not `check` alone. `publishable` is why: `pub publish
       // --dry-run` exits 65 while a checked-in file is modified, so it can
@@ -106,10 +107,10 @@ void main() {
 
   group('the schema beside it is the one this engine emits', () {
     // The committed file is generated, and generated files rot the moment
-    // nothing compares them. There is no `--check-schema` mode for this: a
-    // task cannot write the file either, because `>` is shell and §5.2 says a
-    // task's description has none — so writing stays a person's deliberate
-    // act and checking is the gate's, which is the right way round.
+    // nothing compares them. There is no `--check-schema` mode for this: a task
+    // cannot write the file either, because `>` is shell and the run says a
+    // task's description has none — so writing stays a person's deliberate act
+    // and checking is the gate's, which is the right way round.
     late File schema;
 
     setUpAll(() => schema = File(p.join(root, 'xtask.schema.json')));
@@ -145,12 +146,12 @@ void main() {
   });
 
   group('the README quotes the command rather than describing it', () {
-    // §1, in the repository that exists for §1. `usage` in `cli.dart` and the
-    // block under "## The command" are the same list, and when this test was
-    // written they had already drifted three ways: `--parallel` had lost the
-    // cost it names, `--why` half of its answer, and `--validate` and
-    // `--check-ci` had swapped places. Each half read plausibly on its own,
-    // which is what makes this drift survive a review.
+    // the duplicate list, in the repository that exists for the duplicate list.
+    // `usage` in `cli.dart` and the block under "## The command" are the same
+    // list, and when this test was written they had already drifted three ways:
+    // `--parallel` had lost the cost it names, `--why` half of its answer, and
+    // `--validate` and `--check-ci` had swapped places. Each half read
+    // plausibly on its own, which is what makes this drift survive a review.
     //
     // `modes` is public so the help cannot forget a flag the parser accepts;
     // this is the other half of the same promise, for the copy that is not in
@@ -251,12 +252,13 @@ void main() {
       );
       for (final block in blocks) {
         // **Validated, not merely parsed.** Parsing says the shape is right;
-        // §8's checks are what a reader meets the moment they copy the block
-        // and run the first gate this document tells them to adopt. The
-        // declared-gates rule landed in `--validate` and the flagship example
-        // was left using `gate:` without a `gates:` line, so the document's
-        // own first instruction refused the document's own first file. Only a
-        // check that asks the same question a reader will ask can catch that.
+        // `--validate`'s checks are what a reader meets the moment they copy
+        // the block and run the first gate this document tells them to adopt.
+        // The declared-gates rule landed in `--validate` and the flagship
+        // example was left using `gate:` without a `gates:` line, so the
+        // document's own first instruction refused the document's own first
+        // file. Only a check that asks the same question a reader will ask can
+        // catch that.
         late final XtaskFile file;
         expect(
           () => file = parseXtaskFile(block, sourceUrl: Uri.parse('README.md')),
@@ -368,11 +370,11 @@ void main() {
   });
 
   group('the version in code is the version in the manifest', () {
-    // The number has to be in `pubspec.yaml` because pub needs it there, and
-    // in code because a compiled entry point has no manifest beside it to
-    // read. §1 is about drift, not about a fact being named twice — so this is
-    // the thing that makes the second mention safe, and it is the whole reason
-    // no generator was written for one line.
+    // The number has to be in `pubspec.yaml` because pub needs it there, and in
+    // code because a compiled entry point has no manifest beside it to read.
+    // The duplicate list is about drift, not about a fact being named twice —
+    // so this is the thing that makes the second mention safe, and it is the
+    // whole reason no generator was written for one line.
     test('and neither has moved without the other', () {
       final manifest = File(p.join(root, 'pubspec.yaml')).readAsStringSync();
       final declared = RegExp(
@@ -391,9 +393,9 @@ void main() {
   });
 
   group('the workflow runs gates, not commands', () {
-    // §7.1's residual, and the one that grows back quietly: somebody adds
-    // `- run: dart analyze` to the workflow instead of a task to the file, and
-    // the two lists start drifting the same afternoon.
+    // what is left of the CI question, and the one that grows back quietly:
+    // somebody adds `- run: dart analyze` to the workflow instead of a task to
+    // the file, and the two lists start drifting the same afternoon.
     //
     // Asked of the TOOL rather than reimplemented here. This test used to walk
     // the workflow itself, which made it a second answer to the same question

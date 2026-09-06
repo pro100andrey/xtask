@@ -40,10 +40,11 @@ void main() {
   });
 
   group('the repository boundary, on the one body that deletes', () {
-    // §8's promise is that this class is found without running anything, and
-    // for `do: remove` it was not: `in:` and the sets were checked and the
-    // verb's own arguments were not. A file aiming a recursive delete at
-    // `/etc` was answered "nothing wrong" here and refused by the run.
+    // `--validate`'s promise is that this class is found without running
+    // anything, and for `do: remove` it was not: `in:` and the sets were
+    // checked and the verb's own arguments were not. A file aiming a recursive
+    // delete at `/etc` was answered "nothing wrong" here and refused by the
+    // run.
     ValidationReport check(String args) => validateFile(
       parseXtaskFile(
         'version: 1\ntasks:\n'
@@ -113,8 +114,8 @@ void main() {
     });
 
     test('and leaves another verb alone', () {
-      // The check is this verb's, not every verb's: `args:` for a project's
-      // own verb is whatever that verb wants, and §6 puts no boundary on it.
+      // The check is this verb's, not every verb's: `args:` for a project's own
+      // verb is whatever that verb wants, and `remove` puts no boundary on it.
       final report = validateFile(
         parseXtaskFile(
           'version: 1\ntasks:\n'
@@ -237,8 +238,8 @@ void main() {
   group('a set another task produces is not judged before it runs', () {
     test('and the file that used to be called invalid is clean', () {
       // It ran green and both `--validate` and `--dry-run` called it broken:
-      // one question with three answers, and the gate §8 calls the first to
-      // adopt was the one saying a working file is wrong.
+      // one question with three answers, and the gate `--validate` calls the
+      // first to adopt was the one saying a working file is wrong.
       given(['build/keep/x']);
       final report = check(
         'version: 1\n'
@@ -579,9 +580,9 @@ void main() {
   });
 
   group('everything wrong at once, rather than the first thing', () {
-    // The departure from the parser, and the reason for it: §8 calls this the
-    // first gate a project adopts, and a gate that takes five runs to list
-    // five problems is one people stop running.
+    // The departure from the parser, and the reason for it: `--validate` calls
+    // this the first gate a project adopts, and a gate that takes five runs to
+    // list five problems is one people stop running.
     late final ValidationReport report;
 
     setUpAll(() {

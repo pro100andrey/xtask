@@ -1,4 +1,4 @@
-/// Printing what a run would do, without doing it — `--dry-run` of §7.
+/// Printing what a run would do, without doing it — `--dry-run`.
 library;
 
 import 'bodies.dart';
@@ -36,14 +36,13 @@ Future<int> dryRun({
     try {
       resolved = bodies.resolveTask(step.task);
     } on RunFailure catch (failure) {
-      // **Not yet is not the same as wrong.** A task whose set the run itself
-      // produces cannot be resolved before the task that makes it has run, and
-      // this used to stop the print and answer 2 about a file that runs green.
+      // **Not yet is not the same as wrong.** A task whose set another task
+      // produces cannot be resolved before that task has run, and a dry run
+      // that answered 2 about it would call a working file broken.
       //
-      // Asked of the type rather than of the exit code: guessing from the code
-      // and the task's set names called a boundary violation and an unknown
-      // verb premature too, and answered 0 for both. The original reason is
-      // still printed, so nothing is hidden.
+      // Asked of the type rather than of the exit code: a boundary violation
+      // and an unknown verb share the code and are not premature. The
+      // original reason is still printed, so nothing is hidden.
       if (failure is NotYetFailure) {
         log('${step.task.name}: cannot be resolved yet — ${failure.message}');
         continue;
@@ -102,15 +101,15 @@ Future<int> dryRun({
   }
   final would = removeWouldDelete(body.arguments, root: root);
   if (would.refused case final refusal?) {
-    // In the run's own words, and in the run's own place: this used to render
-    // as "nothing of these is on disk", which told a reader that a `remove`
-    // aimed outside the repository was harmless.
+    // In the run's own words, and in the run's own place: a `remove` aimed
+    // outside the repository is not harmless, and "nothing of these is on
+    // disk" would say it is.
     return (lines: ['error: $refusal'], refused: true);
   }
   final paths = would.paths;
   if (paths.isEmpty) {
     // Said out loud. Silence here reads as "nothing was worked out", and the
-    // answer — there is nothing there, which §6 makes fine — is the one a
+    // answer — there is nothing there, which `remove` makes fine — is the one a
     // person running `clean` twice needs.
     return (
       lines: const [

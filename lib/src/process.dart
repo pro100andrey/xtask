@@ -108,7 +108,7 @@ final class SystemProcessStarter implements ProcessStarter {
       workingDirectory: workingDirectory,
       environment: environment,
       runInShell: runInShell,
-      // Inheriting streams §5.2's output for free: the child writes to this
+      // Inheriting streams live output for free: the child writes to this
       // process's stdout with no copy and no buffer. Two children writing to
       // one terminal produce a transcript belonging to neither, so a parallel
       // run pipes instead and shows nothing until the task ends.

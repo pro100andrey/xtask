@@ -1,31 +1,20 @@
 /// Reading `xtask.yaml` as text, and reading what the parser made of it.
 ///
-/// **Two passes, because the two questions have different exact answers.** §8
-/// refuses an alias, a merge key, and whitespace that looks like a space and
-/// is not one. This module used to answer all three with one character-by-
-/// character scan of the raw text — quotes, comments, indicators, brace depth
-/// — on the reasoning that by the time a document exists `package:yaml` has
-/// expanded every alias into a copy and the evidence is gone.
+/// **Two passes, because the two questions have different exact answers.**
+/// The file refuses an alias, a merge key, and whitespace that looks like a
+/// space and is not one. The parsed document answers the first two exactly:
+/// an alias does not produce a copy, it produces the SAME node reachable from
+/// two places, which [refuseUnreadableDocument] finds by walking the document
+/// and asking about object identity; a merge key is a plain key called `<<`,
+/// because `package:yaml` does not implement YAML 1.1's merge and hands it
+/// back untouched. And a scalar knows whether it was written in quotes, so
+/// "an invisible character where a person meant a space" can be asked of the
+/// values that are text.
 ///
-/// **The evidence is not gone.** An alias does not produce a copy: it produces
-/// the SAME node, reachable from two places, which
-/// [refuseUnreadableDocument] finds by walking the document and asking about
-/// object identity. A merge key is a
-/// plain key called `<<`, because `package:yaml` does not implement YAML 1.1's
-/// merge and hands it back untouched. And a scalar knows whether it was
-/// written in quotes, so "an invisible character where a person meant a space"
-/// can be asked of the values that are text rather than guessed at from a
-/// state machine tracking whether the scan is inside a string.
-///
-/// What is left for the raw text is what only the raw text has: the whitespace
-/// that indents a line, which is not a value and never reaches a node. That is
-/// twelve lines and knows no grammar.
-///
-/// **Written this way after the scan had been narrowed five times.** Each
-/// narrowing fixed the file in front of it and refused the next: a `#` inside
-/// a plain scalar, a `-` inside a word, `<<` in a sentence, a `,` outside a
-/// flow collection, a `[` inside a block scalar. Every one of them is a rule
-/// about YAML's grammar, and re-deriving that grammar beside a parser that
+/// What is left for the raw text is what only the raw text has: the
+/// whitespace that indents a line, which is not a value and never reaches a
+/// node. That is twelve lines and knows no grammar — and it is kept to that,
+/// because a rule about YAML's grammar re-derived beside a parser that
 /// already has it is a list nobody finishes.
 library;
 
@@ -39,7 +28,7 @@ import 'errors.dart';
 /// The motivating case is a non-breaking space pasted from a document, used as
 /// indentation. YAML's own answer to it is a parse error about structure,
 /// several lines away from the invisible character that caused it, which is
-/// the "useless message" §8's last bullet is written against.
+/// the "useless message" the README is written against.
 const _invisibleSpace = {
   0x00A0, // no-break space
   0x1680, // ogham space mark
@@ -124,13 +113,14 @@ String invisibleSpaceAt(int c) =>
     'space — it was almost certainly pasted from a document. YAML would '
     'have complained about the structure several lines from here instead';
 
-/// Refuses what §8 names, asked of [document] rather than of its text.
+/// Refuses what the README names, asked of [document] rather than of its text.
 ///
-/// **An alias, because it defeats R2.** `sets:` already exists to say a thing
-/// once, and the reader of a task that says `*base` has to leave the task and
-/// go find the declaration — which is the property R2 protects. An anchor with
-/// nothing pointing at it is not refused: it is dead text that changes no
-/// task, and the refusal arrives with the alias, which is where the harm is.
+/// **An alias, because a task is read from its own keys.** `sets:` already
+/// exists to say a thing once, and the reader of a task that says `*base` has
+/// to leave the task and go find the declaration — which is the property that
+/// protects. An anchor with nothing pointing at it is not refused: it is dead
+/// text that changes no task, and the refusal arrives with the alias, which is
+/// where the harm is.
 ///
 /// **A merge key, because it is inheritance with precedence rules.**
 /// `package:yaml` implements YAML 1.2, where `<<` is an ordinary key, so it

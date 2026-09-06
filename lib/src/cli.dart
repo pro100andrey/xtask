@@ -34,7 +34,7 @@ import 'version.dart';
 
 /// The directory holding `xtask.yaml`, looked for from [from] upwards.
 ///
-/// **Upwards, and that is a decision.** §4 puts the file at the repository
+/// **Upwards, and that is a decision.** The file lives at the repository
 /// root, and everything in it is relative to that root: `in:`, a set's globs,
 /// what `remove` is allowed to touch. Reading `./xtask.yaml` would be correct
 /// only when somebody happens to be standing at the top — from `packages/lake`
@@ -56,12 +56,12 @@ String? findRoot(String from) {
   }
 }
 
-/// Runs one invocation and answers with the exit code §5.3 gives it.
+/// Runs one invocation and answers with the exit code the table gives it.
 ///
 /// Everything the command touches is a parameter: where it was run, the
 /// environment, the two output sinks, how an executable is found and how a
 /// process is started. Not for purity — it is what lets the surface be
-/// asserted without a toolchain, and what lets the GitHub half of §7.1 be
+/// asserted without a toolchain, and what lets the GitHub markers be
 /// tested from a machine that is not a runner.
 Future<int> runCli(
   List<String> args, {
@@ -100,9 +100,10 @@ Future<int> runCli(
   }
 
   // A project verb shadowing a primitive would change what `do: remove` means
-  // without anything saying so, and §6 is a closed list precisely so that the
-  // answer to "what does this verb do" is one place. Refusing costs a project
-  // a rename; the alternative costs somebody a deleted directory.
+  // without anything saying so, and the built-in verbs are a closed list
+  // precisely so that the answer to "what does this verb do" is one place.
+  // Refusing costs a project a rename; the alternative costs somebody a deleted
+  // directory.
   final shadowed = verbs.keys.where(builtInVerbNames.contains).toList()..sort();
   if (shadowed.isNotEmpty) {
     err(
@@ -148,7 +149,7 @@ Future<int> runCli(
   ///
   /// **Built here and nowhere else, which is the whole reason the module
   /// exists.** The set expanded, the member `$each` stands for, the directory,
-  /// the environment, the program §5.4 finds — that is one answer, and
+  /// the environment, the program the resolver finds — that is one answer, and
   /// `--dry-run` is supposed to print the very answer a run performs. It was
   /// constructed twice from the same six values, once in this arm and once
   /// inside `dryRun`, so a seventh would have reached one of them and the dry
@@ -293,7 +294,7 @@ void _refuseArgumentsWithNowhereToGo(
 /// A gate set that is not declared is a typo, and the answer to a typo must
 /// not be an empty list: `--gate-members ci-analize` printing nothing reads as
 /// "that job checks nothing", which is the failure this whole tool is about.
-/// Whether a DECLARED gate has members is `--validate`'s question (§8), not
+/// Whether a DECLARED gate has members is `--validate`'s question, not
 /// this one's.
 String _gate(XtaskFile file, String gate) {
   final known = file.gates.keys.toSet();

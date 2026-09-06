@@ -24,8 +24,6 @@ export 'src/context.dart' show Verb, VerbContext;
 // to write `return 0;` — the very thing `boundaries_test.dart` refuses inside
 // this package, for the reason that applies just as well outside it: the
 // constant carries why the code is that code, and the digit does not.
-//
-// Found by the guard, on the example this package ships.
 export 'src/exit_codes.dart' show ExitCode;
 
 /// Runs `xtask` with the verbs this project supplies, and answers with the
@@ -98,8 +96,7 @@ _Writer _writing(IOSink sink) => _Writer(sink);
 /// writer stops when the reader goes away; so must the starter, which
 /// otherwise flushes a descriptor nobody reads and hands it to every child it
 /// inherits into. Asked twice, in two places, that becomes two answers to one
-/// question — which is how the ordering and the inheriting came to disagree
-/// about whether there was anything left to order.
+/// question, and two answers to one question is two things that can disagree.
 final class _Writer {
   _Writer(this._sink) {
     // **Claimed up front, because the write is not where it surfaces.** An

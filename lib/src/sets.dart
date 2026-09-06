@@ -33,21 +33,19 @@ final class SetExpander {
 
   /// The members of [set], as the arguments a task receives.
   ///
-  /// The answer is unmodifiable, and both branches answer alike. The list arm
-  /// used to hand back the parsed model's own list while the glob arm built a
-  /// fresh one, so the obvious `expand(...)..addAll(task.args)` worked against
-  /// a glob and permanently poisoned a list — in a gate set, the second
-  /// task sharing an `all:` would receive the first one's arguments
-  /// appended to the file list, and the gate would go green having checked the
-  /// wrong thing. Invisible for globs, which is most of the suite.
+  /// The answer is unmodifiable, and both branches answer alike: a caller
+  /// that appends to what it is handed must not be able to poison the parsed
+  /// model's own list, which in a gate set is the list the next task sharing
+  /// the set receives.
   List<String> expand(String name, NamedSet set) {
     final members = switch (set) {
       // Each member is asked the boundary question the glob arm asks, so the
       // two arms cannot disagree about `['/etc', '../..']`.
       //
-      // Written order, not sorted: §4.2 promises an order that does not depend
-      // on the filesystem, not that an author's list is rearranged. Members
-      // are literal — globs among them are `remove`'s to expand under §6.
+      // Written order, not sorted: a set promises an order that does not depend
+      // on the filesystem, not that an author's list is rearranged. Members are
+      // literal — globs among them are `remove`'s to expand under `remove`'s
+      // own rule.
       ListSet(:final members) => [
         for (final member in members) _refuseUnrooted(name, set, member),
       ],
@@ -67,8 +65,8 @@ final class SetExpander {
   /// **One walk, done here rather than by `Glob.listSync`.** That method
   /// refuses outright when the glob's path style is not the platform's
   /// (`glob.dart:145`), and every pattern here is POSIX by design — so the
-  /// whole feature threw a `StateError` on Windows, past §5.3's exit codes and
-  /// past `--validate`, which §8 says must check globs without running
+  /// whole feature threw a `StateError` on Windows, past the exit codes and
+  /// past `--validate`, which must check globs without running
   /// anything. Walking here also means one pass instead of one per pattern
   /// variant, and it means the walk can be **pruned**, which is what makes an
   /// exclusion protective rather than decorative.
@@ -77,7 +75,7 @@ final class SetExpander {
     final excludes = _globs(name, set, set.exclude);
     // A directory whose contents are all excluded is itself excluded. Without
     // this, `**/test_data/**` — which needs a segment after `test_data` —
-    // leaves the directory itself a member, and §6's `remove` then deletes
+    // leaves the directory itself a member, and `remove` then deletes
     // recursively exactly the files the exclusion was written to protect.
     final prunes = _globs(name, set, [
       for (final pattern in set.exclude)
@@ -91,7 +89,7 @@ final class SetExpander {
     // third of the walk to work out what the parent already knew.
     void walk(Directory directory, String at) {
       for (final entry in _listing(directory, at, name, set)) {
-        // §6 says `remove` never follows a symlink. Listing takes the same
+        // `remove` never follows a symlink. Listing takes the same
         // line, and for a second reason: a link into an ancestor is a loop.
         if (entry is Link) {
           continue;
@@ -168,7 +166,7 @@ final class SetExpander {
   ///
   /// `zeroOrMoreDirectories` refuses a pattern with too many of them, and that
   /// refusal is a `FormatException` — which, unwrapped, would leave `expand`
-  /// past the exit codes, exactly as a malformed pattern used to.
+  /// past the exit codes, as any malformed pattern would.
   Set<String> _readings(String name, NamedSet set, String pattern) {
     final rooted = _refuseUnrooted(name, set, pattern);
     try {
@@ -184,7 +182,7 @@ final class SetExpander {
   /// [written] unchanged, or a refusal if it names anything outside [root].
   ///
   /// `root` is a boundary, not a default: what a set hands on can reach a
-  /// working directory and §6's `remove`, which deletes recursively and treats
+  /// working directory and `remove`, which deletes recursively and treats
   /// a missing path as fine.
   ///
   /// Asked of a written member as well as of a pattern, since a set hands on
@@ -235,15 +233,15 @@ final class SetExpander {
   }
 
   /// An expansion that found nothing is an error, and there is no key to
-  /// soften it (§4.2).
+  /// soften it (sets).
   ///
-  /// A task whose `all:` came back empty runs its body with no arguments,
-  /// and `dart format` with no arguments formats the whole tree. The worse
-  /// case is quieter: inside a gate, the set was empty, the task passed, the
-  /// gate went green and nothing was checked — defect 3 of §1 reproduced by a
-  /// new route. A pattern matches nothing for two reasons, the repository
-  /// genuinely having none and the pattern being broken, and in a gate the
-  /// second is the dangerous one.
+  /// A task whose `all:` came back empty runs its body with no arguments, and
+  /// `dart format` with no arguments formats the whole tree. The worse case is
+  /// quieter: inside a gate, the set was empty, the task passed, the gate went
+  /// green and nothing was checked — the third defect this tool is against,
+  /// reproduced by a new route. A pattern matches nothing for two reasons, the
+  /// repository genuinely having none and the pattern being broken, and in a
+  /// gate the second is the dangerous one.
   void _refuseEmpty(String name, NamedSet set, List<String> members) {
     if (members.isNotEmpty) {
       return;
@@ -266,10 +264,10 @@ final class SetExpander {
       'fail, it succeeds having done nothing, and in a gate that is a green '
       'result nobody checked',
       set.span,
-      // **The one place this is decided.** `produced:` says the members are
-      // made by the run, so before the task that makes them has run this
-      // emptiness is a moment rather than a mistake. Every reader used to
-      // work that out again from the set it happened to be holding.
+      // **The one place this is decided.** `produced-by:` says the members
+      // are made by a task, so before that task has run this emptiness is a
+      // moment rather than a mistake. Every reader asks the refusal rather
+      // than the set.
       onlyYet: set is GlobSet && set.producedBy != null,
     );
   }

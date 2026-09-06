@@ -45,8 +45,8 @@ final class FakeStarter implements ProcessStarter {
 
 void main() {
   group('the invocation is a value before anything is touched', () {
-    // Every refusal §7 implies, asserted without a filesystem, a plan or a
-    // process anywhere near it.
+    // Every refusal the command line implies, asserted without a filesystem, a
+    // plan or a process anywhere near it.
     test('nothing at all is not a request', () {
       expect(parseArguments([]), isA<ShowUsage>());
       expect((parseArguments([]) as ShowUsage).problem, isNotNull);
@@ -62,7 +62,7 @@ void main() {
       expect((parseArguments(['ci-analyze']) as RunTask).task, 'ci-analyze');
     });
 
-    test('each mode of §7 is its own request', () {
+    test('each mode of the command line is its own request', () {
       expect(parseArguments(['--list']), isA<ListTasks>());
       expect(parseArguments(['--validate']), isA<Validate>());
       expect(
@@ -507,17 +507,20 @@ tasks:
         expect(out, ['analyze', 'lake-format']);
       });
 
-      test("in the file's order, which is the run order (§4.3)", () async {
-        writeFile('''
+      test(
+        "in the file's order, which is the run order (a task's keys)",
+        () async {
+          writeFile('''
 version: 1
 gates: [check]
 tasks:
   zebra: {desc: cheap, gate: [check], run: [dart]}
   alpha: {desc: slow, gate: [check], run: [dart]}
 ''');
-        await run(['--gate-members', 'check']);
-        expect(out, ['zebra', 'alpha']);
-      });
+          await run(['--gate-members', 'check']);
+          expect(out, ['zebra', 'alpha']);
+        },
+      );
     });
 
     group('a gate set nobody has heard of is a typo, not an empty set', () {
@@ -640,7 +643,8 @@ tasks:
         expect(
           starter.started.first.executable,
           '/bin/dart',
-          reason: 'the resolved path §5.4 found, not the word in the file',
+          reason:
+              'the resolved path the resolver found, not the word in the file',
         );
       });
 
@@ -680,7 +684,7 @@ tasks:
       });
 
       test('and one shadowing a primitive is refused, not preferred', () async {
-        // §6 is a closed list so that "what does this verb do" has one
+        // `remove` is a closed list so that "what does this verb do" has one
         // answer. A silent shadow of `remove` costs somebody a directory.
         writeFile('version: 1\ntasks:\n  a: {desc: x, do: remove}\n');
         final code = await run(
@@ -689,7 +693,7 @@ tasks:
         );
         expect(code, ExitCode.invalidFile);
         expect(complained(), contains('remove'));
-        // The message used to be pinned by its `(§6)` citation, which was a
+        // The message used to be pinned by its `` citation, which was a
         // pointer into a document nobody outside this clone has. What it has
         // to say is what it is for: rename yours.
         expect(complained(), contains('built-in verb'));
@@ -697,40 +701,43 @@ tasks:
       });
     });
 
-    group('a task is a section on a host that folds one (§7.1)', () {
-      test('GitHub gets its markers, around each task', () async {
-        writeFile('''
+    group(
+      'a task is a section on a host that folds one (one invocation per job)',
+      () {
+        test('GitHub gets its markers, around each task', () async {
+          writeFile('''
 version: 1
 tasks:
   install: {desc: x, run: [dart, pub, get]}
   build: {desc: x, needs: [install], run: [dart, compile]}
 ''');
-        await run(['build'], environment: {'GITHUB_ACTIONS': 'true'});
-        expect(out.where((l) => l.startsWith('::group::')), [
-          '::group::install',
-          '::group::build',
-        ]);
-        expect(out.where((l) => l == '::endgroup::'), hasLength(2));
-      });
+          await run(['build'], environment: {'GITHUB_ACTIONS': 'true'});
+          expect(out.where((l) => l.startsWith('::group::')), [
+            '::group::install',
+            '::group::build',
+          ]);
+          expect(out.where((l) => l == '::endgroup::'), hasLength(2));
+        });
 
-      test('and a failure closes the section BEFORE annotating', () async {
-        // An `::error::` inside a group is folded away with it, so the one
-        // line somebody needs would be the one they have to expand to reach.
-        starter = FakeStarter({'dart': 1});
-        writeFile('version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n');
-        await run(['a'], environment: {'GITHUB_ACTIONS': 'true'});
-        final error = out.indexWhere((l) => l.startsWith('::error::'));
-        expect(error, greaterThan(0));
-        expect(out[error - 1], '::endgroup::');
-      });
+        test('and a failure closes the section BEFORE annotating', () async {
+          // An `::error::` inside a group is folded away with it, so the one
+          // line somebody needs would be the one they have to expand to reach.
+          starter = FakeStarter({'dart': 1});
+          writeFile('version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n');
+          await run(['a'], environment: {'GITHUB_ACTIONS': 'true'});
+          final error = out.indexWhere((l) => l.startsWith('::error::'));
+          expect(error, greaterThan(0));
+          expect(out[error - 1], '::endgroup::');
+        });
 
-      test(
-        'a section is closed even when the file is what stopped it',
-        () async {
-          // A set expanding to nothing is an error §8 catches without running
-          // anything — but reached here it must still close the group it
-          // opened, or everything after it folds into a task that has stopped.
-          writeFile(r'''
+        test(
+          'a section is closed even when the file is what stopped it',
+          () async {
+            // A set expanding to nothing is an error `--validate` catches
+            // without running anything — but reached here it must still close
+            // the group it opened, or everything after it folds into a task
+            // that has stopped.
+            writeFile(r'''
 version: 1
 sets:
   pkgs:
@@ -738,29 +745,35 @@ sets:
 tasks:
   a: {desc: x, each: pkgs, in: $each, run: [dart, test]}
 ''');
-          final code = await run(
-            ['a'],
-            environment: {'GITHUB_ACTIONS': 'true'},
-          );
-          expect(code, ExitCode.invalidFile);
-          expect(printed(), contains('::group::a'));
-          expect(printed(), contains('::endgroup::'));
-          expect(printed(), contains('::error::'));
-          expect(
-            printed(),
-            isNot(contains('::error::task `a` cannot run:\n')),
-            reason: 'a newline would truncate the annotation',
-          );
-        },
-      );
+            final code = await run(
+              ['a'],
+              environment: {'GITHUB_ACTIONS': 'true'},
+            );
+            expect(code, ExitCode.invalidFile);
+            expect(printed(), contains('::group::a'));
+            expect(printed(), contains('::endgroup::'));
+            expect(printed(), contains('::error::'));
+            expect(
+              printed(),
+              isNot(contains('::error::task `a` cannot run:\n')),
+              reason: 'a newline would truncate the annotation',
+            );
+          },
+        );
 
-      test('anywhere else the task is still named, without markers', () async {
-        writeFile('version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n');
-        await run(['a']);
-        expect(printed(), contains('a'));
-        expect(printed(), isNot(contains('::group::')));
-      });
-    });
+        test(
+          'anywhere else the task is still named, without markers',
+          () async {
+            writeFile(
+              'version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n',
+            );
+            await run(['a']);
+            expect(printed(), contains('a'));
+            expect(printed(), isNot(contains('::group::')));
+          },
+        );
+      },
+    );
 
     group('arguments after `--`', () {
       test('reach the named task, and the plan shows them', () async {
@@ -1180,9 +1193,9 @@ tasks:
         expect(err, isEmpty);
       });
 
-      test('it names every mode §7 lists, and no other', () async {
+      test('it names every mode the usage lists, and no other', () async {
         // Two lists of the flags — the parser's and this text — is exactly
-        // the drift §1 is about, and they sit ten lines apart.
+        // the drift The duplicate list is about, and they sit ten lines apart.
         await run(['--help']);
         for (final mode in {...modes, '--gate'}) {
           expect(printed(), contains(mode), reason: '$mode is missing');

@@ -119,7 +119,7 @@ tasks:
   });
 
   group('declaration order', () {
-    // §4.3 makes the run order of a gate set the order its tasks are
+    // a task's keys makes the run order of a gate set the order its tasks are
     // written in, so that cheap gates come before slow ones. That rests on the
     // parser keeping a mapping's key order, which every YAML implementation
     // does and the YAML specification does not promise. These two tests are
@@ -155,7 +155,7 @@ tasks: {}
     });
   });
 
-  group('§8: what makes a task unreadable is refused', () {
+  group('`--validate`: what makes a task unreadable is refused', () {
     // Asked of the document, not derived from its text: an alias arrives as
     // the same node reached twice, and a merge key as a plain key called `<<`.
     test('an alias is refused, at the line it is written on', () {
@@ -192,9 +192,9 @@ tasks: {}
     });
 
     test('without this, an alias silently copies a task body', () {
-      // What the refusal protects. R2 says a task is read completely from its
+      // What the refusal protects. a task is read completely from its
       // own keys; an alias means the reader of `third:` has to leave it and go
-      // find `&b`, which is the property R2 is written to protect.
+      // find `&b`, which is the property the rule is written to protect.
       final expanded =
           loadYaml('base: &b {desc: shared}\nthird: *b\n') as YamlMap;
       expect((expanded['third'] as YamlMap)['desc'], 'shared');
@@ -279,8 +279,9 @@ tasks: {}
 
   group('a refusal points at one line, not at a whole block', () {
     // `SourceSpan.message` reprints everything its span covers. Handing it a
-    // container answers "which line?" with all of them — on §12's ninety-line
-    // example, the most common first-time error printed the whole file back.
+    // container answers "which line?" with all of them — on the README's
+    // ninety-line example, the most common first-time error printed the whole
+    // file back.
     int quotedLines(String message) => message
         .split('\n')
         .where((l) => RegExp(r'^\s*\d+ .').hasMatch(l))
@@ -544,9 +545,9 @@ tasks: {}
 
   group('a value that parses and means nothing', () {
     // Each of these used to travel on as a RUNTIME problem: an empty verb name
-    // reached the registry as "no such verb", an empty executable reached §5.4
-    // as a missing tool — exit 3, "not installed" — when the defect was in the
-    // file and §5.3 has a code for that.
+    // reached the registry as "no such verb", an empty executable reached the
+    // resolver as a missing tool — exit 3, "not installed" — when the defect
+    // was in the file and the exit code table has a code for that.
     test('an empty `desc:` is refused', () {
       expect(
         refusalOf(
@@ -557,7 +558,8 @@ tasks: {}
     });
 
     test('a `desc:` running to more than one line is refused', () {
-      // §4.3 calls it one line, and `--list` prints it beside the task name.
+      // a task's keys calls it one line, and `--list` prints it beside the task
+      // name.
       final message = refusalOf(
         () => parseXtaskFile(
           'version: 1\ntasks:\n  a:\n    desc: |\n      first\n      second\n',
@@ -637,8 +639,9 @@ tasks: {}
   group('what the parser hands back cannot be quietly rearranged', () {
     // The `const []` defaults on Task throw on mutation while parsed
     // collections accepted it — one type behaving two ways depending on what
-    // the file happened to say. And `tasks` is a map whose ORDER §4.3 calls
-    // load-bearing, which does not go with anybody being able to reorder it.
+    // the file happened to say. And `tasks` is a map whose ORDER a task's keys
+    // calls load-bearing, which does not go with anybody being able to reorder
+    // it.
     late final XtaskFile file;
 
     setUpAll(() {
@@ -809,7 +812,7 @@ tasks: {}
     // beside the name; the name itself was not, so a task could be called
     // `a\nb`. `--gate-members` writes one name per line, `--list` pads a
     // column with it, and a `::group::` is a workflow command GitHub reads to
-    // the end of ITS line — so §7.1's fold opened on `a` and the runner
+    // the end of ITS line — so the fold opened on `a` and the runner
     // printed `b` as a stray line of output.
     String refusalOf(String yaml) {
       try {

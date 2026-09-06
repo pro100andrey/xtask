@@ -15,7 +15,7 @@ import 'sets.dart';
 /// `parseXtaskFile` throws at the first violation, which is right for it —
 /// without a document there is nothing to keep checking. After parsing there
 /// is, and a gate that reports one problem per run makes somebody fix, rerun,
-/// fix, rerun. §8 calls this the first gate a project adopts; a gate that
+/// fix, rerun. This is the first gate a project adopts; a gate that
 /// takes five runs to list five problems is one people stop running.
 final class ValidationReport {
   const ValidationReport(this.problems);
@@ -31,13 +31,13 @@ final class ValidationReport {
   String toString() => problems.join('\n\n');
 }
 
-/// Checks everything §8 lists that survives parsing.
+/// Checks everything a refusal can find that survives parsing.
 ///
-/// [knownVerbs] is the built-in primitives (§6) plus whatever the project
-/// registered (§9) — passed in rather than listed here, because a second list
-/// of verb names is the defect §1 exists to remove.
+/// [knownVerbs] is the built-in verbs plus whatever the project
+/// registered — passed in rather than listed here, because a second list
+/// of verb names is the defect this tool exists to remove.
 ///
-/// [sets] expands globs so that a set matching nothing is caught. §8 puts it
+/// [sets] expands globs so that a set matching nothing is caught. It is
 /// here deliberately: it is checkable without running any task, and the
 /// failure it prevents is a green gate that examined no files. Omit it only
 /// where the filesystem is genuinely unavailable, and know that the check is
@@ -70,14 +70,13 @@ ValidationReport validateFile(
 }
 
 /// A task with no body, nothing to depend on and nothing to continue into is a
-/// task that does nothing (§8).
+/// task that does nothing.
 ///
-/// **`then:` counts, and it was left out.** A task whose whole content is a
-/// continuation is reached, runs nothing of its own, and then runs what
-/// follows it — which is something. `publish then verify`, `verify then
-/// notify` runs all three and answers 0, while this reported the middle one as
-/// a name with a description attached: a file the run accepts and the gate the
-/// README tells every project to adopt refuses.
+/// **`then:` counts.** A task whose whole content is a continuation is
+/// reached, runs nothing of its own, and then runs what follows it — which is
+/// something: `publish then verify`, `verify then notify` runs all three, and
+/// the gate the README tells every project to adopt must accept what the run
+/// accepts.
 void _checkDoesSomething(Task task, List<XtaskFormatException> problems) {
   if (task.body != null || task.needs.isNotEmpty || task.then.isNotEmpty) {
     return;
@@ -92,12 +91,12 @@ void _checkDoesSomething(Task task, List<XtaskFormatException> problems) {
   );
 }
 
-/// An `in:` that leaves the repository (§8).
+/// An `in:` that leaves the repository.
 ///
 /// The other half of this fence — a set's members and patterns — is reached
 /// from here through `_checkSetsExpand`, so leaving `in:` to be caught at
 /// resolve time made one boundary answer at two different moments: a file
-/// `--validate` called clean was refused by `--dry-run`. §8's claim is that
+/// `--validate` called clean was refused by `--dry-run`. The claim is that
 /// this class is found without running anything, and `in:` is a written
 /// string, checkable the moment the file is read.
 void _checkWorkingDirectory(
@@ -266,7 +265,7 @@ void _checkGraph(XtaskFile file, List<XtaskFormatException> problems) {
 ///
 /// **A gate set that existed by being mentioned could not be misspelled**, so
 /// `gate: [chekc]` was simply a different gate set — one nothing ran, and one
-/// nothing could name as missing. §1's green result nobody checked, from one
+/// nothing could name as missing. the green result nobody checked, from one
 /// transposed letter.
 void _checkDeclaredGates(XtaskFile file, List<XtaskFormatException> problems) {
   final declared = file.gates.keys.toSet();
@@ -378,8 +377,7 @@ void _checkProducers(XtaskFile file, List<XtaskFormatException> problems) {
 
 /// A gate set and a task may not share a name.
 ///
-/// **Because a person types one name.** A gate set used to BE a task, so
-/// `xtask check` was unambiguous by construction. Now the two are different
+/// **Because a person types one name.** A gate set and a task are different
 /// kinds of thing reached by one word, and a file where `check` is both leaves
 /// the command line with a question nothing in the file answers.
 ///
@@ -443,7 +441,7 @@ void _checkExclusive(XtaskFile file, List<XtaskFormatException> problems) {
 String _quoted(Iterable<String> names) =>
     (names.toList()..sort()).map((name) => '`$name`').join(', ');
 
-/// A set that expands to nothing (§4.2), found without running anything.
+/// A set that expands to nothing (sets), found without running anything.
 void _checkSetsExpand(
   XtaskFile file,
   SetExpander sets,

@@ -21,8 +21,8 @@ import 'package:path/path.dart' as p;
 /// examined fewer files than it was written to and went green.
 ///
 /// Here rather than inside `sets`, because `sets:` and `do: remove` both
-/// compile patterns and a file format with two dialects is the defect §1
-/// exists to remove.
+/// compile patterns and a file format with two dialects is the defect the
+/// duplicate list exists to remove.
 Set<String> zeroOrMoreDirectories(String pattern) => _readings(pattern);
 
 /// How many readings of one pattern the engine will compile.
@@ -211,15 +211,12 @@ bool _startsSegment(String pattern, int index, int open) {
 
 /// What a set of include patterns can still reach, compiled once.
 ///
-/// **Once per walk, not once per directory.** The predicate used to take a
-/// `List<String>` and re-derive everything from it on every directory it was
-/// asked about: split the pattern into segments, slice it, join the slice, and
-/// **compile a fresh `Glob`** — which costs more than matching with one. A
-/// pattern with no `**` compiles at every directory at every depth, so
-/// `packages/*/coverage` paid for a compile per directory in the tree.
-///
-/// Held as a value, each pattern's shape is worked out when the walk starts
-/// and the prefix globs are kept per depth.
+/// **Once per walk, not once per directory.** Re-deriving a pattern's shape
+/// at every directory — split it into segments, slice, join, **compile a
+/// fresh `Glob`** — costs more than matching with one, and a pattern with no
+/// `**` would compile at every directory at every depth. Held as a value,
+/// each pattern's shape is worked out when the walk starts and the prefix
+/// globs are kept per depth.
 final class Reach {
   Reach(List<String> patterns)
     : _shapes = [for (final pattern in patterns) _Shape(pattern)];
@@ -232,11 +229,9 @@ final class Reach {
   /// a walk can stop descending instead of reading a subtree that cannot
   /// contain a match by construction.
   ///
-  /// **Both walkers need this and only one had it.** Include patterns were
-  /// used to match and never to prune, so `include: ['src/**/*.ts']` read all
-  /// of `node_modules` and all of `.git` — once per set, per task, per run —
-  /// to find nothing there. `sets` was taught to prune; `do: remove` was not,
-  /// and walked the whole tree for `build/**` on every invocation.
+  /// **Both walkers need this.** Include patterns prune as well as match:
+  /// without it `include: ['src/**/*.ts']` reads all of `node_modules` and
+  /// all of `.git` — once per set, per task, per run — to find nothing there.
   bool into(String directory) {
     final depth = _depthOfPath(directory);
     for (final shape in _shapes) {
@@ -264,17 +259,17 @@ int _depthOfPath(String path) {
 
 /// Whether a brace group in [pattern] spans a `/`.
 ///
-/// **Only that shape defeats pruning, and every brace used to.** The prune
-/// decision slices the pattern by path segment; a brace whose alternatives sit
-/// inside one segment — `packages/{a,b}/**` — splits and rejoins exactly, so
-/// the arithmetic holds. One that spans a separator — `{a,b/c}/**` — makes the
-/// segment COUNT depend on which alternative is taken, and a pattern with
-/// four apparent segments may still reach five deep.
+/// **Only that shape defeats pruning.** The prune decision slices the pattern
+/// by path segment; a brace whose alternatives sit inside one segment —
+/// `packages/{a,b}/**` — splits and rejoins exactly, so the arithmetic holds.
+/// One that spans a separator — `{a,b/c}/**` — makes the segment COUNT depend
+/// on which alternative is taken, and a pattern with four apparent segments
+/// may still reach five deep.
 ///
-/// Reading every brace as unprunable turned pruning off for an ordinary
-/// monorepo shape: `packages/{pkg000,pkg001}/**/*.dart` read all of
+/// Reading every brace as unprunable would turn pruning off for an ordinary
+/// monorepo shape: `packages/{pkg000,pkg001}/**/*.dart` would read all of
 /// `node_modules`, `.git` and `build` — 250ms against 10ms for the same set
-/// written without the brace, for twice the members.
+/// written without the brace.
 ///
 /// An unbalanced brace is answered yes: it tells us nothing, and a prefix that
 /// will not compile is already handled one level down.

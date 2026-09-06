@@ -32,7 +32,7 @@ void main() {
   }
 
   /// A resolver that finds every bare name at `/bin/<name>`, so these cases
-  /// are about the report rather than about §5.4.
+  /// are about the report rather than about the resolver.
   ExecutableResolver resolverFor() => ExecutableResolver(
     environment: const {'PATH': '/bin'},
     windows: false,
@@ -54,7 +54,8 @@ void main() {
     isRunnable: (path) => !p.basename(path).startsWith('missing'),
   );
 
-  /// The Windows shape §5.4 rule 3 is about: every tool is a batch shim.
+  /// The Windows shape the batch-shim rule is about: every tool is a batch
+  /// shim.
   ExecutableResolver windowsShims() => ExecutableResolver(
     environment: const {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
     windows: true,
@@ -88,17 +89,23 @@ void main() {
   String output() => logged.join('\n');
 
   group('it prints what will happen, not what is written', () {
-    test('the program is the path §5.4 found, not the word in the file', () {
-      // The distinction the whole slice rests on. `dart` is what somebody
-      // typed; `/bin/dart` is what this machine will start, and only one of
-      // the two can be checked against a machine that has not got it.
-      expect(
-        dry('version: 1\ntasks:\n  a: {desc: x, run: [dart, analyze]}\n', 'a'),
-        completion(ExitCode.success),
-      );
-      expect(output(), contains('run  /bin/dart analyze'));
-      expect(output(), isNot(contains('run  dart analyze')));
-    });
+    test(
+      'the program is the path the resolver found, not the word in the file',
+      () {
+        // The distinction the whole slice rests on. `dart` is what somebody
+        // typed; `/bin/dart` is what this machine will start, and only one of
+        // the two can be checked against a machine that has not got it.
+        expect(
+          dry(
+            'version: 1\ntasks:\n  a: {desc: x, run: [dart, analyze]}\n',
+            'a',
+          ),
+          completion(ExitCode.success),
+        );
+        expect(output(), contains('run  /bin/dart analyze'));
+        expect(output(), isNot(contains('run  dart analyze')));
+      },
+    );
 
     test('and a repository-relative program is that path too', () {
       // Not pinned anywhere before, because it did not work: the check was
@@ -381,8 +388,8 @@ void main() {
     });
 
     test('so `remove` does not remove anything', () async {
-      // The primitive of §6 deletes recursively and a missing path is not an
-      // error, which is the worst combination to be wrong about here.
+      // The primitive of `remove` deletes recursively and a missing path is not
+      // an error, which is the worst combination to be wrong about here.
       given(['build/out.js']);
       final code = await dry(
         'version: 1\ntasks:\n  clean: {desc: x, do: remove, args: [build]}\n',
@@ -425,10 +432,10 @@ void main() {
     });
 
     test('an unset `env-required` is still 1, before anything else', () async {
-      // Debatable and decided: a dry run reports it. §7.1 gives the key its
-      // value by turning "something failed inside" into a named message, and
-      // skipping the check here would need a second code path — the very
-      // thing this slice exists not to have.
+      // Debatable and decided: a dry run reports it. one invocation per job
+      // gives the key its value by turning "something failed inside" into a
+      // named message, and skipping the check here would need a second code
+      // path — the very thing this slice exists not to have.
       final code = await dry(
         'version: 1\ntasks:\n'
             '  web: {desc: x, env-required: [CHROMEDRIVER],'
@@ -440,8 +447,9 @@ void main() {
     });
 
     test('and inside a `then:` it is still 4', () async {
-      // §5.3's third outcome. The code is about WHERE the failure is, not
-      // what it was, so a dry run answers it the same way a run would.
+      // the exit code table's third outcome. The code is about WHERE the
+      // failure is, not what it was, so a dry run answers it the same way a run
+      // would.
       final code = await dry(
         'version: 1\ntasks:\n'
             '  publish: {desc: x, then: [announce],'
@@ -504,11 +512,12 @@ void main() {
     });
 
     test('and no task is wrapped in a section', () async {
-      // §7.1's markers exist to fold a task's OUTPUT, and a dry run produces
-      // none: its own report is the plan, and a header above each block would
-      // say the name twice. Asserted against the plain marker rather than the
-      // GitHub one, because plain is what a dry run uses on either host —
-      // checking only for `::group::` would pass with sections turned on.
+      // the GitHub markers exist to fold a task's OUTPUT, and a dry run
+      // produces none: its own report is the plan, and a header above each
+      // block would say the name twice. Asserted against the plain marker
+      // rather than the GitHub one, because plain is what a dry run uses on
+      // either host — checking only for `::group::` would pass with sections
+      // turned on.
       await dry(
         'version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n',
         'a',
@@ -558,8 +567,8 @@ void main() {
     });
 
     test('and a Windows shim says the shell is coming', () async {
-      // The one thing §5.4 rule 3 makes visible, and the reason an argument
-      // can be refused on one platform and not another.
+      // The one thing the batch-shim rule makes visible, and the reason an
+      // argument can be refused on one platform and not another.
       await dry(
         'version: 1\ntasks:\n  a: {desc: x, run: [dart, analyze]}\n',
         'a',

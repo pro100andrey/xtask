@@ -8,7 +8,7 @@ import 'exit_codes.dart';
 /// Finding the program a task's `run:` names.
 ///
 /// This is the one place in the engine that knows starting a program means
-/// different things on three platforms. §5.2 says there is no shell in the
+/// different things on three platforms. There is no shell in the
 /// *description* of a task; it does not say the engine may be ignorant of the
 /// operating system, and an engine that refuses the shell and stops there does
 /// not run on the platform its portability argument was made for.
@@ -49,8 +49,8 @@ final class ExecutableResolver {
   /// name-match hands back a stale non-executable `/usr/local/bin/dart` and
   /// never reaches the real toolchain further along. The caller then gets a
   /// `ProcessException: Permission denied`, which is exit 1 territory — while
-  /// §5.3 gives the missing-tool case code 3 precisely so that "not installed"
-  /// and "the code is broken" reach different people.
+  /// the exit code table gives the missing-tool case 3 precisely so that "not
+  /// installed" and "the code is broken" reach different people.
   ///
   /// Injected so the Windows cases can be tested at all: they are about paths
   /// that do not exist on the machine running them.
@@ -62,8 +62,8 @@ final class ExecutableResolver {
   ///
   /// **The answer cannot change while a run is happening**, and finding it
   /// costs a `stat` per directory on `PATH` — nineteen of them on an ordinary
-  /// machine, about 39µs. It was paid once per `run:` body, which under
-  /// `each:` is once per member, and again for every program a verb starts.
+  /// machine, about 39µs — asked once per `run:` body, per member under
+  /// `each:`, and for every program a verb starts.
   final _resolved = <(String, String), String?>{};
 
   /// The default `PATHEXT`, used when the machine does not set a usable one.
@@ -81,7 +81,7 @@ final class ExecutableResolver {
 
   /// Where [executable] is, or null when nothing on `PATH` answers to it.
   ///
-  /// A null here is a **missing tool**, which §5.3 gives its own exit code
+  /// A null here is a **missing tool**, which has an exit code of its own
   /// because "Dart is not installed on this machine" and "the code is broken"
   /// are repaired by different people, and one exit code sends both to the
   /// same one.
@@ -89,7 +89,7 @@ final class ExecutableResolver {
   /// On Windows the answer is spelled the way `PATHEXT` is, not the way the
   /// disk is: a `dart.bat` found through the entry `.BAT` comes back as
   /// `dart.BAT`. NTFS does not care and the path starts either way, but
-  /// `--dry-run` prints this string (§7), so it is behaviour rather than an
+  /// `--dry-run` prints this string , so it is behaviour rather than an
   /// implementation detail, and a test pins it.
   String? resolve(String executable, {required String from}) =>
       // **Keyed on the directory only where the directory is part of the
@@ -108,8 +108,8 @@ final class ExecutableResolver {
       return null;
     }
 
-    // A name that is already a path is used as given (§5.4, rule 1): the
-    // author said where it is. Relative to [from], which is where the body
+    // A name that is already a path is used as given (a path is used as given):
+    // the author said where it is. Relative to [from], which is where the body
     // runs — `Process.start` resolves a relative executable against the
     // directory it is handed, so this agrees with the run rather than with the
     // directory the command was typed in.
@@ -141,9 +141,9 @@ final class ExecutableResolver {
 
   /// Whether [executable] is a name that already says where it is.
   ///
-  /// §5.4 rule 1, asked once. It was written out at three sites — the cache
-  /// key, the resolution and the message — and a change to it in two of them
-  /// is a cache that disagrees with the answer it caches.
+  /// Whether a name is a path, asked once: the cache key, the resolution and
+  /// the message all ask it, and a cache must not disagree with the answer it
+  /// caches.
   bool _isAPath(String executable) => _paths.split(executable).length > 1;
 
   /// [written]'s segments, read the way the file writes them.
@@ -154,8 +154,7 @@ final class ExecutableResolver {
   /// `./tool/gen` came out as `C:\repo/tool/gen` — which Windows accepts and
   /// `--dry-run` then printed back at a reader as the plan, and which no
   /// comparison against a path this engine built any other way matches.
-  /// `boundary.dart` draws the same line for `in:` and for `remove`; this was
-  /// the one place that joined without it.
+  /// `boundary.dart` draws the same line for `in:` and for `remove`.
   List<String> _written(String written) => p.posix.split(written);
 
   /// Whether the answer for [executable] can depend on where the body runs.
@@ -229,9 +228,9 @@ final class ExecutableResolver {
     // empty suffix first regardless is how `flutter` loses to `flutter.bat`.
     // The Flutter SDK ships both in `bin\` — a POSIX `sh` script beside the
     // batch shim — and nodejs ships `npm` beside `npm.cmd`, so this misses on
-    // exactly the two tools §5.4 names as the reason it exists. What comes
+    // exactly the two tools this exists for. What comes
     // back then is a shell script with no PE header, reported as
-    // ERROR_BAD_EXE_FORMAT rather than as anything §5.4 explains.
+    // ERROR_BAD_EXE_FORMAT rather than as anything the resolver explains.
     final named = _paths.extension(executable).isNotEmpty ? [''] : <String>[];
 
     // An empty `PATHEXT` is not an absent one to `??`, but it is to Windows,
@@ -285,7 +284,7 @@ bool _existsOnWindows(String path) =>
 const _cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"'};
 
 /// Refuses an argument the shell would reinterpret, when the shell is
-/// unavoidable — §5.4, rule 3.
+/// unavoidable — the batch-shim rule.
 ///
 /// A batch shim cannot be started by `CreateProcess`, so `cmd.exe` parses its
 /// arguments whatever the caller intended. Quoting for both layers is

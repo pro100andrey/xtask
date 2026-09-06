@@ -4,9 +4,10 @@ library;
 
 /// A job the project implements in Dart, named by a task's `do:` key.
 ///
-/// Rule R1 pushes logic here deliberately: the file cannot branch, so a task
-/// that needs a condition becomes one of these instead. It is ordinary Dart —
-/// testable, typed, debuggable — and free to do whatever it needs.
+/// The file cannot branch, which pushes logic here deliberately: the file
+/// cannot branch, so a task that needs a condition becomes one of these
+/// instead. It is ordinary Dart — testable, typed, debuggable — and free to do
+/// whatever it needs.
 typedef Verb = Future<int> Function(VerbContext context);
 
 /// Why `do: [verb]` on task [task] is refused.
@@ -43,9 +44,8 @@ final class VerbContext {
   /// `\$all` and `\$each` already standing for what they name, then whatever
   /// the command line passed after `--`.
   ///
-  /// **In place, not appended.** A set used to be added at the end and nowhere
-  /// else; `\$all` is written where its members belong, so the order here is
-  /// the order the file wrote.
+  /// **In place, not appended.** `\$all` is written where its members belong,
+  /// so the order here is the order the file wrote.
   ///
   /// Already expanded, so a verb never touches the filesystem to find out what
   /// it was asked about — and **a verb is reached by `--` exactly as a process
@@ -85,7 +85,7 @@ final class VerbContext {
 
   /// Runs [argv] the way a `run:` body is run, and answers with its code.
   ///
-  /// R1 puts logic in Dart, so a verb has to be able to run a program without
+  /// Logic goes in Dart, so a verb has to be able to run a program without
   /// losing what a `run:` body gets: the `PATH` walk, the `PATHEXT` rules, the
   /// refusal to hand `cmd.exe` a metacharacter through a batch shim, and the
   /// exit code that says a tool is missing rather than broken.

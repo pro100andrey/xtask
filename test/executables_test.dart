@@ -70,9 +70,9 @@ void main() {
     test('walks past a name-match that cannot be started', () {
       // The whole reason the predicate asks about runnability rather than
       // existence. `execvp` and `which` skip a file with no execute bit and
-      // keep going; stopping there hands back a stale wrapper and never
-      // reaches the toolchain further along, then fails as `Permission
-      // denied` — exit 1, where §5.3 wanted 3 or a working program.
+      // keep going; stopping there hands back a stale wrapper and never reaches
+      // the toolchain further along, then fails as `Permission denied` — exit
+      // 1, where the exit code table wanted 3 or a working program.
       final r = ExecutableResolver(
         environment: const {'PATH': '/stale:/real'},
         windows: false,
@@ -131,8 +131,8 @@ void main() {
     });
 
     test('missing is missing — PATH is not consulted as a fallback', () {
-      // §5.4 rule 1: the author said where it is. Falling back to PATH would
-      // run a different program than the one named, silently.
+      // the resolver rule 1: the author said where it is. Falling back to PATH
+      // would run a different program than the one named, silently.
       final r = resolver(
         windows: false,
         environment: {'PATH': '/a'},
@@ -164,7 +164,7 @@ void main() {
       runnable: runnable,
     );
 
-    test('a bare name matches a batch shim — the case that broke §5.2', () {
+    test('a bare name matches a batch shim — the case that broke the run', () {
       final r = windowsWith({r'C:\sdk\dart.bat'});
       // `.BAT`, not `.bat`: the suffix comes from PATHEXT, not from disk.
       expect(r.resolve('dart', from: r'C:\repo'), r'C:\sdk\dart.BAT');
@@ -221,7 +221,7 @@ void main() {
     });
 
     test("the answer carries PATHEXT's spelling, not the disk's", () {
-      // Observable: --dry-run prints resolved command lines (§7), and this is
+      // Observable: --dry-run prints resolved command lines , and this is
       // what appears there. Harmless — NTFS does not care — but a surprise
       // nobody wrote down is a bug report waiting to happen.
       final r = windowsWith(
@@ -243,8 +243,8 @@ void main() {
       // `bin\flutter.bat`; nodejs ships `npm` beside `npm.cmd`. Trying the
       // empty suffix first hands back the sh script, `needsShell` then says
       // false, and CreateProcess answers ERROR_BAD_EXE_FORMAT — on exactly the
-      // two tools §5.4 names as the reason it exists. cmd.exe's rule is that a
-      // name carrying no extension is tried only with PATHEXT entries.
+      // two tools the resolver names as the reason it exists. cmd.exe's rule is
+      // that a name carrying no extension is tried only with PATHEXT entries.
       final r = windowsWith(
         {r'C:\src\flutter\bin\flutter', r'C:\src\flutter\bin\flutter.bat'},
         environment: {'PATH': r'C:\src\flutter\bin'},

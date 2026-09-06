@@ -115,7 +115,7 @@ void main() {
     });
 
     test('and so `clean` can run twice, which is the whole point', () async {
-      // The reading of §6 this verb takes, stated as a test because the
+      // The reading of `remove` this verb takes, stated as a test because the
       // section can be read the other way. `clean` names build output that is
       // usually already gone; a second run must not fail.
       given(['vscode/out/a.js', 'vscode/plugin.vsix']);
@@ -124,10 +124,10 @@ void main() {
     });
 
     test('a glob matching nothing is not an error either', () async {
-      // The other half of the §6 reading. A NAMED SET expanding to nothing is
-      // an error (§4.2) because a task given no files checked nothing; a
-      // pattern among THIS verb's arguments matching nothing is not, because
-      // "delete what is there" is satisfied by there being nothing.
+      // The other half of the `remove` reading. A NAMED SET expanding to
+      // nothing is an error (sets) because a task given no files checked
+      // nothing; a pattern among THIS verb's arguments matching nothing is not,
+      // because "delete what is there" is satisfied by there being nothing.
       given(['keep.txt']);
       expect(await remove(['*.vsix']), ExitCode.success);
       expect(exists('keep.txt'), isTrue);
@@ -161,8 +161,8 @@ void main() {
     });
 
     test('a star in the middle matches directories', () async {
-      // §12's `packages/*/coverage`, which is the reason this has to reach
-      // directories and not only files.
+      // the README's `packages/*/coverage`, which is the reason this has to
+      // reach directories and not only files.
       given([
         'packages/one/coverage/f',
         'packages/two/coverage/f',
@@ -224,8 +224,8 @@ void main() {
 
   group('it refuses to reach outside the repository', () {
     // The check that matters most in the whole file: this is the verb that
-    // deletes recursively, and §6's "a missing path is not an error" means a
-    // path taken on trust would be followed without a word.
+    // deletes recursively, and `remove`'s "a missing path is not an error"
+    // means a path taken on trust would be followed without a word.
     test('an absolute path', () async {
       final outside = tempRepo('outside');
       expect(await remove([outside.path]), ExitCode.invalidFile);
@@ -403,15 +403,15 @@ void main() {
     }, testOn: '!windows');
   });
 
-  group('the closed list §6 promises', () {
+  group('the closed list `remove` promises', () {
     test('is exactly one verb', () {
       expect(builtInVerbNames, {'remove'});
     });
 
     test('and what is bound matches what is named', () {
-      // Two lists of the same thing would be the defect §1 exists to remove,
-      // and this is the pair most likely to drift: a primitive added to the
-      // map and forgotten in the set is one `--validate` would then refuse.
+      // Two lists of the same thing would be the defect this tool exists to
+      // remove, and this is the pair most likely to drift: a primitive added to
+      // the map and forgotten in the set is one `--validate` would then refuse.
       expect(builtInVerbs(root: root.path).keys.toSet(), builtInVerbNames);
     });
   });

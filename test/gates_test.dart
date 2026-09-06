@@ -53,8 +53,8 @@ tasks:
     });
 
     test('and the plan keeps that order, cheap gates before slow ones', () {
-      // Why the order is load-bearing at all (§4.3): somebody chose it by
-      // writing the file, and sorting would overrule them.
+      // Why the order is load-bearing at all (a task's keys): somebody chose it
+      // by writing the file, and sorting would overrule them.
       final file = parseXtaskFile('''
 version: 1
 gates: [check]
@@ -139,12 +139,13 @@ tasks:
     });
 
     test('a member another member continues into waits for it', () {
-      // Seeded in declaration order, `verify` went first because it was
-      // WRITTEN first — ahead of the task whose `then:` reaches it, and with
-      // no continuation on it, so a failed verification answered 1 rather
-      // than §5.3's code and a failed publish was announced anyway. `planRun`
-      // had the order right the whole time, which left `xtask publish` and
-      // `xtask release` describing two different runs of the same tasks.
+      // Seeded in declaration order, `verify` went first because it was WRITTEN
+      // first — ahead of the task whose `then:` reaches it, and with no
+      // continuation on it, so a failed verification answered 1 rather than the
+      // exit code table's code and a failed publish was announced anyway.
+      // `planRun` had the order right the whole time, which left `xtask
+      // publish` and `xtask release` describing two different runs of the same
+      // tasks.
       final file = parseXtaskFile('''
 version: 1
 gates: [release]
@@ -176,7 +177,7 @@ tasks:
     test('a member reached only through `needs:` keeps declaration order', () {
       // The deferral is about `then:` alone. A member something else needs
       // comes out in front of it either way, so moving it would overrule the
-      // order §4.3 says the author chose.
+      // order a task's keys says the author chose.
       final file = parseXtaskFile('''
 version: 1
 gates: [check]

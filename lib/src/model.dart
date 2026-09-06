@@ -8,9 +8,9 @@ library;
 
 import 'package:source_span/source_span.dart';
 
-/// Every key a task may carry (§4.3).
+/// Every key a task may carry (a task's keys).
 ///
-/// **This is the only list of them.** §8 refuses an unknown task key, and the
+/// **This is the only list of them.** An unknown task key is refused, and the
 /// obvious way to implement that refusal — a second set of names in the
 /// validator — is the defect this tool exists to remove, reproduced inside
 /// the tool written to remove it. Anything that needs to know what a
@@ -89,30 +89,30 @@ List<String> substituted(
       word,
 ];
 
-/// Every key the document may carry at the top level (§4.1).
+/// Every key the document may carry at the top level (the top level).
 const topLevelKeys = <String>{'version', 'gates', 'sets', 'tasks'};
 
-/// Every key a glob set may carry (§4.2).
+/// Every key a glob set may carry (sets).
 ///
 /// Here rather than beside the parser for the reason above: `--emit-schema`
 /// projects it into a JSON Schema, and a second spelling of `include` is a
 /// second spelling that an editor would accept and the engine would refuse.
 const globSetKeys = <String>{'include', 'exclude', 'produced-by'};
 
-/// Every key a value set may carry (§4.2).
+/// Every key a value set may carry (sets).
 const valueSetKeys = <String>{'values'};
 
-/// The keys that name a task's body. Exactly one, or none (§4.3).
+/// The keys that name a task's body. Exactly one, or none (a task's keys).
 const bodyKeys = <String>{'run', 'do'};
 
 /// The only `version:` this engine reads. An unknown one is a hard refusal,
-/// never a best-effort read (§4.1).
+/// never a best-effort read (the top level).
 const supportedVersion = 1;
 
 /// Something read out of the file, which therefore has a place in it.
 ///
-/// **The span travels with the value, and that is the whole point.** §8
-/// promises that a refusal says which line to look at, but a refusal is not
+/// **The span travels with the value, and that is the whole point.** A
+/// refusal says which line to look at, but a refusal is not
 /// only raised while parsing: a set that expands to nothing, a cycle, a
 /// dangling name — each is found after the document has become these types,
 /// and each has to name a line. Dropping the span at the parser boundary is
@@ -151,8 +151,8 @@ final class XtaskFile {
   /// Named sets, in declaration order. Unmodifiable — see [tasks].
   final Map<String, NamedSet> sets;
 
-  /// Named tasks, **in declaration order**, which is load-bearing: §4.3 makes
-  /// a gate set run in the order its tasks appear, so cheap gates come before
+  /// Named tasks, **in declaration order**, which is load-bearing: a gate set
+  /// runs in the order its tasks appear, so cheap gates come before
   /// slow ones. Dart's map preserves insertion order and the parser inserts in
   /// document order; the YAML specification does not promise it, so a test
   /// pins it.
@@ -163,7 +163,7 @@ final class XtaskFile {
   final Map<String, Task> tasks;
 }
 
-/// A set is either a plain list or a glob with exclusions (§4.2).
+/// A set is either a plain list or a glob with exclusions (sets).
 sealed class NamedSet with Located {
   const NamedSet({this.span});
 
@@ -218,27 +218,27 @@ final class GlobSet extends NamedSet {
   final String? producedBy;
 }
 
-/// What a task does. Absent means a pure composite (§4.3).
+/// What a task does. Absent means a pure composite (a task's keys).
 sealed class Body {
   const Body();
 }
 
 /// An external process, as argv. The first element is the executable, the rest
-/// are arguments, and none of it is ever passed to a shell (§5.2).
+/// are arguments, and none of it is ever passed to a shell (the run).
 final class RunBody extends Body {
   const RunBody(this.argv);
 
   final List<String> argv;
 }
 
-/// A verb: a built-in primitive, or one the project registered (§9).
+/// A verb: a built-in primitive, or one the project registered.
 final class DoBody extends Body {
   const DoBody(this.verb);
 
   final String verb;
 }
 
-/// One node of the task graph (§4.3).
+/// One node of the task graph (a task's keys).
 final class Task with Located {
   const Task({
     required this.name,
@@ -294,17 +294,19 @@ final class Task with Located {
   final String? workingDirectory;
 
   /// Environment for this task only. A key rather than syntax, because
-  /// `FOO=bar cmd` is shell on POSIX and something else on Windows (§6).
+  /// `FOO=bar cmd` is shell on POSIX and something else on Windows .
   final Map<String, String> env;
 
   /// Variables that must already be set. Checked before the body runs; the
-  /// engine installs nothing (§7.1).
+  /// engine installs nothing (one invocation per job).
   final List<String> envRequired;
 
-  /// Direct requirements only — transitive is the graph's business (§4.3).
+  /// Direct requirements only — transitive is the graph's business (a task's
+  /// keys).
   final List<String> needs;
 
-  /// Continuations: run after this task's body, not a dependency (§4.3).
+  /// Continuations: run after this task's body, not a dependency (a task's
+  /// keys).
   final List<String> then;
 
   /// Whether the members of this task's `each:` must not overlap.

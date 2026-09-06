@@ -2,9 +2,9 @@ import 'package:source_span/source_span.dart';
 
 /// A refusal to read the file, reported at the place that caused it.
 ///
-/// §5.3 gives this exit code `2`, "distinguished because a `2` is never the
-/// code's fault". That distinction is only worth anything if the message says
-/// which line to look at, which is why the span travels with the message
+/// The exit code table gives this `2`, "distinguished because a `2` is never
+/// the code's fault". That distinction is only worth anything if the message
+/// says which line to look at, which is why the span travels with the message
 /// instead of being flattened into a string at the throw site.
 base class XtaskFormatException implements Exception {
   XtaskFormatException(this.message, [this.span]);
@@ -17,7 +17,7 @@ base class XtaskFormatException implements Exception {
   final SourceSpan? span;
 
   /// The message a person reads: `SourceSpan` renders the offending line with
-  /// a caret under it, which is the whole reason §8 can promise that a
+  /// a caret under it, which is the whole reason a refusal can promise that a
   /// non-breaking space pasted from a document does not become "a parse error
   /// with a useless message".
   @override
@@ -27,15 +27,16 @@ base class XtaskFormatException implements Exception {
 /// Why a run stopped, when it stopped.
 ///
 /// Beside [XtaskFormatException] because it is the same kind of thing said a
-/// different way: one carries a line to look at, the other the code §5.3 gives
-/// the outcome. It lived in the executor while only the executor threw it —
-/// resolution throws it too now, and neither of them owns it.
+/// different way: one carries a line to look at, the other the code the exit
+/// code table gives the outcome. It lived in the executor while only the
+/// executor threw it — resolution throws it too now, and neither of them owns
+/// it.
 base class RunFailure implements Exception {
   const RunFailure(this.code, this.message);
 
-  /// One of the codes §5.3 defines — see `exit_codes.dart`, which is not
-  /// imported here because an exception type that depended on the vocabulary
-  /// of exit codes would be a cycle waiting to be written.
+  /// One of the codes the exit code table defines — see `exit_codes.dart`,
+  /// which is not imported here because an exception type that depended on the
+  /// vocabulary of exit codes would be a cycle waiting to be written.
   final int code;
 
   /// What to print. Names the task, and under `each:` the member.
@@ -59,12 +60,11 @@ final class EmptySetException extends XtaskFormatException {
   /// Whether this emptiness could stop being true once the run has begun.
   ///
   /// **Decided where the set is, and carried rather than re-derived.** A set
-  /// whose members the run itself makes is empty before its task has run and
-  /// full afterwards, and all three readers of this need to tell that apart:
+  /// whose members a task makes is empty before that task has run and full
+  /// afterwards, and all three readers of this need to tell that apart:
   /// `--validate` passes over it, a run refuses it, `--dry-run` says "not
-  /// yet". Each of them used to write the test out — `set is GlobSet &&
-  /// set.produced`, in two modules — which is one rule kept in step by hand,
-  /// and a third copy the day a second kind of set can be produced.
+  /// yet". One rule, carried with the refusal, rather than a test each of
+  /// them writes out.
   ///
   /// The verdict travels with the refusal because the refusal is what travels.
   final bool onlyYet;

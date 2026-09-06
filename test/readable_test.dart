@@ -76,7 +76,7 @@ void main() {
     });
 
     test('but an anchor nothing points at is dead text', () {
-      // What is refused is the alias: R2 says a task is read completely from
+      // What is refused is the alias: a task is read completely from
       // its own keys, and it is `*base` that sends the reader somewhere else.
       // An anchor with nothing referencing it changes no task, and the refusal
       // arrives with the alias, which is where the harm is.
@@ -170,8 +170,8 @@ void main() {
         expect(withoutByteOrderMark('version: 1\n'), 'version: 1\n');
         expect(withoutByteOrderMark('a: \uFEFFb\n'), 'a: \uFEFFb\n');
         // Refused, though not by us: `package:yaml` answers a mid-line mark
-        // with `Unexpected character` pointed at the character itself, which
-        // is a diagnostic and not the useless one §8 is written against.
+        // with `Unexpected character` pointed at the character itself, which is
+        // a diagnostic and not the useless one `--validate` is written against.
         expect(refusalOf('a: \uFEFFb\n'), isNotNull);
       },
     );

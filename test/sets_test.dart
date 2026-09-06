@@ -197,8 +197,8 @@ void main() {
   group('a directory that cannot be read is refused, not passed over', () {
     test('because a set that is quietly short is a gate that checked less', () {
       // Unhandled, this left `--validate` on a stack trace and exit 255 — a
-      // number §5.3 does not have — from the one gate the README tells every
-      // project to put in CI.
+      // number the exit code table does not have — from the one gate the README
+      // tells every project to put in CI.
       final root = Directory.systemTemp.createTempSync('xtask_locked_');
       final locked = Directory(p.join(root.path, 'src', 'shut'))
         ..createSync(recursive: true);
@@ -284,10 +284,11 @@ void main() {
     });
 
     test('is NOT sorted — somebody chose that order', () {
-      // §4.2 asks for a deterministic order so an argument list does not
-      // depend on the filesystem. It does not ask for an author's list to be
+      // sets asks for a deterministic order so an argument list does not depend
+      // on the filesystem. It does not ask for an author's list to be
       // rearranged, and `each:` runs in this order. Sorting here would be the
-      // engine overruling what is written, which is what R2 forbids.
+      // engine overruling what is written, which is what the file's own rule
+      // forbids.
       final members = expander().expand(
         's',
         const ListSet(['packages/lake', 'packages/lake_cli', 'examples/a']),
@@ -300,8 +301,8 @@ void main() {
     });
 
     test('members are not required to exist', () {
-      // `clean` names build output that is usually already gone; §6 makes a
-      // missing path explicitly not an error.
+      // `clean` names build output that is usually already gone; `remove` makes
+      // a missing path explicitly not an error.
       expect(
         expander().expand('s', const ListSet(['vscode/out', 'coverage'])),
         ['vscode/out', 'coverage'],
@@ -453,13 +454,16 @@ void main() {
       expect(expandGlob(['a/**/*.lake']), ['a/b/y.lake', 'a/x.lake']);
     });
 
-    test("§12's own pattern reaches a file directly under the directory", () {
-      given(['packages/top.lake', 'packages/deep/inner.lake']);
-      expect(expandGlob(['{templates,packages}/**/*.lake']), [
-        'packages/deep/inner.lake',
-        'packages/top.lake',
-      ]);
-    });
+    test(
+      "the README's own pattern reaches a file directly under the directory",
+      () {
+        given(['packages/top.lake', 'packages/deep/inner.lake']);
+        expect(expandGlob(['{templates,packages}/**/*.lake']), [
+          'packages/deep/inner.lake',
+          'packages/top.lake',
+        ]);
+      },
+    );
 
     test('a leading `**/` reaches the root', () {
       given(['top.lake', 'a/deep.lake']);
@@ -495,7 +499,7 @@ void main() {
     test('a glob set works at all — Glob.listSync would have refused', () {
       // glob.dart:145 begins `if (context.style != p.style) throw StateError`.
       // Every pattern here is POSIX by design, so on Windows the whole feature
-      // threw — past §5.3's exit codes, past --validate, with a stack trace.
+      // threw — past the exit codes, past --validate, with a stack trace.
       // Matching, unlike listing, has no such rule; the walk is ours now.
       given(['a/b.lake']);
       expect(expandGlob(['**/*.lake']), ['a/b.lake']);
@@ -508,7 +512,7 @@ void main() {
 
     test('an excluded directory is not itself a member', () {
       // `**/test_data/**` needs a segment after `test_data`, so the directory
-      // survived the filter — and §6's `remove` deletes recursively, which
+      // survived the filter — and `remove` deletes recursively, which
       // made the exclusion the thing that listed its own files for deletion.
       given(['packages/a.lake', 'packages/test_data/b.lake', 'keep.lake']);
       final members = expandGlob(['**'], ['**/test_data/**']);
@@ -689,7 +693,7 @@ void main() {
     test('`**/` alone does not crash on a pattern the library accepts', () {
       // The engine manufactured the empty pattern itself: the zero-directory
       // reading of `**/` is ``, and Glob('') throws a scanner exception —
-      // past §5.3's exit codes, pointing "line 1, column 2" inside the pattern
+      // past the exit codes, pointing "line 1, column 2" inside the pattern
       // string rather than at xtask.yaml. It matches nothing here, which is a
       // refusal; what matters is that it is OUR refusal.
       given(['a.lake', 'b/c.lake']);
@@ -779,7 +783,7 @@ void main() {
   });
 
   group('symlinks are listed, never followed', () {
-    // §6 says `remove` never follows a symlink, and listing takes the same
+    // `remove` never follows a symlink, and listing takes the same
     // line — plus a second reason: a link into an ancestor turns the walk into
     // a loop. Both were previously asserted by a test that stayed green with
     // `followLinks: false` deleted.

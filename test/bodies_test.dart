@@ -344,7 +344,7 @@ void main() {
     });
   });
 
-  group('§5.4 rule 3, without a run to reach it through', () {
+  group('the batch-shim rule, without a run to reach it through', () {
     // Seven whole executions used to stand between this suite and a check on
     // a seven-element set.
     test('every character cmd.exe acts on is refused', () {

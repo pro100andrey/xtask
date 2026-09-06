@@ -20,21 +20,23 @@ String _aTask(String name) =>
 void main() {
   group('dart run :xtask', () {
     // The claim this proves, and the reason it is a subprocess rather than a
-    // direct call: §7 says the command is `dart run :xtask`, and that resolves
-    // through `bin/xtask.dart` by file name alone. Calling `runXtask`
-    // in-process would pass even if bin/ were empty or misnamed — which is
-    // precisely the failure the sentence in §7 would then be hiding.
+    // direct call: the command line says the command is `dart run :xtask`, and
+    // that resolves through `bin/xtask.dart` by file name alone. Calling
+    // `runXtask` in-process would pass even if bin/ were empty or misnamed —
+    // which is precisely the failure the sentence in the command line would
+    // then be hiding.
     //
     // `Platform.resolvedExecutable` is the Dart running this test, so the test
     // does not itself depend on `dart` being resolvable on PATH. That question
-    // is §5.4's, and it belongs to the `resolve` slice, not to this one.
+    // is the resolver's, and it belongs to the `resolve` slice, not to this
+    // one.
     Future<ProcessResult> xtask(List<String> args) => Process.run(
       Platform.resolvedExecutable,
       ['run', ':xtask', ...args],
       workingDirectory: Directory.current.path,
     );
 
-    test("reaches this package, and its usage is §7's", () async {
+    test("reaches this package, and its usage is the command line's", () async {
       final run = await xtask(['--help']);
       expect(run.exitCode, 0);
       expect(run.stdout, contains('xtask --validate'));
@@ -43,12 +45,13 @@ void main() {
 
     test('and carries the answer out to the process exit code', () async {
       // The entry point has to USE the answer. `bin/xtask.dart` assigns it to
-      // `exitCode`; a consumer that writes `=> runXtask(args)` — as §9's own
-      // snippet used to — discards it and exits 0 for every outcome.
+      // `exitCode`; a consumer that writes `=> runXtask(args)` — as the
+      // project's own Dart's own snippet used to — discards it and exits 0 for
+      // every outcome.
       //
       // An invocation asking for nothing is the cheapest refusal there is, and
-      // §5.3 gives it 2 rather than 1: a 1 would send somebody looking for the
-      // task that failed.
+      // the exit code table gives it 2 rather than 1: a 1 would send somebody
+      // looking for the task that failed.
       final run = await xtask([]);
       expect(run.exitCode, 2);
       expect(run.stderr, contains('usage:'));
@@ -56,11 +59,11 @@ void main() {
   });
 
   group('a task is a section in the shipped binary, not only in a test', () {
-    // The one claim that cannot be made in-process. §7.1 says a CI job is one
-    // invocation and each task folds — which needs the `::group::` line to
+    // The one claim that cannot be made in-process. the README says a CI job is
+    // one invocation and each task folds — which needs the `::group::` line to
     // reach the stream BEFORE the body's own output. The engine writes through
-    // Dart's `stdout`, which is asynchronous when it is a pipe (what it is on
-    // a runner), while the body inherits the descriptor and writes to it
+    // Dart's `stdout`, which is asynchronous when it is a pipe (what it is on a
+    // runner), while the body inherits the descriptor and writes to it
     // directly. Nothing in-process can tell those two apart; a real subprocess
     // with a real pipe can.
     late Directory root;
@@ -182,7 +185,7 @@ void main() {
     });
   });
 
-  group('runXtask is the whole public surface (§9)', () {
+  group('runXtask is the whole public surface ', () {
     // In-process, because what is being asserted is the function a consumer
     // calls rather than the file it is called from.
     //
@@ -217,8 +220,9 @@ void main() {
     test(
       'and a directory with no file is refused, not assumed empty',
       () async {
-        // The outcome §7.1 makes dangerous: a CI job is one invocation, so a 0
-        // from an xtask that found nothing to do is a permanently green job.
+        // The outcome one invocation per job makes dangerous: a CI job is one
+        // invocation, so a 0 from an xtask that found nothing to do is a
+        // permanently green job.
         expect(await runXtask(['a'], workingDirectory: root.path), 2);
       },
     );

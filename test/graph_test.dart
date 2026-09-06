@@ -174,10 +174,10 @@ void main() {
   });
 
   group('what came through a continuation is marked as one', () {
-    // §5.3 gives that case exit code 4 rather than 1, so the plan has to say
-    // which steps are inside a continuation — otherwise the executor cannot
-    // tell "the publish failed" from "the publish happened and the check
-    // after it is red", and those are opposite reports.
+    // the exit code table gives that case exit code 4 rather than 1, so the
+    // plan has to say which steps are inside a continuation — otherwise the
+    // executor cannot tell "the publish failed" from "the publish happened and
+    // the check after it is red", and those are opposite reports.
     test('the body is not a continuation, what follows it is', () {
       final plan = planOf('a', {'a': ' -> b', 'b': ''});
       expect(plan.steps.map((s) => s.isContinuation), [false, true]);
@@ -195,7 +195,7 @@ void main() {
     });
   });
 
-  group('the exit codes §5.3 defines', () {
+  group('the exit codes the exit code table defines', () {
     test('are five, and distinct', () {
       final codes = {
         ExitCode.success,
@@ -254,7 +254,7 @@ void main() {
       // `seen` is the PATH, not the visited set. Kept across branches, a task
       // a dead branch had walked through was never revisited, so `--why`
       // answered "nothing reaches it" about a task a run does reach — the one
-      // answer §8 says this question exists to prevent.
+      // answer `--validate` says this question exists to prevent.
       final file = parseXtaskFile(
         'version: 1\ntasks:\n'
         '  dead: {desc: a, run: [d]}\n'

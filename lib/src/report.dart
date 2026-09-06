@@ -13,12 +13,10 @@ import 'model.dart';
 
 /// Why a task in the plan did not run.
 ///
-/// **A value, not a string.** These four reasons used to be written into one
-/// map as free text and printed through one template — `skipped $name (needs
-/// $blocker)` — which is a true sentence for the first of them and a false one
-/// for the rest. A task stopped because something *else* failed does not need
-/// anything, and what came out was `skipped third (needs a failure
-/// elsewhere)`. A reason that carries its own sentence cannot be put into the
+/// **A value, not a string.** One template — `skipped $name (needs $blocker)`
+/// — is a true sentence for one of these reasons and a false one for the
+/// rest: a task stopped because something *else* failed does not need
+/// anything. A reason that carries its own sentence cannot be put into the
 /// wrong one.
 sealed class Skipped {
   const Skipped();
@@ -92,12 +90,11 @@ final class NeverStartable extends Skipped {
 
 /// Everything that failed and everything that therefore did not run.
 ///
-/// **A skip is always reported; a lone failure is not.** They are not the same
-/// case, and counting them together got it wrong: a failure has already
-/// printed itself where it happened, so a heading over one of them summarises
-/// nothing — but a skipped task prints nothing of its own, and this is the
-/// only place it is ever mentioned. Suppressing it left a run that answered 0
-/// having silently not done something, which is the failure this tool is
+/// **A skip is always reported; a lone failure is not.** A failure has
+/// already printed itself where it happened, so a heading over one of them
+/// summarises nothing — but a skipped task prints nothing of its own, and
+/// this is the only place it is ever mentioned. Left out, a run that answered
+/// 0 has silently not done something, which is the failure this tool is
 /// about.
 List<String> summary(Map<String, int> failed, Map<String, Skipped> skipped) {
   if (skipped.isEmpty && failed.length < 2) {
@@ -127,9 +124,8 @@ List<String> starting(int tasks, int concurrency) {
   // right about every other case.
   //
   // **One task is not one thing to wait for.** A fanned-out task is as many
-  // as it has members, and saying "running 1 task" beside a four-way budget
-  // reads as an announcement about nothing — which is how `xtask fmt -j 4`
-  // came to print that line and then go silent with no reason given.
+  // as it has members, and "running 1 task" beside a four-way budget reads as
+  // an announcement about nothing, followed by a silence with no reason given.
   final line = tasks == 1
       ? 'running up to $concurrency at once — output arrives as each ends'
       : 'running $tasks tasks, up to $concurrency at once — '
@@ -140,7 +136,7 @@ List<String> starting(int tasks, int concurrency) {
 /// What each task took, and what the run took.
 ///
 /// Printed after the last task and outside every section, which is the whole
-/// design of it: §7.1 has a CI job run one invocation, so the job's own
+/// design of it: a CI job runs one invocation, so the job's own
 /// duration is the duration of everything and "which task took four minutes"
 /// has no answer anywhere else. The obvious place — beside the task — is the
 /// wrong one, because a line inside a `::group::` is folded away with it, and
@@ -186,16 +182,16 @@ List<String> timing(
 
   /// What a fanned-out task's members added up to, beside how long it took.
   ///
-  /// **The number `-j` is for, and it was nowhere.** One row said how long you
-  /// waited; over forty packages at four at a time, how much work there WAS is
-  /// the other half, and without it a run that halved its wall clock looked
-  /// exactly like one that had less to do.
+  /// **The number `-j` is for.** One row says how long you waited; over forty
+  /// packages at four at a time, how much work there WAS is the other half,
+  /// and without it a run that halved its wall clock looks exactly like one
+  /// that had less to do.
   String over(String name) {
     final done = work[name];
     if (done == null || done.members < 2) {
       // One member is the row already, said twice — and `over 1 members` is
       // not a sentence. A task whose first member failed without
-      // `--keep-going` has exactly one attempted, which is how this got out.
+      // `--keep-going` has exactly one attempted.
       return '';
     }
     return '  ${asTime(done.spent)} over ${done.members} members';
@@ -301,7 +297,7 @@ List<String> why(String task, Map<String, List<PlanEdge>> routes) {
 /// `--check-ci`: what each job runs, and which gate sets nothing runs.
 ///
 /// The unrun list is reported and **not judged**: a gate set is named after
-/// who runs it, and §7.1 says that is the jobs plus the human entry points.
+/// who runs it, and that is the jobs plus the human entry points.
 /// Nothing in the file tells those apart, and a key that claimed to would be a
 /// second place saying what the workflow already says.
 List<String> workflow(CiReport report) {
@@ -313,8 +309,8 @@ List<String> workflow(CiReport report) {
     for (final invocation in report.invocations)
       _ran(invocation.step, invocation.gate),
     // Named rather than passed over. Such a step is not a problem and is not
-    // a gate either, and a listing that showed neither left a reader unable
-    // to tell it had been read at all.
+    // a gate either, and a listing that showed neither would leave a reader
+    // unable to tell it had been read at all.
     for (final question in report.questions)
       _asked(question.step, question.mode),
     // **Counted, not silent.** An exemption nobody sees is one nobody
@@ -440,7 +436,7 @@ String nothingToRun(String task) => '$task: nothing of its own to run';
 /// [header] is the task's name over the block; a failure has already said
 /// which task this is and asks for the block without one.
 ///
-/// §13 keeps output formats out of this milestone, so this is the one
+/// Output formats are out of scope for now, so this is the one
 /// human-readable form. What it has to get right is that a person can check it
 /// against what they meant.
 List<String> describe(Resolved body, {bool header = true}) {
@@ -487,7 +483,7 @@ String commandLine(String head, List<String> arguments) =>
 /// A plan that cannot tell one argument from two is not one anybody can check
 /// against what they meant: `dart test a b` and `dart test 'a b'` are
 /// different commands, and an argument that is the empty string disappears
-/// entirely. This is for **reading** — xtask starts no shell (§5.4), so there
+/// entirely. This is for **reading** — xtask starts no shell, so there
 /// is no shell for it to be correct for, and it does not claim to be.
 String _quoted(String word) => word.isEmpty || _needsQuotes.hasMatch(word)
     ? "'${word.replaceAll("'", r"\'")}'"

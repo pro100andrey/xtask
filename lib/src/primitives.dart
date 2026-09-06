@@ -14,16 +14,16 @@ import 'globs.dart';
 
 /// Every verb the engine ships.
 ///
-/// **A closed list, and adding to it is a decision.** A primitive is added
-/// only when a real task needs it, and only if it passes R3: total,
-/// argument-driven, and never branching on the result of anything.
+/// **A closed list, and adding to it is a decision.** A primitive is added only
+/// when a real task needs it, and only if it passes the rule for a primitive:
+/// total, argument-driven, and never branching on the result of anything.
 /// `remove: [paths]` qualifies; `test -f X && Y` does not. That rule is what
 /// stops this from becoming a portable shell — the failure the npm ecosystem
 /// took, one package per utility (`rimraf`, `mkdirp`, `cross-env`, `shx`), all
 /// of them existing only because `package.json` scripts are shell.
 ///
 /// Passed to the validator as the built-in half of what a `do:` may name, so
-/// that no second list of these names exists anywhere (§8).
+/// that no second list of these names exists anywhere.
 const builtInVerbNames = <String>{removeVerbName};
 
 /// The built-in verbs, bound to the repository [root] they may act inside.
@@ -31,16 +31,17 @@ Map<String, Verb> builtInVerbs({required String root}) => {
   removeVerbName: (context) => removeVerb(context, root: root),
 };
 
-/// `remove` — deletes each path it is given (§6).
+/// `remove` — deletes each path it is given .
 ///
 /// A path that does not exist is **not** an error. Directories go recursively.
 /// Symlinks are removed, never followed. Globs are expanded here.
 ///
-/// §6 says both that a missing path is fine and that an expansion matching
-/// nothing is an error, and they are two different expansions: a named **set**
-/// expanding to nothing is an error (§4.2), because a task given no files
-/// checked nothing; a **glob among this verb's arguments** matching nothing is
-/// not, because "delete what is there" is satisfied by there being nothing.
+/// `remove` says both that a missing path is fine and that an expansion
+/// matching nothing is an error, and they are two different expansions: a named
+/// **set** expanding to nothing is an error (sets), because a task given no
+/// files checked nothing; a **glob among this verb's arguments** matching
+/// nothing is not, because "delete what is there" is satisfied by there being
+/// nothing.
 Future<int> removeVerb(VerbContext context, {required String root}) async {
   for (final argument in context.args) {
     final refusal = _outsideRoot(argument);
@@ -81,8 +82,8 @@ Future<int> removeVerb(VerbContext context, {required String root}) async {
 ///
 /// The check that matters most in the file, because this is the verb that
 /// deletes: an absolute path or one climbing through `..` would take a
-/// recursive delete outside the repository, and §6's "a missing path is not an
-/// error" means it would do so without a word.
+/// recursive delete outside the repository, and `remove`'s "a missing path is
+/// not an error" means it would do so without a word.
 String? _outsideRoot(String argument) {
   if (!leavesRoot(argument)) {
     return null;
@@ -105,15 +106,15 @@ List<String> pathsMatching(String argument, {required String root}) =>
 
 /// What [arguments] name on disk, in **one** walk.
 ///
-/// **One walk, because the tree is the same tree.** Each argument used to get
-/// a pruned walk of its own, so a `clean` of four patterns read the repository
-/// four times — and a `**/…` pattern cannot be pruned at all, so each one was
-/// a full read. Perfectly linear in the argument count, and a clean tree paid
-/// full price to match nothing: 1049ms for four patterns against 370ms for the
-/// same four in one pass.
+/// **One walk, because the tree is the same tree.** A pruned walk per
+/// argument reads the repository once per argument — and a `**/…` pattern
+/// cannot be pruned at all, so each of those is a full read: 1049ms for four
+/// patterns against 370ms for the same four in one pass, on a tree that
+/// matched nothing.
 ///
 /// Literals cost nothing and are answered without walking, whether or not they
-/// exist — the caller's business, and §6 says a missing one is not an error.
+/// exist — the caller's business, and `remove` says a missing one is not an
+/// error.
 ///
 /// Throws [FormatException] for a pattern that will not compile, which the
 /// caller turns into a sentence about the file.
@@ -176,10 +177,10 @@ List<String> pathsMatchingAll(
     } on FileSystemException {
       // **Passed over, and this is the opposite call from `sets`.** A set that
       // is quietly short is a gate that checked less than it says; a delete
-      // that is quietly short leaves a file behind, which §6 already permits —
-      // a missing path is not an error and `clean` may run twice. Raising here
-      // instead left `--dry-run` on a stack trace and exit 255, and a
-      // directory removed by another member while this one is walking is
+      // that is quietly short leaves a file behind, which `remove` already
+      // permits — a missing path is not an error and `clean` may run twice.
+      // Raising here instead left `--dry-run` on a stack trace and exit 255,
+      // and a directory removed by another member while this one is walking is
       // ordinary rather than exceptional.
       return;
     }
@@ -193,12 +194,10 @@ List<String> pathsMatchingAll(
         // what is inside it only to delete the parent is work for nothing.
         continue;
       }
-      // **Pruned, as `sets:` prunes.** This walked every directory under the
-      // root looking for `build/**`, so `do: remove` read all of `.git` and
-      // all of `node_modules` on every invocation to find nothing there by
-      // construction — 0.19s against 0.01s on eighteen thousand files, and a
-      // repository is bigger than that. `sets` was taught this and this was
-      // not, which is one rule living in two walkers.
+      // **Pruned, as `sets:` prunes.** Walking every directory under the
+      // root for `build/**` reads all of `.git` and all of `node_modules` on
+      // every invocation to find nothing there by construction — 0.19s
+      // against 0.01s on eighteen thousand files. One rule, in both walkers.
       if (entry is Directory && reach.into(relative)) {
         walk(entry, relative);
       }
@@ -211,9 +210,8 @@ List<String> pathsMatchingAll(
   // Sorted, so that what a failure reports and what `--dry-run` printed are
   // the same on every machine — a walk answers in the filesystem's order, and
   // this is the one verb where the reader is checking a list against what they
-  // meant. Everything sorts, literals included: the comment here used to claim
-  // they kept the order they were written in, which is what `sets.dart` does
-  // for a list set and is not what this line does.
+  // meant. Everything sorts, literals included: a list SET keeps its written
+  // order in `sets.dart`, and this list is not one.
   return found.toList()..sort();
 }
 

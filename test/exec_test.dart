@@ -163,7 +163,7 @@ void main() {
   }
 
   /// A resolver that finds every bare name at `/bin/<name>`, so the cases
-  /// below are about execution rather than about §5.4.
+  /// below are about execution rather than about the resolver.
   ExecutableResolver resolverFor({Set<String> shims = const {}}) =>
       ExecutableResolver(
         environment: const {'PATH': '/bin'},
@@ -290,8 +290,8 @@ void main() {
     test(
       'an unresolvable executable is a MISSING TOOL, not a failure',
       () async {
-        // §5.3 gives it its own code because "Dart is not installed" and "the
-        // code is broken" are repaired by different people.
+        // the exit code table gives it its own code because "Dart is not
+        // installed" and "the code is broken" are repaired by different people.
         final code = await runFile(
           'version: 1\ntasks:\n  a: {desc: x, run: [missing-tool]}\n',
           'a',
@@ -358,7 +358,7 @@ void main() {
     );
 
     test('a failure stops at that member, and the member is NAMED', () async {
-      // §5.2 asks for the member by name. "The tests failed" over six
+      // the run asks for the member by name. "The tests failed" over six
       // packages is a report that makes somebody run all six again by hand.
       starter = FakeStarter({'dart': 1});
       final code = await runFile(
@@ -376,10 +376,11 @@ void main() {
   });
 
   group('a set that expands to nothing stops the task, not the process', () {
-    // §4.2 makes it an error and §8 catches it without running anything — but
-    // somebody who did not validate first reaches it here, and it used to
-    // escape `run` altogether: past the exit code and past the section
-    // markers, leaving a group open around a task that had already stopped.
+    // sets makes it an error and `--validate` catches it without running
+    // anything — but somebody who did not validate first reaches it here, and
+    // it used to escape `run` altogether: past the exit code and past the
+    // section markers, leaving a group open around a task that had already
+    // stopped.
     test('and answers 2, because the file is what is wrong', () async {
       final code = await runFile(
         'version: 1\n'
@@ -407,7 +408,7 @@ void main() {
   });
 
   group('what each task took, after everything, outside every section', () {
-    // §7.1 has a CI job run one invocation, so the job's own duration is the
+    // a CI job runs one invocation, so the job's own duration is the
     // duration of the whole gate and "which task took four minutes" has no
     // answer anywhere else.
     test('one line per task that ran, in the order it ran', () async {
@@ -588,9 +589,10 @@ void main() {
   });
 
   group('--keep-going reports every failure, not the first', () {
-    // §8's own argument, applied where it also holds: "a gate that reports one
-    // problem per run makes somebody fix, rerun, fix, rerun" is word for word
-    // `xtask check` — formatting red, fix, analyser red, fix, tests red.
+    // `--validate`'s own argument, applied where it also holds: "a gate that
+    // reports one problem per run makes somebody fix, rerun, fix, rerun" is
+    // word for word `xtask check` — formatting red, fix, analyser red, fix,
+    // tests red.
     const three =
         'version: 1\ntasks:\n'
         '  fmt: {desc: a, run: [dart, format]}\n'
@@ -751,7 +753,7 @@ void main() {
     );
 
     test('the exit code is the FIRST failure, however many follow', () async {
-      // A code is §5.3's shortest possible bug report about one failure, and a
+      // A code is the shortest possible bug report about one failure, and a
       // run with two cannot honestly claim to be about both. Here the first is
       // a missing tool (3) and the second a task that ran and failed (1).
       starter = FakeStarter({'pytest': 1});
@@ -873,14 +875,14 @@ void main() {
         '  all: {desc: c, needs: [boom, other]}\n';
 
     test('at one task in flight, nothing is held back', () async {
-      // §5.2's promise, and the only way this merge could have done harm: the
-      // parallel walk collects a task's lines and prints them when it ends,
-      // and doing that at one task a time would have silently stopped a long
-      // run being watchable.
+      // the promise of live output, and the only way this merge could have done
+      // harm: the parallel walk collects a task's lines and prints them when it
+      // ends, and doing that at one task a time would have silently stopped a
+      // long run being watchable.
       //
       // What is watched is the ENGINE's own lines — the section header and the
       // command. A body's own output never passes through here unbuffered:
-      // §5.2 gets that by inheriting the terminal, which is why the fake
+      // the run gets that by inheriting the terminal, which is why the fake
       // starter writes to the `output` sink only when it is given one.
       starter = FakeStarter()..holds['ruff'] = Completer<void>();
       final running = runFile(three, 'all');
@@ -897,7 +899,7 @@ void main() {
     test('but a plan of one task is not made to wait for itself', () async {
       // Buffering exists because two tasks writing to one terminal produce a
       // transcript belonging to neither. One task cannot do that, so asking
-      // for `-j` above 1 on a single task used to cost §5.2's live output and
+      // for `-j` above 1 on a single task used to cost live output and
       // buy nothing — and announce a width it had no use for.
       starter = FakeStarter()..holds['ruff'] = Completer<void>();
       final running = runFile(three, 'boom', concurrency: 2);
@@ -961,8 +963,8 @@ void main() {
 
   group('`-j` runs what does not depend on anything else', () {
     // The one place a documented promise is deliberately broken, and only when
-    // asked: §5.2 wants a task's output as it arrives, and two tasks arriving
-    // at once make a transcript belonging to neither.
+    // asked: the run wants a task's output as it arrives, and two tasks
+    // arriving at once make a transcript belonging to neither.
     const three =
         'version: 1\ntasks:\n'
         '  fmt: {desc: a, run: [dart]}\n'
@@ -1024,8 +1026,8 @@ void main() {
     });
 
     test("each task's output is printed whole, not interleaved", () async {
-      // The price §5.2 is charged. Both bodies speak, pause, and speak again
-      // with the other in between — and each still reads as one block.
+      // The price live output is charged. Both bodies speak, pause, and speak
+      // again with the other in between — and each still reads as one block.
       starter = FakeStarter()
         ..holds['ruff'] = Completer<void>()
         ..holds['pytest'] = Completer<void>();
@@ -1354,13 +1356,13 @@ void main() {
     });
 
     test('what the verb answers is what the task answers', () async {
-      // The title always said this; the assertion used to say the opposite,
-      // and the opposite is what shipped. A verb is the project's own Dart
-      // written against §5.3 — R1 already trusts it with the logic, and
-      // trusting the number it returns is the same trust. Flattening it threw
-      // away what the built-in `remove` deliberately says: `invalidFile` for a
-      // path outside the repository is "the FILE is wrong", and arrives as
-      // "a task ran and failed" only if somebody discards it.
+      // The title always said this; the assertion used to say the opposite, and
+      // the opposite is what shipped. A verb is the project's own Dart written
+      // against the exit code table — the file already trusts it with the
+      // logic, and trusting the number it returns is the same trust. Flattening
+      // it threw away what the built-in `remove` deliberately says:
+      // `invalidFile` for a path outside the repository is "the FILE is wrong",
+      // and arrives as "a task ran and failed" only if somebody discards it.
       final code = await runFile(
         'version: 1\ntasks:\n  a: {desc: x, do: nope}\n',
         'a',
@@ -1370,7 +1372,7 @@ void main() {
     });
 
     test('and a built-in primitive is a verb like any other', () async {
-      // `remove` answers `invalidFile` for a path outside the repository (§6),
+      // `remove` answers `invalidFile` for a path outside the repository ,
       // and that answer used to reach the process as 1 while the message on
       // the same run said 2.
       final code = await runFile(
@@ -1385,8 +1387,9 @@ void main() {
     test(
       'while an external program answers with data, not a verdict',
       () async {
-        // A program has never heard of §5.3: its 2 means whatever its author
-        // meant. The number goes in the message and the run answers 1.
+        // A program has never heard of the exit code table: its 2 means
+        // whatever its author meant. The number goes in the message and the run
+        // answers 1.
         starter = FakeStarter({'flake8': ExitCode.invalidFile});
         final code = await runFile(
           'version: 1\ntasks:\n  a: {desc: x, run: [flake8]}\n',
@@ -1398,7 +1401,7 @@ void main() {
     );
 
     test('an unregistered verb is a file defect, not a task failure', () async {
-      // The engine ships no project verbs (§9), so naming one it does not have
+      // The engine ships no project verbs , so naming one it does not have
       // is the file being wrong — code 2, not 1.
       final code = await runFile(
         'version: 1\ntasks:\n  a: {desc: x, do: ghost}\n',
@@ -1452,7 +1455,7 @@ void main() {
     });
   });
 
-  group('§5.4 rule 3: arguments to a batch shim', () {
+  group('the batch-shim rule: arguments to a batch shim', () {
     ExecutableResolver windowsShims() => ExecutableResolver(
       environment: const {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
       windows: true,
@@ -1620,7 +1623,7 @@ void main() {
     });
 
     test('and one member at a time is still one member at a time', () async {
-      // §5.2 unchanged where it was never in question.
+      // live output unchanged where it was never in question.
       given(['pkg/a/x', 'pkg/b/x']);
       starter = FakeStarter()..holds['ruff'] = Completer<void>();
       final running = runFile(
@@ -1666,7 +1669,7 @@ void main() {
 
   group('a one-step plan keeps its live output', () {
     test('because there is no second task to interleave with', () async {
-      // Buffering the task as well as its members took §5.2's live output and
+      // Buffering the task as well as its members took live output and
       // bought nothing: the announcement promised output as each member ends
       // while none of it arrived until the whole task did.
       given(['pkg/a/x']);
@@ -1680,7 +1683,7 @@ void main() {
         concurrency: 4,
       );
       // Nothing collects the child's output: it writes straight through, as
-      // §5.2 promises when there is only one thing writing.
+      // the run promises when there is only one thing writing.
       expect(starter.streamed, ['ruff']);
     });
   });
@@ -2017,8 +2020,8 @@ void main() {
 
     test('and it can run a program the way `run:` does', () async {
       // "Make it a verb" was advice that could not be taken: a verb reaching
-      // for `Process.start` lost §5.4's PATH walk and the code that says a
-      // tool is missing rather than broken.
+      // for `Process.start` lost the resolver's PATH walk and the code that
+      // says a tool is missing rather than broken.
       await runFile(
         'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
         'a',
@@ -2033,8 +2036,8 @@ void main() {
 
     test('and it is refused a metacharacter through a batch shim', () async {
       // `runInShell` was computed and this never asked — so a verb could hand
-      // `cmd.exe` the one injection §5.4 rule 3 exists to stop, while the same
-      // argv written as a `run:` body was refused.
+      // `cmd.exe` the one injection the batch-shim rule exists to stop, while
+      // the same argv written as a `run:` body was refused.
       final code = await runFile(
         'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
         'a',

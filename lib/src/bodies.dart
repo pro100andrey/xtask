@@ -2,11 +2,9 @@
 ///
 /// **The engine's largest job, and it is not execution.** What a task comes to
 /// — the set expanded, the member `$each` stands for, the directory it lands
-/// in, the environment it sees, the program §5.4 finds on this machine — used
-/// to be a private method inside `Executor`. That forced `--dry-run` to be a
-/// *mode of the executor*: a callback, a process starter whose only job was to
-/// throw, and four branches asking whether this run was pretending. None of
-/// that was about dry runs. It was about the answer living in the wrong place.
+/// in, the environment it sees, the program the resolver finds on this
+/// machine — is decided here and nowhere else, so that `--dry-run` prints the
+/// very answer a run performs rather than a second reading of the file.
 ///
 /// One method in the interface, and every way a task can turn out to be
 /// unrunnable behind it — an unset `env-required`, an unknown verb, a set that
@@ -22,15 +20,16 @@ import 'exit_codes.dart';
 import 'model.dart';
 import 'sets.dart';
 
-/// A body with everything about it decided — §7's *resolved* plan.
+/// A body with everything about it decided — `--dry-run`'s *resolved* plan.
 ///
 /// **What `--dry-run` prints and what a run performs, worked out once.**
 /// Turning a task into a command is most of the engine: the set expanded, the
 /// member `$each` stands for, the directory it lands in, the environment it
-/// sees, and the executable §5.4 finds on this machine. A dry run that worked
-/// that out a second time would be a second answer to "what will happen" — the
-/// two would agree until the day one of them was changed, which is §1's first
-/// defect written by the tool that exists to remove it.
+/// sees, and the executable the resolver finds on this machine. A dry run that
+/// worked that out a second time would be a second answer to "what will happen"
+/// — the two would agree until the day one of them was changed, which is the
+/// first defect this tool is against, written by the tool that exists to remove
+/// it.
 ///
 /// So there is one place that works it out — [BodyResolver] — and a run and
 /// a dry run are two different things done with what it produces.
@@ -66,9 +65,8 @@ sealed class Resolved {
   ///
   /// **Computed once, because two things print it.** A report shows what the
   /// file declared rather than the hundred variables that are part of the
-  /// terminal — and it was rendering the WRITTEN text, so `--dry-run` promised
-  /// `FLAVOR=$each` while the run exported `FLAVOR=dev`. Every other line of
-  /// that block was substituted.
+  /// terminal, and shows it substituted — `FLAVOR=dev`, as the child sees it,
+  /// not `FLAVOR=$each` as the file wrote it.
   final Map<String, String> declaredEnvironment;
 
   /// Everything after the program name: for a `run:` body the rest of its
@@ -91,14 +89,15 @@ final class ResolvedProcess extends Resolved {
     this.timeout,
   });
 
-  /// The absolute path §5.4 resolved the written name to, on this machine.
+  /// The absolute path the resolver resolved the written name to, on this
+  /// machine.
   final String executable;
 
   /// Whether starting it means going through `cmd.exe` — true only for a
-  /// Windows shim that `CreateProcess` cannot start (§5.4, rule 3).
+  /// Windows shim that `CreateProcess` cannot start (the batch-shim rule).
   final bool runInShell;
 
-  /// How long it may take, or null for no limit — §4.3's `timeout:`.
+  /// How long it may take, or null for no limit — the task's `timeout:`.
   ///
   /// Under `each:` this is a limit **per member**: six packages with a limit
   /// of five minutes is thirty minutes of patience, not five, because the
@@ -154,18 +153,16 @@ final class BodyResolver {
   /// The repository root. Every working directory is resolved against it.
   final String root;
 
-  /// How a written program name becomes a path on this machine (§5.4).
+  /// How a written program name becomes a path on this machine (the resolver).
   final ExecutableResolver resolver;
 
   /// The file's `sets:` — only the sets.
   ///
-  /// This used to be the whole [XtaskFile], a required parameter read at
-  /// exactly one line. Handing a resolver the task graph as well hands it
-  /// something it has no business with: what runs in what order is the
-  /// planner's, and by now the planner has decided.
+  /// A resolver has no business with the task graph: what runs in what order
+  /// is the planner's, and by now the planner has decided.
   final Map<String, NamedSet> sets;
 
-  /// What the project registered (§9), plus the primitives of §6.
+  /// What the project registered, plus the built-in verbs.
   final Map<String, Verb> verbs;
 
   /// The ambient environment a task's `env:` is added to, and the one
@@ -201,14 +198,15 @@ final class BodyResolver {
 
   /// Everything [task] comes to, in order. Empty for a composite.
   ///
-  /// Throws [RunFailure], carrying the reason and the code §5.3 gives it —
-  /// which is what makes `--dry-run` worth reading: it stops exactly where a
-  /// run would stop, with the same message and the same code, because it is
-  /// the same call.
+  /// Throws [RunFailure], carrying the reason and the code the exit code table
+  /// gives it — which is what makes `--dry-run` worth reading: it stops exactly
+  /// where a run would stop, with the same message and the same code, because
+  /// it is the same call.
   List<Resolved> resolveTask(Task task) {
     // Before the body, and that is the whole value of the key: it turns "a
     // browser test failed somewhere inside" into "task `web-e2e` requires
-    // CHROMEDRIVER, which is not set" (§7.1). The engine installs nothing.
+    // CHROMEDRIVER, which is not set" (one invocation per job). The engine
+    // installs nothing.
     for (final name in task.envRequired) {
       final value = environment[name];
       if (value == null || value.isEmpty) {
@@ -373,10 +371,10 @@ final class BodyResolver {
     if (from is! GlobSet) {
       return;
     }
-    // **`args:` is argv too**, which the schema says in as many words. Looking
-    // only at `run:` skipped this check for the very shape it was written for:
-    // `run: [dart, format]` with `args: [\$all]` handed a repository file
-    // called `-n.dart` to the child as an option, silently.
+    // **`args:` is argv too**, which the schema says in as many words:
+    // `run: [dart, format]` with `args: [\$all]` hands a repository file
+    // called `-n.dart` to the child as an option, and this is where that is
+    // caught.
     final bare = written.indexWhere(
       (word) => word == allMarker || word == eachMarker,
     );
@@ -448,11 +446,10 @@ final class BodyResolver {
   /// The members of set [name], as a failure of [task] when there are none.
   ///
   /// **Rewrapped rather than let through.** A set that expands to nothing is
-  /// an [XtaskFormatException] — the right type for `--validate`, which is
-  /// where §4.2 expects it to be caught. Reaching a RUN, it used to escape the
-  /// walk altogether: past the exit code, and past the section markers, so a
-  /// group opened for the task was never closed and everything after it on
-  /// GitHub was folded into a task that had already stopped.
+  /// an [XtaskFormatException] — the right type for `--validate`. Reaching a
+  /// RUN it has to be a [RunFailure], so that it ends with a code the table
+  /// has and with the task's section closed rather than folding everything
+  /// after it into a task that had already stopped.
   List<String> _expand(Task task, String name) {
     final remembered = cacheSets ? _expanded[name] : null;
     if (remembered != null) {

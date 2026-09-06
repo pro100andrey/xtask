@@ -619,7 +619,7 @@ String _source(File workflow, String name) {
     return workflow.readAsStringSync();
   } on FileSystemException catch (problem) {
     // A file that is not UTF-8 and a file this process may not open both
-    // arrive here, and either used to end the run at 255.
+    // arrive here, and both are a sentence rather than a stack trace.
     throw XtaskFormatException(
       '$name: ${problem.osError?.message ?? problem.message}',
     );

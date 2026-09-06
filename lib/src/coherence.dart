@@ -144,7 +144,7 @@ Iterable<XtaskFormatException> _markerInAName(Task task) sync* {
 /// `--flavor=$each`. Text AFTER it is a derived path, `build/$each.dart`, and
 /// that is where a substitution stops being a value and becomes a
 /// computation. A computation wants a modifier, a modifier wants a language,
-/// and R1 exists to say this file is not one. Deriving a path is a verb's job.
+/// and this file is not one. Deriving a path is a verb's job.
 Iterable<XtaskFormatException> _eachMarker(Task task) sync* {
   final name = task.name;
   final argv = _argv(task);
@@ -222,19 +222,19 @@ Iterable<XtaskFormatException> _eachMarker(Task task) sync* {
 /// **Refused here rather than left to make a strange run.** A set named and
 /// never used is a task that quietly does not check what its author thought;
 /// a marker with no set is a program handed the literal text `$all`. Neither
-/// fails — both succeed at the wrong thing, which is what §1 is about.
+/// fails — both succeed at the wrong thing, which is what this tool is against.
 ///
-/// A marker inside a larger string is refused too, and that is the line R1
-/// draws: `$all` stands for N arguments, and there is nothing for N arguments
-/// to mean inside one. Splitting a string is a shell's job and this has no
-/// shell.
+/// A marker inside a larger string is refused too, and that is the line the
+/// no-language rule draws: `$all` stands for N arguments, and there is nothing
+/// for N arguments to mean inside one. Splitting a string is a shell's job and
+/// this has no shell.
 Iterable<XtaskFormatException> _allMarker(Task task) sync* {
   final name = task.name;
   final argv = _argv(task);
 
   // **The program is not an argument.** `run:` names an executable first, and
-  // §5.4 resolves it on PATH before anything is substituted — so `$all` there
-  // is not a set expanded into position, it is a program by that name. It
+  // the resolver finds it on PATH before anything is substituted — so `$all`
+  // there is not a set expanded into position, it is a program by that name. It
   // counted as a marker here while the resolver substituted only over the
   // arguments, which let a file declare a set, satisfy every check below and
   // reach the command line with nothing: the run then answered 3, saying the
@@ -302,8 +302,8 @@ Iterable<XtaskFormatException> _allMarker(Task task) sync* {
     );
   }
   if (task.all != null && task.each != null) {
-    // The combination that used to be legal and meant nothing anybody wanted:
-    // every member of the `each:` set received the WHOLE `all:` set.
+    // The combination that means nothing anybody wants: every member of the
+    // `each:` set would receive the WHOLE `all:` set.
     yield XtaskFormatException(
       'task `$name` has both `each:` and `all:`. One runs the body once per '
       'member and the other runs it once for all of them; a task is one or '

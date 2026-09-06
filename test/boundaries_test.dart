@@ -2,10 +2,10 @@
 ///
 /// Both are true today and neither is enforced by anything else: the analyzer
 /// cannot express "only this file may print", and the type system cannot say
-/// "this integer came from §5.3". They are asserted by reading the source
-/// because that is the only place they are visible — which makes this the
-/// cheap half of what a custom analyzer plugin would cost, and the half that
-/// runs in the gate that already exists.
+/// "this integer came from the exit code table". They are asserted by reading
+/// the source because that is the only place they are visible — which makes
+/// this the cheap half of what a custom analyzer plugin would cost, and the
+/// half that runs in the gate that already exists.
 ///
 /// Each is written as an EQUALITY against a declared exception, the same shape
 /// `dogfood_test.dart` uses: a new offender fails, and so does an exception
@@ -77,7 +77,7 @@ void main() {
   });
 
   test('and no message sends a reader to a document they do not have', () {
-    // Eleven messages used to end in `(§9)`, `(§4.1)` or a bare `R1` — a
+    // Eleven messages used to end in ``, `(the top level)` or a bare `R1` — a
     // citation of the design document this was written against. It was never
     // in the clone and is now not anywhere: the numbering survives only in
     // the comments, as the coordinates of the reasoning they were written
@@ -123,13 +123,13 @@ void main() {
   });
 
   test('an exit code is never a number written at the place it is used', () {
-    // §5.3 gives five codes and a paragraph each. A bare `return 2;` is the
-    // same value with the paragraph deleted, and the deletion is invisible:
-    // it reads like arithmetic and reviews like nothing at all.
-    // Line by line, and comment lines dropped — the first version read the
-    // whole file and reported `lib/xtask.dart` for a comment that QUOTED
-    // `return 0;` while explaining why not to write it. A guard that cannot
-    // tell code from prose about code is a guard nobody keeps.
+    // the exit code table gives five codes and a paragraph each. A bare `return
+    // 2;` is the same value with the paragraph deleted, and the deletion is
+    // invisible: it reads like arithmetic and reviews like nothing at all. Line
+    // by line, and comment lines dropped — the first version read the whole
+    // file and reported `lib/xtask.dart` for a comment that QUOTED `return 0;`
+    // while explaining why not to write it. A guard that cannot tell code from
+    // prose about code is a guard nobody keeps.
     final literal = RegExp(r'\breturn -?\d+;|\bexit\(-?\d+\)');
     final offenders = {
       for (final MapEntry(key: file, value: source) in sources.entries)
@@ -143,7 +143,7 @@ void main() {
       isEmpty,
       reason:
           'name the code from `ExitCode` — the constant carries the reason '
-          '§5.3 gives it, and the number does not',
+          'the exit code table gives it, and the number does not',
     );
   });
 }

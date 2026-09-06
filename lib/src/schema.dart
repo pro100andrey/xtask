@@ -1,10 +1,11 @@
-/// The JSON Schema an editor reads — `--emit-schema` of §7.
+/// The JSON Schema an editor reads — `--emit-schema`.
 ///
 /// `--validate` answers when it is called; a schema answers while somebody
 /// types, completing a task's keys and underlining `dsec:` before anything
 /// runs. It cannot reach anything needing the graph or the filesystem — a
-/// cycle, a dangling `needs:`, an unregistered verb — which stay with §8. A
-/// schema catches a mistyped KEY; `--validate` catches a mistyped NAME.
+/// cycle, a dangling `needs:`, an unregistered verb — which stay with
+/// `--validate`. A schema catches a mistyped KEY; `--validate` catches a
+/// mistyped NAME.
 ///
 /// A projection of `model.dart`, checked against it: the key names are read
 /// from [taskKeys], [topLevelKeys], [globSetKeys], [valueSetKeys] and
@@ -26,7 +27,7 @@ import 'model.dart';
 /// ```
 ///
 /// **That redirect is a person's shell, and it has to be.** A task cannot do
-/// it: `>` is shell, and §5.2 says a task's description contains none. So the
+/// it: `>` is shell, and a task's description contains none. So the
 /// generated file is committed and a gate compares it against this — writing
 /// is somebody's deliberate act, checking is the gate's.
 String xtaskJsonSchema() =>
@@ -52,7 +53,7 @@ Map<String, Object?> get _document => {
   'properties': checkedProperties(topLevelKeys, _topLevel, 'top-level key'),
 };
 
-/// The top level, §4.1.
+/// The top level, the top level.
 Map<String, Map<String, Object?>> get _topLevel => {
   'version': {
     'type': 'integer',
@@ -108,7 +109,7 @@ const _name = <String, Object?>{
   'pattern': r'^[^\r\n]+$',
 };
 
-/// A named set, §4.2: a list of paths, a glob with exclusions, or values
+/// A named set, sets: a list of paths, a glob with exclusions, or values
 /// that are not paths at all.
 Map<String, Object?> get _set => {
   'oneOf': [
@@ -177,7 +178,7 @@ const _globSet = <String, Map<String, Object?>>{
   },
 };
 
-/// A task, §4.3.
+/// A task, a task's keys.
 Map<String, Object?> get _task => {
   'type': 'object',
   'additionalProperties': false,
@@ -331,9 +332,9 @@ const _taskKeys = <String, Map<String, Object?>>{
 ///
 /// **The whole guard, in one function.** [keys] is the engine's list; [table]
 /// is this file's description of it. A key added to one and forgotten in the
-/// other is the drift §1 exists to remove, and the failure it would cause is
-/// quiet in the worst way — an editor happily completing a key the parser
-/// refuses, or underlining one it accepts. So the disagreement stops
+/// other is the drift the duplicate list exists to remove, and the failure it
+/// would cause is quiet in the worst way — an editor happily completing a key
+/// the parser refuses, or underlining one it accepts. So the disagreement stops
 /// `--emit-schema` rather than reaching a file, and the message names both
 /// sides.
 Map<String, Map<String, Object?>> checkedProperties(

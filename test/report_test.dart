@@ -238,8 +238,8 @@ tasks:
     });
 
     test('a gate nothing runs is said out loud, and not judged', () {
-      // §7.1: the gate sets are the jobs PLUS the people, and nothing in the
-      // file tells those apart.
+      // one invocation per job: the gate sets are the jobs PLUS the people, and
+      // nothing in the file tells those apart.
       final lines = workflow(report(unrun: const ['ci-web']));
       expect(lines.last, contains('`ci-web`'));
       expect(lines.last, contains('cannot tell those apart'));

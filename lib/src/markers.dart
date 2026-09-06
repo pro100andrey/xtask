@@ -3,7 +3,7 @@ library;
 
 /// How a host wants a section of output marked.
 ///
-/// What makes §7.1's one-invocation-per-job acceptable: each task is a
+/// What makes one invocation per job acceptable: each task is a
 /// collapsible section and the failing one is annotated with the command that
 /// broke, so a failure does not arrive as one blob.
 ///
