@@ -457,11 +457,11 @@ _Reading _readStep(String command) {
     return const _Expression();
   }
   final words = command.split(RegExp(r'\s+'));
-  final at = _invocationAt(words);
-  if (at == -1 || words.any(_endsACommand)) {
+  final arguments = _argumentsToXtask(words);
+  if (arguments == null || words.any(_endsACommand)) {
     return const _Command();
   }
-  return _readWords([for (final word in words.skip(at + 1)) _unquoted(word)]);
+  return _readWords([for (final word in arguments) _unquoted(word)]);
 }
 
 /// Whether [word] is one a shell reads as "and then another command".
@@ -473,7 +473,7 @@ _Reading _readStep(String command) {
 bool _endsACommand(String word) =>
     const {'&&', '||', ';', '|'}.contains(word) || word.endsWith(';');
 
-/// Where in [words] xtask is being **run**, or -1.
+/// The words after xtask, where xtask is being **run**, or null.
 ///
 /// In command position only: the first word, or the program `dart` is told to
 /// run. A mention anywhere else — `echo run xtask check`, `cp ./xtask
@@ -482,21 +482,21 @@ bool _endsACommand(String word) =>
 /// means knowing what every program does with its arguments, and that list is
 /// never finished. A step that needs a prefix has a key for it: `timeout:` on
 /// the task, `working-directory:` on the step.
-int _invocationAt(List<String> words) {
+List<String>? _argumentsToXtask(List<String> words) {
   if (_namesXtask(words.first)) {
-    return 0;
+    return words.skip(1).toList();
   }
   if (words.first != 'dart') {
-    return -1;
+    return null;
   }
   for (var at = 1; at < words.length; at++) {
     final word = words[at];
     if (word == 'run' || word.startsWith('-')) {
       continue;
     }
-    return _namesXtask(word) ? at : -1;
+    return _namesXtask(word) ? words.skip(at + 1).toList() : null;
   }
-  return -1;
+  return null;
 }
 
 /// Whether [word] is how a project reaches xtask.

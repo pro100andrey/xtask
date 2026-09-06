@@ -4,48 +4,21 @@ import 'package:test/test.dart';
 import 'package:xtask/src/budget.dart';
 
 void main() {
-  group('a place is given back exactly once', () {
-    test('however many frames think they hold it', () async {
-      // The whole reason the place is an object. It used to be a mutable flag
-      // threaded three levels down — the task takes a place to start its
-      // clock, the first member runs on it — with a guard at the bottom for
-      // the case where nobody claimed it. Releasing twice has to be releasing
-      // once, or the budget grows by a place nobody ever took.
+  group('a place is held by one unit and given back once', () {
+    test('and giving it back twice is refused as the bug it is', () {
       final slots = Slots(1);
-      final first = await slots.take();
-      first
-        ..release()
-        ..release();
-
-      final second = await slots.take();
-      var third = false;
-      unawaited(slots.take().then((_) => third = true));
-      await pumpEventQueue();
-      expect(
-        third,
-        isFalse,
-        reason: 'the budget grew by a release nobody made',
-      );
-
-      second.release();
-      await pumpEventQueue();
-      expect(third, isTrue);
+      final place = slots.takeNow()..release();
+      expect(place.release, throwsStateError);
     });
 
-    test('and a place that was never used is still given back', () async {
-      // A body that could not resolve never reaches a member, so nothing below
-      // takes the place over. A few of those and the run stops for want of a
-      // budget nobody is spending.
+    test('and a place taken now is a place the budget has', () {
       final slots = Slots(1);
-      final lease = await slots.take();
-      expect(lease.held, isTrue);
-      lease.release();
-      expect(lease.held, isFalse);
-
-      var again = false;
-      unawaited(slots.take().then((_) => again = true));
-      await pumpEventQueue();
-      expect(again, isTrue);
+      expect(slots.hasFree, isTrue);
+      final place = slots.takeNow();
+      expect(slots.hasFree, isFalse);
+      expect(slots.takeNow, throwsStateError);
+      place.release();
+      expect(slots.hasFree, isTrue);
     });
   });
 
@@ -80,8 +53,7 @@ void main() {
 
   group('a token is held by one task at a time', () {
     test('and a pair is taken all or none', () {
-      // Two tasks each holding half of the same pair is how a pair deadlocks,
-      // and neither can hold half of one.
+      // Two tasks each holding half of the same pair is how a pair deadlocks.
       final exclusive = Exclusive();
       expect(exclusive.tryHold(['db', 'browser']), isTrue);
       expect(exclusive.tryHold(['browser']), isFalse);
@@ -103,9 +75,6 @@ void main() {
   });
 
   test('giving up twice gives up once', () {
-    // The `isCompleted` guard used to live at the call site, which is the only
-    // thing standing between a second failure and a `StateError` that takes
-    // the run with it.
     final givenUp = GivenUp();
     expect(givenUp.already, isFalse);
     givenUp

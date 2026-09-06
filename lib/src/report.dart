@@ -59,6 +59,22 @@ final class RunStopped extends Skipped {
   String get sentence => 'the run stopped at an earlier failure';
 }
 
+/// It began, and the run gave up before all of its members had.
+///
+/// A member that has not started is what has not started, so a failure
+/// elsewhere stops it — and the task then reads, from its own section, as
+/// though every member ran. This is the line that says otherwise.
+final class PartlyRun extends Skipped {
+  const PartlyRun({required this.attempted, required this.members});
+
+  final int attempted;
+  final int members;
+
+  @override
+  String get sentence =>
+      'stopped after $attempted of $members members, at an earlier failure';
+}
+
 /// Nothing that could have started it ever finished.
 ///
 /// **A guard against a plan that is not in order, not a case that happens.**

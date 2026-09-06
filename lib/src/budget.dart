@@ -2,34 +2,27 @@
 ///
 /// Three facts, and none of them is an edge in the graph: how many units may
 /// be in flight, which named things only one task may hold at a time, and
-/// whether the run has already decided the answer. They lived inside the
-/// executor while the executor was the only thing that walked, and a fan-out
-/// that spends the budget by member needs the first of them as much as the
-/// walk does.
+/// whether the run has already decided the answer.
 library;
 
 import 'dart:async';
 
 /// One place from the run's budget.
 ///
-/// Given back exactly once, however many frames think they hold it. The place
-/// a task takes to start its clock is the place its first member runs on, so
-/// two frames share one — and a place that leaks stops the run for want of a
-/// budget nobody is spending. Releasing twice releases once, so neither frame
-/// has to know whether the other got there first.
+/// Held by exactly one unit of work — the first member of a task takes the
+/// place the walk took for it, every member after that takes its own — and
+/// given back by that unit when it ends. Giving a place back twice is a bug
+/// in whoever thought they held it, and is refused as one.
 final class Lease {
   Lease._(this._slots);
 
   final Slots _slots;
   var _held = true;
 
-  /// Whether this place has not been given back yet.
-  bool get held => _held;
-
   /// Gives the place back to the run.
   void release() {
     if (!_held) {
-      return;
+      throw StateError('a place was released twice');
     }
     _held = false;
     _slots._give();
@@ -41,8 +34,7 @@ final class Lease {
 /// A unit occupies a place, not a task: gating which TASKS are admitted makes
 /// `-j 4` over one fanned-out task run its forty members one after another.
 /// Counting units lets a task's members share the budget with other tasks
-/// without becoming plan steps — a plan step is what `needs:`, `then:` and a
-/// `::group::` are about, and a member is none of those.
+/// without becoming plan steps.
 ///
 /// First come, first served, so the plan's cheap-before-slow order survives as
 /// the order things are ASKED for.
@@ -55,11 +47,27 @@ final class Slots {
   var _taken = 0;
   final _waiting = <Completer<Lease>>[];
 
+  /// Whether a place could be taken right now, without waiting.
+  bool get hasFree => _taken < total;
+
+  /// A place, right now.
+  ///
+  /// For the walk's admission pass, which has to know synchronously whether
+  /// a task can begin: a task admitted without a place would hold its
+  /// `exclusive:` tokens while doing nothing. Asked only after [hasFree]
+  /// said yes.
+  Lease takeNow() {
+    if (!hasFree) {
+      throw StateError('no place is free');
+    }
+    _taken++;
+    return Lease._(this);
+  }
+
   /// A place, as soon as there is one.
   Future<Lease> take() {
-    if (_taken < total) {
-      _taken++;
-      return Future.value(Lease._(this));
+    if (hasFree) {
+      return Future.value(takeNow());
     }
     final wait = Completer<Lease>();
     _waiting.add(wait);
@@ -79,7 +87,7 @@ final class Slots {
 
 /// Named mutexes, one holder each, for as long as a task runs.
 ///
-/// **What the graph cannot say.** Two tasks with no `needs:` between them are
+/// What the graph cannot say: two tasks with no `needs:` between them are
 /// independent as far as the plan is concerned, and may still both bind
 /// `:8080` or drive the one browser on the machine. The file names the thing
 /// they share; this makes the name mean something.
@@ -90,8 +98,7 @@ final class Exclusive {
   ///
   /// Synchronous, so the walk's admission pass can ask it: a task that cannot
   /// have its tokens is simply not admitted, and its place goes to something
-  /// that can run. An awaiting acquire inside the task's own future would let
-  /// three tasks sharing a browser all be admitted and two of them block.
+  /// that can run.
   ///
   /// All or nothing, which settles the ordering question too: two tasks each
   /// holding half of the same pair is how a pair deadlocks.
@@ -109,13 +116,11 @@ final class Exclusive {
 
 /// Whether the run has decided the answer is known.
 ///
-/// **A value rather than a raw `Completer`, because two things ask different
-/// questions of it.** A task that may be stopped waits on [reached]; the code
-/// that decides whether a 130 was a stop or a program's own exit asks
-/// [already]. Both used to be spelled against the completer directly, with an
-/// `isCompleted` guard at the one call site that completes it — a guard that
-/// is the only thing standing between a second failure and a `StateError`.
-/// [now] is idempotent, so there is nothing left to guard.
+/// Said once, at the moment of the first failure, and consulted everywhere a
+/// unit of work is about to begin: by the walk before it admits a task, and
+/// by a member the moment it has a place. A task that may be stopped waits on
+/// [reached]; the code that decides whether a 130 was a stop or a program's
+/// own exit asks [already].
 final class GivenUp {
   final _completer = Completer<void>();
 
@@ -124,9 +129,7 @@ final class GivenUp {
 
   /// Completes once the run has decided the answer is known.
   ///
-  /// Only tasks the file called `interruptible:` are given this, and only when
-  /// the run is not keeping going: with `--keep-going` nothing is stopped at
-  /// all, which is the whole of what that flag says.
+  /// Only tasks the file called `interruptible:` are given this.
   Future<void> get reached => _completer.future;
 
   /// Says the answer is known. Saying it twice says it once.

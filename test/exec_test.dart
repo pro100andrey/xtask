@@ -1179,6 +1179,42 @@ void main() {
       expect(starter.started, hasLength(3));
     });
 
+    test('a failure stops the unstarted members of every task', () async {
+      // Two members of `suite` are in flight when `fmt` fails, and the six
+      // behind them must not begin, whether or not `suite` may be stopped: a
+      // member that has not started is what has not started. What is in
+      // flight is left alone, and the task says what it did not get to.
+      given([for (final n in 'abcdefgh'.split('')) 'pkg/$n/x']);
+      starter = FakeStarter({'ruff': 1})
+        ..holds['ruff'] = Completer<void>()
+        ..holds['pytest'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            '  fmt: {desc: a, run: [ruff]}\n'
+            r'  suite: {desc: b, each: pkgs, in: $each, run: [pytest]}'
+            '\n'
+            '  all: {desc: c, needs: [fmt, suite]}\n',
+        'all',
+        concurrency: 3,
+      );
+      await pumpEventQueue();
+      Iterable<Started> members() =>
+          starter.started.where((s) => p.basename(s.executable) == 'pytest');
+      expect(members(), hasLength(2), reason: 'two places beside `fmt`');
+      starter.holds['ruff']!.complete();
+      await pumpEventQueue();
+      expect(members(), hasLength(2), reason: 'the third place is not used');
+      starter.holds['pytest']!.complete();
+      expect(await running, ExitCode.taskFailed);
+      expect(members(), hasLength(2), reason: 'the other six never began');
+      expect(
+        logged.join('\n'),
+        contains('skipped  suite — stopped after 2 of 8 members'),
+      );
+    });
+
     test('the summary says both what was spent and what was taken', () async {
       // Sequentially they are the same number. Run together they answer
       // different questions, and printing only the sum would report three
@@ -2510,15 +2546,8 @@ void _admissionTable() {
       PlanStep step, {
       Set<String> finished = const {},
       Set<String> stopped = const {},
-      bool anythingFailed = false,
-      bool keepGoing = false,
-    }) => admits(
-      step,
-      finished: finished,
-      stopped: stopped,
-      anythingFailed: anythingFailed,
-      keepGoing: keepGoing,
-    );
+      bool givenUp = false,
+    }) => admits(step, finished: finished, stopped: stopped, givenUp: givenUp);
 
     test('a step waiting on nothing is ready', () {
       expect(ask(stepOf('a')), isA<Ready>());
@@ -2545,25 +2574,19 @@ void _admissionTable() {
       },
     );
 
-    test('after a failure nothing else starts, unless --keep-going', () {
+    test('once the run has given up nothing else starts', () {
+      // `--keep-going` never gives up, which is the whole of what it says.
       expect(
-        (ask(stepOf('a'), anythingFailed: true) as SkipIt).why,
+        (ask(stepOf('a'), givenUp: true) as SkipIt).why,
         isA<RunStopped>(),
-      );
-      expect(
-        ask(stepOf('a'), anythingFailed: true, keepGoing: true),
-        isA<Ready>(),
       );
     });
 
-    test('a stopped dependency outranks --keep-going', () {
-      // Keeping going means starting what CAN still run, not running what is
-      // waiting on something that will never finish.
+    test('a stopped dependency is the reason given, over the run', () {
       final verdict = ask(
         stepOf('a', needs: ['b']),
         stopped: {'b'},
-        anythingFailed: true,
-        keepGoing: true,
+        givenUp: true,
       );
       expect((verdict as SkipIt).why, isA<NeedsStopped>());
     });
