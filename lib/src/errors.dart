@@ -6,7 +6,7 @@ import 'package:source_span/source_span.dart';
 /// code's fault". That distinction is only worth anything if the message says
 /// which line to look at, which is why the span travels with the message
 /// instead of being flattened into a string at the throw site.
-final class XtaskFormatException implements Exception {
+base class XtaskFormatException implements Exception {
   XtaskFormatException(this.message, [this.span]);
 
   /// What was wrong, in the terms the file is written in.
@@ -30,7 +30,7 @@ final class XtaskFormatException implements Exception {
 /// different way: one carries a line to look at, the other the code §5.3 gives
 /// the outcome. It lived in the executor while only the executor threw it —
 /// resolution throws it too now, and neither of them owns it.
-final class RunFailure implements Exception {
+base class RunFailure implements Exception {
   const RunFailure(this.code, this.message);
 
   /// One of the codes §5.3 defines — see `exit_codes.dart`, which is not
@@ -43,4 +43,34 @@ final class RunFailure implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// A set that matched nothing.
+///
+/// **A type rather than a sentence to match on.** Two callers need to tell
+/// this apart from every other reason a set is refused — a pattern that leaves
+/// the repository, a pattern that is not a pattern — because only this one can
+/// stop being true later. Told apart by reading the message, they told it
+/// apart wrongly: `--dry-run` reported a boundary violation and an unknown
+/// verb as "cannot be resolved yet" and answered 0.
+final class EmptySetException extends XtaskFormatException {
+  EmptySetException(super.message, super.span, {required this.onlyYet});
+
+  /// Whether this emptiness could stop being true once the run has begun.
+  ///
+  /// **Decided where the set is, and carried rather than re-derived.** A set
+  /// whose members the run itself makes is empty before its task has run and
+  /// full afterwards, and all three readers of this need to tell that apart:
+  /// `--validate` passes over it, a run refuses it, `--dry-run` says "not
+  /// yet". Each of them used to write the test out — `set is GlobSet &&
+  /// set.produced`, in two modules — which is one rule kept in step by hand,
+  /// and a third copy the day a second kind of set can be produced.
+  ///
+  /// The verdict travels with the refusal because the refusal is what travels.
+  final bool onlyYet;
+}
+
+/// A body that cannot resolve yet because a set it names is still empty.
+final class NotYetFailure extends RunFailure {
+  const NotYetFailure(super.code, super.message);
 }

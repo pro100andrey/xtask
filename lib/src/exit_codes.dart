@@ -8,7 +8,7 @@ abstract final class ExitCode {
   static const success = 0;
 
   /// A task ran and failed. The report names the task, its command line and
-  /// its exit code (§5.2).
+  /// its exit code.
   static const taskFailed = 1;
 
   /// The file was refused: a bad document, an unknown key, a cycle, a dangling
@@ -17,7 +17,8 @@ abstract final class ExitCode {
   /// Distinguished because a `2` is never the code's fault.
   static const invalidFile = 2;
 
-  /// A task's executable was not found (§5.4).
+  /// A task's executable was not found on `PATH`, or at the path the task
+  /// named.
   ///
   /// Distinguished because "Dart is not installed on this machine" and "the
   /// code is broken" are repaired by different people, and one exit code sends

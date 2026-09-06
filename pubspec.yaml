@@ -3,7 +3,7 @@ description: >-
   A task runner whose tasks are data. The graph lives in xtask.yaml; a job body
   is either an external process (argv, never a shell) or a verb the project
   implements in Dart.
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/pro100andrey/xtask
 issue_tracker: https://github.com/pro100andrey/xtask/issues
 

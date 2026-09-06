@@ -7,6 +7,7 @@ import 'package:xtask/src/parse.dart';
 /// Lake's own shape, abbreviated: six gate sets, five of them one CI job.
 const _lake = '''
 version: 1
+gates: [check, ci-analyze, ci-test, ci-web]
 tasks:
   analyze:
     desc: analyze every package
@@ -27,10 +28,6 @@ tasks:
     desc: browser e2e
     gate: [ci-web]
     run: [dart, test]
-
-  check:
-    desc: reproduce CI locally
-    collects: check
 ''';
 
 void main() {
@@ -42,11 +39,11 @@ void main() {
       // property in its name and checked nothing.
       final file = parseXtaskFile('''
 version: 1
+gates: [check]
 tasks:
   zebra: {desc: cheap, gate: [check], run: [dart]}
   middle: {desc: medium, gate: [check], run: [dart]}
   alpha: {desc: slow, gate: [check], run: [dart]}
-  check: {desc: c, collects: check}
 ''');
       expect(tasksInGate(file, 'check').map((t) => t.name), [
         'zebra',
@@ -58,16 +55,14 @@ tasks:
     test('and the plan keeps that order, cheap gates before slow ones', () {
       // Why the order is load-bearing at all (§4.3): somebody chose it by
       // writing the file, and sorting would overrule them.
-      final file = withCollectedGates(
-        parseXtaskFile('''
+      final file = parseXtaskFile('''
 version: 1
+gates: [check]
 tasks:
   zebra: {desc: cheap, gate: [check], run: [dart]}
   alpha: {desc: slow, gate: [check], run: [dart]}
-  check: {desc: c, collects: check}
-'''),
-      );
-      expect(planRun(file, 'check').names, ['zebra', 'alpha', 'check']);
+''');
+      expect(planGate(file, 'check').names, ['zebra', 'alpha']);
     });
 
     test('the realistic shape reads the same way', () {
@@ -88,94 +83,171 @@ tasks:
     });
 
     test('a gate nobody is in is empty, not an error', () {
-      // Whether that is a MISTAKE is `--validate`'s question (an orphan gate),
-      // not this function's.
+      // Whether that is a MISTAKE is `--validate`'s question — a declared
+      // gate set with no members — not this function's.
       expect(tasksInGate(parseXtaskFile(_lake), 'ci-nothing'), isEmpty);
     });
   });
 
-  group('`collects:` becomes needs, before the planner sees it', () {
-    // The seam: graph.dart knows `needs:` and `then:` and nothing about gates.
-    // Teaching it a third kind of edge would give the run order two authors.
-    test('the composite gains its gate members', () {
-      final file = withCollectedGates(parseXtaskFile(_lake));
-      expect(file.tasks['check']!.needs, ['analyze', 'lake-format', 'test']);
-    });
-
-    test('and the plan runs them in that order', () {
-      final file = withCollectedGates(parseXtaskFile(_lake));
-      expect(planRun(file, 'check').names, [
+  group('a gate set is planned directly, without becoming a task', () {
+    // The seam: graph.dart knows `needs:` and `then:` and nothing about gate
+    // sets. Teaching it a third kind of edge would give the run order two
+    // authors, so a gate set is planned by seeding one planner with each of
+    // its tasks in turn — same order, same run-once rule, same cycle report.
+    test('its tasks run in declaration order', () {
+      expect(planGate(parseXtaskFile(_lake), 'check').names, [
         'analyze',
         'lake-format',
         'test',
-        'check',
       ]);
     });
 
     test('a task in no gate is left out of it', () {
-      final file = withCollectedGates(parseXtaskFile(_lake));
-      expect(planRun(file, 'check').names, isNot(contains('web-e2e')));
+      expect(
+        planGate(parseXtaskFile(_lake), 'check').names,
+        isNot(contains('web-e2e')),
+      );
     });
 
-    test('nothing else about the composite is disturbed', () {
-      final file = withCollectedGates(parseXtaskFile(_lake));
-      final check = file.tasks['check']!;
-      expect(check.desc, 'reproduce CI locally');
-      expect(check.collects, 'check');
-      expect(check.body, isNull);
-      expect(check.span, isNotNull);
-    });
-
-    test('a task that is not a composite is untouched', () {
-      final before = parseXtaskFile(_lake).tasks['analyze']!;
-      final after = withCollectedGates(parseXtaskFile(_lake)).tasks['analyze']!;
-      expect(after.needs, before.needs);
-      expect(after.gate, before.gate);
-    });
-
-    test('an explicit `needs:` keeps its place, in front', () {
-      // A composite that wants something before its gate — a dependency fetch,
-      // say — still gets it first.
-      final file = withCollectedGates(
-        parseXtaskFile('''
+    test("a member's own `needs:` keeps its place, in front", () {
+      final file = parseXtaskFile('''
 version: 1
+gates: [check]
 tasks:
-  install: {desc: fetch}
-  a: {desc: x, gate: [check], run: [dart]}
-  check: {desc: y, needs: [install], collects: check}
-'''),
-      );
-      expect(file.tasks['check']!.needs, ['install', 'a']);
-      expect(planRun(file, 'check').names, ['install', 'a', 'check']);
+  install: {desc: fetch, run: [dart]}
+  a: {desc: x, gate: [check], needs: [install], run: [dart]}
+''');
+      expect(planGate(file, 'check').names, ['install', 'a']);
     });
 
-    test('a composite inside its own gate does not need itself', () {
-      // Plausible to write — `check` with `gate: [check]` — and it would
-      // otherwise be reported as a cycle. Gathering a set does not mean
-      // gathering yourself.
-      final file = withCollectedGates(
-        parseXtaskFile('''
+    test('something two members both need runs once', () {
+      final file = parseXtaskFile('''
 version: 1
+gates: [check]
 tasks:
-  a: {desc: x, gate: [check], run: [dart]}
-  check: {desc: y, gate: [check], collects: check}
-'''),
-      );
-      expect(file.tasks['check']!.needs, ['a']);
-      expect(planRun(file, 'check').names, ['a', 'check']);
+  install: {desc: fetch, run: [dart]}
+  a: {desc: x, gate: [check], needs: [install], run: [dart]}
+  b: {desc: y, gate: [check], needs: [install], run: [dart]}
+''');
+      expect(planGate(file, 'check').names, ['install', 'a', 'b']);
     });
 
-    test('two composites over overlapping gates each get their own', () {
-      final file = withCollectedGates(
-        parseXtaskFile(
-          '$_lake'
-          '  ci-analyze:\n'
-          '    desc: the analyze job\n'
-          '    collects: ci-analyze\n',
-        ),
+    test('overlapping gate sets each get their own plan', () {
+      final file = parseXtaskFile(_lake);
+      expect(planGate(file, 'ci-analyze').names, ['analyze', 'lake-format']);
+      expect(planGate(file, 'check').names, hasLength(3));
+    });
+
+    test('a member another member continues into waits for it', () {
+      // Seeded in declaration order, `verify` went first because it was
+      // WRITTEN first — ahead of the task whose `then:` reaches it, and with
+      // no continuation on it, so a failed verification answered 1 rather
+      // than §5.3's code and a failed publish was announced anyway. `planRun`
+      // had the order right the whole time, which left `xtask publish` and
+      // `xtask release` describing two different runs of the same tasks.
+      final file = parseXtaskFile('''
+version: 1
+gates: [release]
+tasks:
+  verify: {desc: check what went out, gate: [release], run: [dart]}
+  publish: {desc: upload, gate: [release], then: [verify], run: [dart]}
+''');
+      expect(planGate(file, 'release').names, ['publish', 'verify']);
+      expect(planGate(file, 'release').names, planRun(file, 'publish').names);
+      expect(planGate(file, 'release').steps.last.continuationOf, 'publish');
+    });
+
+    test('and it waits through a chain of them, however it was written', () {
+      final file = parseXtaskFile('''
+version: 1
+gates: [release]
+tasks:
+  announce: {desc: say so, gate: [release], run: [dart]}
+  verify: {desc: check, gate: [release], then: [announce], run: [dart]}
+  publish: {desc: upload, gate: [release], then: [verify], run: [dart]}
+''');
+      expect(planGate(file, 'release').names, [
+        'publish',
+        'verify',
+        'announce',
+      ]);
+    });
+
+    test('a member reached only through `needs:` keeps declaration order', () {
+      // The deferral is about `then:` alone. A member something else needs
+      // comes out in front of it either way, so moving it would overrule the
+      // order §4.3 says the author chose.
+      final file = parseXtaskFile('''
+version: 1
+gates: [check]
+tasks:
+  install: {desc: fetch, gate: [check], run: [dart]}
+  a: {desc: x, gate: [check], needs: [install], run: [dart]}
+''');
+      expect(planGate(file, 'check').names, ['install', 'a']);
+    });
+
+    test('but a member merely NEEDED by a continuation does not move', () {
+      // The first attempt at this deferred a member whenever a `then:` stood
+      // anywhere on the way to it, which is a different question: `build` has
+      // no `then:` and no `needs:`, and was demoted for being needed by
+      // somebody else's continuation. The gate then published first and failed
+      // to build afterwards — exit 4 and `the upload took place`, the ending
+      // this whole ordering exists to prevent, produced by the fix for it.
+      final file = parseXtaskFile('''
+version: 1
+gates: [release]
+tasks:
+  build: {desc: build the artifact, gate: [release], run: [dart]}
+  publish: {desc: upload, gate: [release], then: [announce], run: [dart]}
+  announce: {desc: post the note, needs: [build], run: [dart]}
+''');
+      expect(planGate(file, 'release').names, [
+        'build',
+        'publish',
+        'announce',
+      ]);
+      expect(planGate(file, 'release').steps.first.continuationOf, isNull);
+    });
+
+    test('and a member that needs a continuation waits behind it too', () {
+      // `needs:` and `then:` are one relation read from two ends. Deferring
+      // only the direct target of a `then:` left this one written-order: the
+      // whole chain publish → verify → smoke was answered as verify, smoke,
+      // publish, with nothing marked a continuation of anything.
+      final file = parseXtaskFile('''
+version: 1
+gates: [release]
+tasks:
+  smoke: {desc: smoke test, gate: [release], needs: [verify], run: [dart]}
+  publish: {desc: upload, gate: [release], then: [verify], run: [dart]}
+  verify: {desc: check, run: [dart]}
+''');
+      expect(planGate(file, 'release').names, ['publish', 'verify', 'smoke']);
+      expect(planGate(file, 'release').steps[1].continuationOf, 'publish');
+    });
+
+    test('a ring of `then:` among members is planned, not refused', () {
+      // Every member defers to another, so nothing is left to seed first.
+      // `xtask a` runs this file without complaint; a gate set holding the
+      // same tasks must not be the one thing that cannot.
+      final file = parseXtaskFile('''
+version: 1
+gates: [check]
+tasks:
+  a: {desc: x, gate: [check], then: [b], run: [dart]}
+  b: {desc: y, gate: [check], then: [a], run: [dart]}
+''');
+      expect(planGate(file, 'check').names, ['a', 'b']);
+    });
+
+    test('a gate set nothing is in plans nothing', () {
+      // `--validate` refuses this file; the planner still has to answer
+      // rather than throw, because `--gate-members` reads the same data.
+      final file = parseXtaskFile(
+        'version: 1\ngates: [empty]\ntasks:\n  a: {desc: x, run: [d]}\n',
       );
-      expect(file.tasks['check']!.needs, hasLength(3));
-      expect(file.tasks['ci-analyze']!.needs, ['analyze', 'lake-format']);
+      expect(planGate(file, 'empty').names, isEmpty);
     });
   });
 
@@ -222,6 +294,23 @@ tasks:
       expect(lines.last, '::error::first%0Asecond');
       expect(lines.last, isNot(contains('\n')));
     });
+
+    test('and a group is escaped for the reason an annotation is', () {
+      // A task name is a name somebody wrote, and `::group::` is read to the
+      // end of its line like any other workflow command — so the escaping
+      // added to the annotation and not to this could open a fold on half a
+      // name and print the rest beside it as stray output.
+      expect(markers.open('report%0Astep'), ['::group::report%250Astep']);
+    });
+
+    test('and a message that already reads as an escape is escaped too', () {
+      // The runner DECODES what it reads back. A message quoting an argument
+      // — `--name a%0Ab`, which `describe` prints verbatim — was handed over
+      // untouched, decoded into the newline the escaping exists to remove,
+      // and truncated at exactly the point it was written to survive.
+      final lines = markers.error('run dart test --name a%0Ab');
+      expect(lines.last, '::error::run dart test --name a%250Ab');
+    });
   });
 
   group('without a host that folds, the task is still named', () {
@@ -234,50 +323,6 @@ tasks:
 
     test('and a failure is still marked', () {
       expect(markers.error('boom').single, contains('boom'));
-    });
-  });
-
-  group('two questions about a gate set, and gates.dart owns both', () {
-    // They were three inline expressions across cli.dart, ci.dart and
-    // validate.dart. Existing and being runnable are different questions —
-    // §8 judges an orphan, `--gate-members` only reads the data — so the
-    // answer is two named functions, not one.
-    const orphaned = '''
-version: 1
-tasks:
-  analyze: {desc: a, gate: [check, ci-analyze], run: [dart]}
-  check: {desc: b, collects: check}
-  nobody: {desc: c, collects: never-declared}
-''';
-
-    test('a gate set exists as soon as a task says it is in one', () {
-      expect(gateSets(parseXtaskFile(orphaned)), {
-        'check',
-        'ci-analyze',
-        'never-declared',
-      });
-    });
-
-    test('and being COLLECTED is the narrower question', () {
-      expect(collectedGates(parseXtaskFile(orphaned)), {
-        'check',
-        'never-declared',
-      });
-    });
-
-    test('the wider set contains the narrower one', () {
-      // A composite may collect a gate nobody is in — `never-declared` here —
-      // so collection is a way of existing, not a subset of membership.
-      final file = parseXtaskFile(orphaned);
-      expect(gateSets(file), containsAll(collectedGates(file)));
-    });
-
-    test('a file with no gates at all has neither', () {
-      final file = parseXtaskFile(
-        'version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n',
-      );
-      expect(gateSets(file), isEmpty);
-      expect(collectedGates(file), isEmpty);
     });
   });
 }

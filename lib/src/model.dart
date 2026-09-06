@@ -20,7 +20,7 @@ const taskKeys = <String>{
   'run',
   'do',
   'args',
-  'argv-from',
+  'all',
   'each',
   'in',
   'env',
@@ -28,19 +28,44 @@ const taskKeys = <String>{
   'needs',
   'then',
   'gate',
-  'collects',
+  'serial',
+  'interruptible',
+  'exclusive',
   'timeout',
 };
 
+/// The one word that stands for every member of an `all:` set.
+///
+/// **Here, beside the keys, because two modules answer for it.** The parser
+/// decides which files are legal and the resolver decides what a legal one
+/// expands to; they had a private copy each, which is the contract and its
+/// enforcement free to drift. They did: one counted the marker in the
+/// executable slot and the other never substituted there, so a set could be
+/// declared, pass every check, and reach nothing.
+const allMarker = r'$all';
+
+/// The one word that stands for the member an `each:` body is running for.
+///
+/// It may stand as a whole argument or END one, and nothing may follow it.
+///
+/// A prefix is what lets a set hold the part that cannot be derived — the bare
+/// name — with the path composed where it is needed. A suffix would make
+/// `$each.dart` a path computed FROM a value rather than one composed around
+/// it, and computing wants a modifier, and a modifier wants a language.
+const eachMarker = r'$each';
+
 /// Every key the document may carry at the top level (§4.1).
-const topLevelKeys = <String>{'version', 'sets', 'tasks'};
+const topLevelKeys = <String>{'version', 'gates', 'sets', 'tasks'};
 
 /// Every key a glob set may carry (§4.2).
 ///
 /// Here rather than beside the parser for the reason above: `--emit-schema`
 /// projects it into a JSON Schema, and a second spelling of `include` is a
 /// second spelling that an editor would accept and the engine would refuse.
-const globSetKeys = <String>{'include', 'exclude'};
+const globSetKeys = <String>{'include', 'exclude', 'produced'};
+
+/// Every key a value set may carry (§4.2).
+const valueSetKeys = <String>{'values'};
 
 /// The keys that name a task's body. Exactly one, or none (§4.3).
 const bodyKeys = <String>{'run', 'do'};
@@ -67,6 +92,7 @@ mixin Located {
 final class XtaskFile {
   const XtaskFile({
     required this.version,
+    required this.gates,
     required this.sets,
     required this.tasks,
   });
@@ -75,21 +101,30 @@ final class XtaskFile {
   /// carrying the number forward for somebody downstream to check.
   final int version;
 
+  /// Every gate set the file declares, **in declaration order**, each with
+  /// the line it was written on.
+  ///
+  /// Declared, because a gate set that came into existence by being mentioned
+  /// could not be misspelled: `gate: [chekc]` would simply be a different gate
+  /// set. One declared list is what makes a name in `gate:` checkable.
+  ///
+  /// The order is the author's, and is the order a report groups by. No
+  /// description: a gate set is not a task, it is the name of who runs a
+  /// list.
+  final Map<String, SourceSpan?> gates;
+
   /// Named sets, in declaration order. Unmodifiable — see [tasks].
   final Map<String, NamedSet> sets;
 
   /// Named tasks, **in declaration order**, which is load-bearing: §4.3 makes
-  /// the run order of a `collects:` composite the order they appear in the
-  /// file, so that cheap gates come before slow ones. Dart's default map
-  /// preserves insertion order and the parser inserts in document order; the
-  /// YAML specification does not promise this, so a test pins it.
+  /// a gate set run in the order its tasks appear, so cheap gates come before
+  /// slow ones. Dart's map preserves insertion order and the parser inserts in
+  /// document order; the YAML specification does not promise it, so a test
+  /// pins it.
   ///
-  /// **Unmodifiable, and that follows from the sentence above.** An order that
-  /// is load-bearing and a map anybody can reorder do not go together. The
-  /// same applies to every collection on [Task]: the `const []` defaults throw
-  /// on mutation, so a parsed value that quietly accepted one would make the
-  /// type behave two different ways depending on what the file happened to
-  /// say.
+  /// Unmodifiable, because an order that is load-bearing and a map anybody can
+  /// reorder do not go together. The same holds for every collection on
+  /// [Task].
   final Map<String, Task> tasks;
 }
 
@@ -108,13 +143,44 @@ final class ListSet extends NamedSet {
   final List<String> members;
 }
 
+/// Members that are not paths: flavours, platform names, SDK versions.
+///
+/// **Declared, because the engine cannot tell.** Every other kind of set holds
+/// paths, and the engine treats them as paths — it refuses one that leaves the
+/// repository, and it can say a glob matched nothing. Neither question means
+/// anything about `dev` or `stable`, and asking the first of them refused
+/// `a:b` for looking like a Windows drive. A set that says what it holds is
+/// asked the right questions, and `in: packages/$each` composes a path around
+/// a member that was never one.
+final class ValueSet extends NamedSet {
+  const ValueSet(this.values, {super.span});
+
+  final List<String> values;
+}
+
 /// Members found on disk. Expansion — and the rule that an expansion matching
 /// nothing is an error — belongs to the `sets` slice, not here.
 final class GlobSet extends NamedSet {
-  const GlobSet({required this.include, required this.exclude, super.span});
+  const GlobSet({
+    required this.include,
+    required this.exclude,
+    this.produced = false,
+    super.span,
+  });
 
   final List<String> include;
   final List<String> exclude;
+
+  /// Whether this set's members are made by the run itself.
+  ///
+  /// Said rather than guessed: the engine cannot tell, and inferring it from
+  /// `needs:` exempts `analyze: {needs: [pub-get], all: sources}` — the
+  /// ordinary shape — and takes a typo through with it.
+  ///
+  /// It buys exactly one thing: the emptiness of THIS set is not judged before
+  /// its task runs. Everything else about it still is, and the run still
+  /// refuses it empty.
+  final bool produced;
 }
 
 /// What a task does. Absent means a pure composite (§4.3).
@@ -145,7 +211,7 @@ final class Task with Located {
     this.span,
     this.body,
     this.args = const [],
-    this.argvFrom,
+    this.all,
     this.each,
     this.workingDirectory,
     this.env = const {},
@@ -153,7 +219,9 @@ final class Task with Located {
     this.needs = const [],
     this.then = const [],
     this.gate = const [],
-    this.collects,
+    this.serial = false,
+    this.interruptible = false,
+    this.exclusive = const [],
     this.timeout,
   });
 
@@ -173,10 +241,17 @@ final class Task with Located {
   /// Extra arguments appended to the body.
   final List<String> args;
 
-  /// A set whose members are appended as arguments.
-  final String? argvFrom;
+  /// A set whose members replace the `$all` marker, in one invocation.
+  ///
+  /// **The marker is where they go, and that is the whole difference from the
+  /// key this replaces.** `argv-from:` appended its set to the end of argv and
+  /// nowhere else, so `cp <files> dest/` could not be written at all; and
+  /// beside an `each:`, it handed the WHOLE set to every member, which nothing
+  /// refused and nobody meant.
+  final String? all;
 
-  /// A set whose members the body runs once per, sequentially (§5.2).
+  /// A set whose members the body runs once per, one at a time unless `-j`
+  /// says otherwise.
   final String? each;
 
   /// `in:` — a path, or the literal `$each`. The substitution is execution's
@@ -197,6 +272,36 @@ final class Task with Located {
   /// Continuations: run after this task's body, not a dependency (§4.3).
   final List<String> then;
 
+  /// Whether the members of this task's `each:` must not overlap.
+  ///
+  /// A fact about the task rather than a number for the machine: `-j` says how
+  /// much may happen at once, this says whether these members may happen
+  /// together at all. `dart pub get` over six packages contends on one
+  /// `~/.pub-cache` and `git add` fails outright on `index.lock`. Getting it
+  /// wrong makes a run flaky on every machine, so it lives in the file.
+  final bool serial;
+
+  /// Whether a failure elsewhere may kill this task where it stands.
+  ///
+  /// The author saying there is no half-written state to leave behind.
+  /// Killing a build leaves whatever it was half-way through; `dart format
+  /// --output=none`, `dart analyze` and `dart test` leave nothing. The engine
+  /// cannot tell the two apart.
+  ///
+  /// It buys back what `-j` costs: sequentially a format failure at 0.4s stops
+  /// analyze and test from running at all, and in parallel they run to the end
+  /// anyway.
+  final bool interruptible;
+
+  /// Tokens this task holds alone for as long as it runs.
+  ///
+  /// The same fact across tasks rather than within one: two suites that both
+  /// bind `:8080`, or both drive one browser, cannot overlap however
+  /// independent the graph says they are. Named rather than counted, because a
+  /// name is something `--validate` can cross-check and a count is one
+  /// machine's width written into a file every other machine reads.
+  final List<String> exclusive;
+
   /// The gate sets this task belongs to.
   final List<String> gate;
 
@@ -208,9 +313,4 @@ final class Task with Located {
   /// carried on writing to the disk, which is worse than no deadline at all.
   /// `parse` refuses the combination rather than letting it half-work.
   final int? timeout;
-
-  /// Names a gate set this task is the composite of (§4.3). Deliberately
-  /// spelled nothing like `gate:`: the two mean opposite things, and a
-  /// one-letter difference would be a typo that changes behaviour silently.
-  final String? collects;
 }

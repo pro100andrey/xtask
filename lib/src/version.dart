@@ -14,4 +14,4 @@ library;
 /// than the drift it prevents, and it would ship this repository's release
 /// tooling to every consumer of the package; the gate is what stops the drift
 /// in either design, so only the gate was built.
-const packageVersion = '0.1.0';
+const packageVersion = '0.2.0';

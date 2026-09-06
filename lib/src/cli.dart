@@ -1,4 +1,10 @@
-/// The command surface.
+/// The command surface: reading the file once, and dispatching one request.
+///
+/// **What an invocation MEANS is `request.dart`'s.** This module is the half
+/// that touches a machine — finding the root, reading the file, choosing what
+/// to do — and the grammar is the half that touches nothing, which is why
+/// `--check-ci` can use it to decide whether a workflow step is an invocation
+/// at all.
 library;
 
 import 'dart:io';
@@ -20,405 +26,11 @@ import 'model.dart';
 import 'parse.dart';
 import 'primitives.dart';
 import 'report.dart' as report;
+import 'request.dart';
 import 'schema.dart';
 import 'sets.dart';
 import 'validate.dart';
 import 'version.dart';
-
-/// The file, at the repository root (§4).
-const xtaskFileName = 'xtask.yaml';
-
-/// What an invocation asked for.
-///
-/// Parsed into a value first and acted on second, so that every refusal §7
-/// implies — two modes at once, a flag that is not one, `--gate` without the
-/// `--list` it narrows — can be asserted without a filesystem, a plan or a
-/// process anywhere near it.
-sealed class Request {
-  const Request();
-}
-
-/// `xtask <task> [-- <args>]` — run it and everything it needs.
-final class RunTask extends Request {
-  const RunTask(
-    this.task, {
-    this.arguments = const [],
-    this.keepGoing = false,
-    this.concurrency = 1,
-  });
-
-  final String task;
-
-  /// What followed `--`, for [task]'s body alone.
-  final List<String> arguments;
-
-  /// `--keep-going`: report every failure rather than the first.
-  final bool keepGoing;
-
-  /// `--parallel`: how many tasks may be in flight. 1 is §5.2's run.
-  final int concurrency;
-}
-
-/// `xtask --dry-run <task> [-- <args>]` — print what that would come to (§7).
-final class DryRunTask extends Request {
-  const DryRunTask(this.task, [this.arguments = const []]);
-
-  final String task;
-
-  /// What followed `--`, for [task]'s body alone.
-  final List<String> arguments;
-}
-
-/// `xtask --list [--gate <name>]` — every task with its description.
-final class ListTasks extends Request {
-  const ListTasks(this.gate);
-
-  /// The gate set to narrow to, or null for all of them.
-  final String? gate;
-}
-
-/// `xtask --gate-members <name>` — the members of one gate set, one per line.
-///
-/// **A window on the data, not the mechanism.** No pipeline consumes this:
-/// the duplicate list disappears because CI stops naming commands and runs one
-/// task per job (§7.1), not because something reads this output. That is why
-/// the format is one name per line — right for a person reading, and wrong for
-/// feeding a build matrix, which it is not for.
-final class GateMembers extends Request {
-  const GateMembers(this.gate);
-
-  final String gate;
-}
-
-/// `xtask --check-ci` — does the workflow still run the gate sets (§7.1)?
-final class CheckCi extends Request {
-  const CheckCi();
-}
-
-/// `xtask --validate` — parse and check, run nothing (§8).
-final class Validate extends Request {
-  const Validate();
-}
-
-/// `xtask --why <task>` — what puts that task in a plan.
-final class WhyTask extends Request {
-  const WhyTask(this.task);
-
-  final String task;
-}
-
-/// `xtask --version` — print which engine this is.
-///
-/// Answered without a file, for the same reason as [EmitSchema]: it is a fact
-/// about the engine. It is also the first thing a bug report needs, which is
-/// no use if it only works in a directory that already works.
-final class ShowVersion extends Request {
-  const ShowVersion();
-}
-
-/// `xtask --emit-schema` — print the JSON Schema for the file format.
-///
-/// **The one request that does not want a file.** It describes what an
-/// `xtask.yaml` may contain, which is a fact about the engine and not about
-/// any repository — so it is answered before the file is looked for, and works
-/// in a directory that has none. That is the point: it is how a repository
-/// gets its first one.
-final class EmitSchema extends Request {
-  const EmitSchema();
-}
-
-/// The usage text, printed on request and as the error message.
-final class ShowUsage extends Request {
-  const ShowUsage([this.problem]);
-
-  /// What was wrong with the invocation, or null when the usage was asked for.
-  final String? problem;
-}
-
-/// The modes, exactly §7's list.
-///
-/// Public because the usage text has to name every one of them, and a test
-/// that checked it against a list of its own would be a third copy of this —
-/// drift between the parser and its own help being the sort that survives
-/// review, since both halves read plausibly on their own.
-const modes = {
-  '--check-ci',
-  '--list',
-  '--why',
-  '--gate-members',
-  '--validate',
-  '--dry-run',
-  '--emit-schema',
-  '--version',
-};
-
-/// What [args] asked for, or a [ShowUsage] naming what was wrong with it.
-///
-/// Hand-written rather than configured into a general parser: the grammar is
-/// six lines and closed, and what matters about it is the refusals, which are
-/// easier to state exactly than to arrange. Both spellings of the narrowing
-/// flag — `--gate=name` and `--gate name` — are accepted, because both are
-/// what people type.
-Request parseArguments(List<String> args) {
-  if (args.isEmpty) {
-    return const ShowUsage('nothing to do');
-  }
-
-  final written = <String>[];
-  final operands = <String>[];
-  String? gate;
-  var narrowed = false;
-  var keepGoing = false;
-  var concurrency = 1;
-
-  final passed = <String>[];
-  var separated = false;
-
-  final rest = [...args];
-  while (rest.isNotEmpty) {
-    final argument = rest.removeAt(0);
-
-    // **Everything after it is taken as written, options included.** That is
-    // the whole point of the separator: `xtask test -- --name x` has to reach
-    // the body with `--name` intact, and a parser that kept looking at these
-    // would refuse the first one it did not recognise.
-    if (argument == '--') {
-      separated = true;
-      passed.addAll(rest);
-      rest.clear();
-      continue;
-    }
-
-    if (argument == '--help' || argument == '-h') {
-      return const ShowUsage();
-    }
-
-    if (argument == '--gate' || argument.startsWith('--gate=')) {
-      narrowed = true;
-      gate = argument.startsWith('--gate=')
-          ? argument.substring('--gate='.length)
-          : rest.isNotEmpty && !rest.first.startsWith('-')
-          ? rest.removeAt(0)
-          : null;
-      if (gate == null || gate.isEmpty) {
-        return const ShowUsage('`--gate` needs the name of a gate set');
-      }
-      continue;
-    }
-
-    if (argument == '--keep-going') {
-      keepGoing = true;
-      continue;
-    }
-
-    if (argument == '--parallel' || argument.startsWith('--parallel=')) {
-      if (argument == '--parallel') {
-        concurrency = Platform.numberOfProcessors;
-        continue;
-      }
-      final written = argument.substring('--parallel='.length);
-      final asked = int.tryParse(written);
-      if (asked == null || asked < 1) {
-        return ShowUsage(
-          '`--parallel=$written` is not a number of tasks to run at once',
-        );
-      }
-      concurrency = asked;
-      continue;
-    }
-
-    if (modes.contains(argument)) {
-      written.add(argument);
-      continue;
-    }
-
-    // **Both spellings, because `--gate` already took both.** A person who
-    // learns `--gate=check` from the usage line writes `--why=test` next, and
-    // what they used to get was "`--why=test` is not an option xtask has" — a
-    // refusal that denies the flag exists rather than naming the form it
-    // wants. The value joins the operands, where the mode below reads it as
-    // if it had been written as its own word.
-    final joined = modes.firstWhere(
-      (mode) => argument.startsWith('$mode='),
-      orElse: () => '',
-    );
-    if (joined.isNotEmpty) {
-      written.add(joined);
-      operands.add(argument.substring(joined.length + 1));
-      continue;
-    }
-
-    if (argument.startsWith('-')) {
-      return ShowUsage('`$argument` is not an option xtask has');
-    }
-
-    operands.add(argument);
-  }
-
-  if (concurrency > 1 && operands.length > 1) {
-    final tail = operands.last;
-    if (int.tryParse(tail) != null) {
-      // `--parallel 2` reads as a task called `2`, and the refusal that came
-      // out named two tasks the person never asked for. `--parallel` takes no
-      // separate word, because a bare `--parallel` is already a complete
-      // answer — as many at once as this machine has processors — and there is
-      // nothing to tell that apart from a task whose name is a number.
-      return ShowUsage(
-        '`--parallel` is written `--parallel=$tail`, joined. On its own it '
-        'means as many at once as this machine has processors',
-      );
-    }
-  }
-
-  if (written.length > 1) {
-    return ShowUsage(
-      '`${written[0]}` and `${written[1]}` ask for different things; '
-      'write one',
-    );
-  }
-
-  final mode = written.isEmpty ? null : written.single;
-
-  if (narrowed && mode != '--list') {
-    // `--gate` is a modifier, not a mode. It used to be one letter away from
-    // `--gates`, which is why this refusal was written; the flag is now
-    // `--gate-members` and cannot be reached by a slip of the finger, but a
-    // `--gate` written without `--list` still has to be answered rather than
-    // quietly ignored or listed past.
-    return const ShowUsage(
-      '`--gate` narrows `--list`. For the members of one gate set on their '
-      'own, write `--gate-members <name>`',
-    );
-  }
-
-  if (concurrency > 1 && mode != null) {
-    return ShowUsage(
-      '`--parallel` is about a run, and `$mode` does not run anything',
-    );
-  }
-
-  if (keepGoing && mode != null) {
-    // It changes what a RUN does when something fails, and none of the modes
-    // run anything. `--validate` in particular already collects every problem
-    // it can find, which is the argument this flag borrows.
-    return ShowUsage(
-      '`--keep-going` is about a run, and `$mode` does not run anything',
-    );
-  }
-
-  if (separated && mode != null && mode != '--dry-run') {
-    // Only a body can take arguments, and only running or resolving one
-    // reaches a body. `--list -- --name x` has nothing to hand them to, and
-    // arguments that reach nothing are the silence this tool exists against.
-    return ShowUsage(
-      '`$mode` does not run anything, so there is nothing for the arguments '
-      'after `--` to be arguments to',
-    );
-  }
-
-  if (mode == '--list') {
-    return operands.isEmpty
-        ? ListTasks(gate)
-        : ShowUsage(
-            '`--list` takes no task name — to narrow it, write '
-            '`--list --gate <name>`, and it was given `${operands.first}`',
-          );
-  }
-
-  if (mode == '--version') {
-    return operands.isEmpty
-        ? const ShowVersion()
-        : ShowUsage(
-            '`--version` says which engine this is and takes nothing else, '
-            'and it was given `${operands.first}`',
-          );
-  }
-
-  if (mode == '--emit-schema') {
-    return operands.isEmpty
-        ? const EmitSchema()
-        : ShowUsage(
-            '`--emit-schema` describes the file format and takes nothing '
-            'else, and it was given `${operands.first}`',
-          );
-  }
-
-  if (mode == '--check-ci') {
-    return operands.isEmpty
-        ? const CheckCi()
-        : ShowUsage(
-            '`--check-ci` checks the whole workflow and takes no name, and it '
-            'was given `${operands.first}`',
-          );
-  }
-
-  if (mode == '--validate') {
-    return operands.isEmpty
-        ? const Validate()
-        : ShowUsage(
-            '`--validate` checks the whole file and takes no task name, and '
-            'it was given `${operands.first}`',
-          );
-  }
-
-  if (mode == '--why') {
-    return operands.length == 1
-        ? WhyTask(operands.single)
-        : const ShowUsage('`--why` needs the name of one task');
-  }
-
-  if (mode == '--gate-members') {
-    return operands.length == 1
-        ? GateMembers(operands.single)
-        : const ShowUsage('`--gate-members` needs the name of one gate set');
-  }
-
-  if (mode == '--dry-run') {
-    return operands.length == 1
-        ? DryRunTask(operands.single, passed)
-        : const ShowUsage('`--dry-run` needs one task to resolve');
-  }
-
-  if (operands.isEmpty && separated) {
-    return const ShowUsage(
-      'the arguments after `--` belong to one task, and no task was named',
-    );
-  }
-
-  return operands.length == 1
-      ? RunTask(
-          operands.single,
-          arguments: passed,
-          keepGoing: keepGoing,
-          concurrency: concurrency,
-        )
-      : ShowUsage(
-          'xtask runs one task at a time, and it was given '
-          '${operands.map((o) => '`$o`').join(' and ')}',
-        );
-}
-
-/// §7's list, and the message a refused invocation prints.
-const usage = [
-  'usage:',
-  '  xtask <task>                 run a task and everything it needs',
-  '  xtask <task> -- <args>       and pass those arguments to its body',
-  '  xtask <task> --keep-going    report every failure, not just the first',
-  '  xtask <task> --parallel      run independent tasks at once — which costs',
-  '                               seeing their output as it arrives',
-  '  xtask --list                 every task, with its description',
-  '  xtask --list --gate <name>   only the tasks in that gate set',
-  '  xtask --gate-members <name>  the tasks in that gate set, one per line',
-  '  xtask --why <task>           what puts that task in a plan, and by which',
-  '                               `needs:` or `then:`',
-  '  xtask --validate             parse and check the file; run nothing',
-  '  xtask --check-ci             does the CI file still run the gate sets?',
-  '  xtask --dry-run <task>       print the resolved plan; run nothing',
-  '  xtask --emit-schema          print the JSON Schema for this file format',
-  '  xtask --version              print which engine this is',
-  '',
-  'the file is `$xtaskFileName`, at the repository root.',
-];
 
 /// The directory holding `xtask.yaml`, looked for from [from] upwards.
 ///
@@ -531,10 +143,30 @@ Future<int> runCli(
 
   final known = {...builtInVerbs(root: root), ...verbs};
 
-  // Composites are given their members before anything looks at the graph —
-  // for planning, and for validating too, because a `collects:` that closes a
-  // ring is a cycle only after the rewrite that creates the edges.
-  final collected = withCollectedGates(file);
+  /// What a task comes to on this machine, for the one task the command line
+  /// named.
+  ///
+  /// **Built here and nowhere else, which is the whole reason the module
+  /// exists.** The set expanded, the member `$each` stands for, the directory,
+  /// the environment, the program §5.4 finds — that is one answer, and
+  /// `--dry-run` is supposed to print the very answer a run performs. It was
+  /// constructed twice from the same six values, once in this arm and once
+  /// inside `dryRun`, so a seventh would have reached one of them and the dry
+  /// run would have promised something the run did not do — silently, and in
+  /// the one place whose job is to be checkable against what somebody meant.
+  BodyResolver bodiesFor(
+    String task,
+    List<String> arguments, {
+    bool cacheSets = false,
+  }) => BodyResolver(
+    root: root,
+    resolver: resolver,
+    sets: file.sets,
+    verbs: known,
+    environment: environment,
+    passedThrough: (task: task, arguments: arguments),
+    cacheSets: cacheSets,
+  );
 
   try {
     switch (request) {
@@ -543,7 +175,7 @@ Future<int> runCli(
 
       case Validate():
         final problems = validateFile(
-          collected,
+          file,
           knownVerbs: known.keys.toSet(),
           sets: SetExpander(root: root),
         );
@@ -551,38 +183,37 @@ Future<int> runCli(
           err('$problems');
           return ExitCode.invalidFile;
         }
-        out(report.read(path, file.tasks.length, file.sets.length));
+        out(
+          report.read(
+            path,
+            file.tasks.length,
+            file.gates.length,
+            file.sets.length,
+          ),
+        );
         return ExitCode.success;
 
       case CheckCi():
         final found = checkCi(file, root: root);
         report.workflow(found).forEach(out);
         if (!found.ok) {
-          found.problems.forEach(err);
+          report.refusals(found).forEach(err);
           return ExitCode.invalidFile;
         }
         return ExitCode.success;
 
       case ListTasks(:final gate):
-        report
-            .listing(
-              gate == null
-                  ? file.tasks.values
-                  : tasksInGate(file, _gate(file, gate)),
-            )
+        // Narrowed to one set, the heading would repeat what was asked for;
+        // over the whole file it is what makes the answer readable.
+        (gate == null
+                ? report.grouping(file)
+                : report.listing(tasksInGate(file, _gate(file, gate))))
             .forEach(out);
         return ExitCode.success;
 
       case WhyTask(:final task):
-        if (!collected.tasks.containsKey(task)) {
-          throw XtaskFormatException('there is no task called `$task`');
-        }
-        report
-            .why(task, {
-              for (final entry in entryPoints(collected))
-                entry: ?routeTo(collected, from: entry, to: task),
-            })
-            .forEach(out);
+        refuseUnlessATask(file, task);
+        report.why(task, routesTo(file, task)).forEach(out);
         return ExitCode.success;
 
       case GateMembers(:final gate):
@@ -592,16 +223,13 @@ Future<int> runCli(
         return ExitCode.success;
 
       case DryRunTask(:final task, :final arguments):
-        _refuseArgumentsWithNowhereToGo(collected, task, arguments);
+        _refuseArgumentsWithNowhereToGo(file, task, arguments);
         return await dryRun(
-          file: collected,
-          root: root,
-          plan: planRun(collected, task),
-          resolver: resolver,
+          plan: planFor(file, task),
+          // Nothing runs, so nothing can change what a set expands to
+          // between two steps of the plan.
+          bodies: bodiesFor(task, arguments, cacheSets: true),
           log: out,
-          verbs: known,
-          environment: environment,
-          passedThrough: (task: task, arguments: arguments),
         );
 
       case RunTask(
@@ -610,22 +238,15 @@ Future<int> runCli(
         :final keepGoing,
         :final concurrency,
       ):
-        _refuseArgumentsWithNowhereToGo(collected, task, arguments);
+        _refuseArgumentsWithNowhereToGo(file, task, arguments);
         return await Executor(
-          bodies: BodyResolver(
-            root: root,
-            resolver: resolver,
-            sets: collected.sets,
-            verbs: known,
-            environment: environment,
-            passedThrough: (task: task, arguments: arguments),
-          ),
+          bodies: bodiesFor(task, arguments),
           starter: starter,
           log: out,
           markers: LogMarkers.forHost(environment),
           keepGoing: keepGoing,
           concurrency: concurrency,
-        ).run(planRun(collected, task));
+        ).run(planFor(file, task));
     }
   } on XtaskFormatException catch (problem) {
     err('$problem');
@@ -633,38 +254,49 @@ Future<int> runCli(
   }
 }
 
-/// Refuses arguments handed to a task that has no body to hand them to.
+/// Refuses arguments handed to something with no body to hand them to.
 ///
-/// A composite gathers other tasks and runs nothing of its own, so `xtask
-/// check -- --name x` has nowhere to put `--name x`. Passing them silently to
-/// nothing is the exact shape of failure this tool exists against: a command
-/// that looks as though it did what was asked.
+/// A gate set gathers tasks and runs nothing of its own, so `xtask check --
+/// --name x` has nowhere to put `--name x`; so does a task whose whole content
+/// is `needs:`. Passing them silently to nothing is the exact shape of failure
+/// this tool exists against: a command that looks as though it did what was
+/// asked.
 void _refuseArgumentsWithNowhereToGo(
   XtaskFile file,
   String name,
   List<String> arguments,
 ) {
+  if (arguments.isEmpty) {
+    return;
+  }
+  final quoted = arguments.map((a) => '`$a`').join(' ');
+  if (file.gates.containsKey(name)) {
+    throw XtaskFormatException(
+      '`$name` is a gate set, so there is nothing for $quoted to be an '
+      'argument to. Name the task that takes them',
+      file.gates[name],
+    );
+  }
   final task = file.tasks[name];
-  if (arguments.isEmpty || task == null || task.body != null) {
+  if (task == null || task.body != null) {
     return;
   }
   throw XtaskFormatException(
     'task `$name` has no `run:` and no `do:` of its own, so there is nothing '
-    'for ${arguments.map((a) => '`$a`').join(' ')} to be an argument to. Name '
-    'the task that takes them',
+    'for $quoted to be an argument to. Name the task that takes them',
     task.span,
   );
 }
 
 /// [gate], if the file knows the name.
 ///
-/// A gate set nobody is in and nothing collects is a typo, and the answer to a
-/// typo must not be an empty list: `--gate-members ci-analize` printing
-/// nothing reads as "that job checks nothing", which is the failure this whole
-/// tool is about. Whether a gate that DOES exist is orphaned is `--validate`'s
-/// question (§8), not this one's.
+/// A gate set that is not declared is a typo, and the answer to a typo must
+/// not be an empty list: `--gate-members ci-analize` printing nothing reads as
+/// "that job checks nothing", which is the failure this whole tool is about.
+/// Whether a DECLARED gate has members is `--validate`'s question (§8), not
+/// this one's.
 String _gate(XtaskFile file, String gate) {
-  final known = gateSets(file);
+  final known = file.gates.keys.toSet();
   if (known.contains(gate)) {
     return gate;
   }
