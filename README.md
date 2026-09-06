@@ -339,34 +339,34 @@ which nothing in the file distinguishes. A step that asks xtask a question —
 `--validate`, `--check-ci` itself — is reported the same way: it names no
 command that could drift, so there is nothing to move into the file.
 
-The rule is blanket, and the exception is written where the exception is:
+The rule is blanket, and the exception is written where the exception is: on
+the step's own `run:` line, after the command.
 
 ```yaml
 - run: dart run :xtask check
-# xtask: not a gate — the browser driver, which no action installs
-- run: npx playwright install --with-deps
+- run: npx playwright install --with-deps # xtask: not a gate — the browser driver, which no action installs
 ```
 
-The marker goes on the step's own line, or on a line of its own directly above
-it — not on a line inside another step's script, which is that script's
-comment and not this file's.
-
-A `run: |` block is read the way a shell reads it: line by line, with a `\` at
-the end of one joining it to the next, so a long command line is one step and
-not two — and a line is cut again at `&&`, `||`, `;` and `|`, because those are
-the other places a command begins. A separator inside quotes is text, and a
-segment that only moves the shell (`cd`, `export`) runs nothing. The same two placements hold inside a block — a marker at the end of a
-line excuses that line, and a marker on a line of its own excuses the command
-under it — and it has to be a comment where it stands. A marker inside a quoted
-string is what the step prints, not what the step claims, and excuses
-nothing.
+That is the one place the marker is read. A step is judged **as written**: the
+whole of its `run:` is one command line, and it either is one invocation of
+one gate set or it is not. Nothing here reads shell — no quotes, no `&&`, no
+`cd` — because every reading of shell a checker attempts is a way for a job
+that runs nothing to be counted as running something. So a `run: |` block of
+more than one line is a script, and a script is reported rather than read; a
+step with `${{ … }}` in it is reported rather than guessed at; and a mention
+of xtask anywhere but in command position — `echo run xtask check`,
+`timeout 600 ./xtask check` — is a command like any other. Put the marker
+after the `|` to excuse a whole script, use `working-directory:` rather than
+`cd`, and put a `timeout:` on the task rather than around the invocation. A
+step with an `if:` is reported with its condition beside the gate it runs,
+since whether the condition holds is not something this file can say.
 
 **The reason is required.** A marker with nothing after it is refused, because
 a marker with nothing after it is what this becomes when it is reached for to
 make a red gate green.
 
 **And it only excuses a step that would otherwise be reported as a command**,
-which is the one thing it claims: that xtask misread this step. On a step that
+which is the one thing it claims: that this step is not a gate. On a step that
 does reach xtask it is refused, whatever it says — one that runs a gate set,
 one that names a gate set under a mode, one that asks a question, one the
 command line itself turns away, one that names a gate set with a typo in it.

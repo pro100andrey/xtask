@@ -295,7 +295,7 @@ List<String> workflow(CiReport report) {
       'job was forgotten, and xtask cannot tell those apart';
   return [
     for (final invocation in report.invocations)
-      _ran(invocation.step.workflow, invocation.step.job, invocation.gate),
+      _ran(invocation.step, invocation.gate),
     // Named rather than passed over. Such a step is not a problem and is not
     // a gate either, and a listing that showed neither left a reader unable
     // to tell it had been read at all.
@@ -309,8 +309,12 @@ List<String> workflow(CiReport report) {
   ];
 }
 
-String _ran(String workflow, String job, String gate) =>
-    '$workflow: job `$job` runs the gate set `$gate`';
+String _ran(CiStep step, String gate) =>
+    '${step.workflow}: job `${step.job}` runs the gate set `$gate`'
+    // The condition is quoted, not judged: whether it holds is the
+    // workflow's business, and a reader deciding whether the gate is covered
+    // needs to see it beside the gate.
+    '${step.condition == null ? '' : ', when `${step.condition}`'}';
 
 String _asked(CiStep step, String mode) =>
     '${step.workflow}: job `${step.job}` asks `$mode`, which is a question '
@@ -337,6 +341,15 @@ String _why(CiProblem problem) => switch (problem) {
     'runs `${step.command}`. What runs belongs in the task file as '
         'a task in a gate set; a job runs the gate, so that the two cannot '
         'drift apart',
+  RunsAScript(:final lines) =>
+    'runs a script of $lines lines, and a script is not read here — a job '
+        'runs one invocation of one gate set. Give a gate set a step of its '
+        'own, and if the rest must stay a script, say why with '
+        '`$exemptionMarker — …` after the `|`',
+  RunsAnExpression(:final step) =>
+    'runs `${step.command}`, which holds a `\${{ … }}` expression this '
+        'checker cannot read. Name the gate set as written, or say why the '
+        'step is not one',
   // **The command line's own sentence, not a guess at it.** Such a step may
   // name a gate set correctly and still exit before doing anything, and
   // "what runs belongs in the task file" about it sends the reader to move a

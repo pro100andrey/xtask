@@ -75,14 +75,17 @@ here — a reader of 0.1.0 never saw them.
   `$all` inside a larger word, `all:` beside `each:`, a marker in `exclusive:`,
   a `timeout:` on a `do:` — a file with four of them cost four rounds of
   fix-and-rerun and now costs one.
-- **`--check-ci` reads a step the way a shell does.** A `run:` block is read
-  line by line and each line is cut at `&&`, `||`, `;` and `|`; quotes and
-  escapes are honoured, so a mention of xtask inside a string is a banner and
-  not an invocation; and a step is recognised by its words parsing into a gate
-  set this file declares, whatever prefix stands in front of it.
-- **An exemption is answered.** `# xtask: not a gate` requires a reason, is
-  reported when it excuses nothing, and does not silence a misspelled gate set
-  or a command line the parser refuses.
+- **`--check-ci` judges a step as written, and reads no shell.** The words
+  after xtask are handed to the command line's own parser, so every spelling
+  it accepts is one a workflow may use and every refusal is quoted in its own
+  words; a mode is reported as a question rather than as a command. A script
+  of more than one line, a `${{ … }}` expression, and a mention of xtask
+  anywhere but in command position are each reported rather than guessed at,
+  and a step's `if:` is printed beside the gate it runs. `xtask.exe` and
+  `.\xtask` are recognised.
+- **An exemption is answered.** `# xtask: not a gate — reason` on a step's
+  `run:` line requires the reason, is reported when it excuses nothing, and
+  does not silence a misspelled gate set or a command line the parser refuses.
 - **A repository-relative program is read from where the body runs**, not from
   where the command was typed, and comes back in the separators the machine
   writes.
