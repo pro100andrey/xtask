@@ -75,6 +75,28 @@ Set<String> _readings(String pattern) {
     );
   }
 
+  if (hasEmptyAlternative(pattern)) {
+    // **Refused here, because `package:glob` refuses it nowhere.** `{lib,}`
+    // reads as "lib or nothing"; the library builds the node without
+    // complaint and throws `Bad state: No element` from it at MATCH time,
+    // past the `FormatException` guard every caller wraps compilation in.
+    // That ended `--validate` at 255 on a pattern the file wrote.
+    //
+    // The rule is the whole shape rather than the shapes that happen to
+    // crash: whether one does depends on which segment the empty alternative
+    // is in, which is the library's internals and not something a file's
+    // author can be asked to know. `_emptiesAnAlternative` already keeps this
+    // shape out of the readings this file INVENTS, on the stated ground that
+    // it is one the file could not have written — this is the other half of
+    // that sentence.
+    throw FormatException(
+      '`${_short(pattern)}` has a brace alternative with nothing in it. '
+      '`{lib,}` means "lib, or nothing at all", which is not a path and not '
+      'something this engine will match against a file. Write the '
+      'alternative out, or drop the braces',
+    );
+  }
+
   if (pattern.isEmpty) {
     // **Answered before anything is invented, because the exit drops what
     // this function invents.** `**/` alone reads as the empty pattern, which
@@ -153,6 +175,69 @@ Set<String> _readings(String pattern) {
 bool _emptiesAnAlternative(String reading, String tail) =>
     (reading.endsWith('{') || reading.endsWith(',')) &&
     (tail.isEmpty || tail.startsWith(',') || tail.startsWith('}'));
+
+/// Whether [pattern] has a brace alternative with nothing in it.
+///
+/// Reads the pattern the way `package:glob` reads it, which is why the escape
+/// and the character class are here: `\{a,\}` writes two literal braces and
+/// `[{,}]` writes a class holding three characters, and neither is an
+/// alternative at all.
+bool hasEmptyAlternative(String pattern) {
+  // One entry per open `{`: whether the alternative being read has anything
+  // in it yet. A nested group counts as content for the group holding it.
+  final filled = <bool>[];
+  var inClass = false;
+
+  void fill() {
+    if (filled.isNotEmpty) {
+      filled[filled.length - 1] = true;
+    }
+  }
+
+  for (var at = 0; at < pattern.length; at++) {
+    final character = pattern[at];
+    if (character == r'\') {
+      // Whatever follows is a literal, and a literal is content.
+      at++;
+      fill();
+      continue;
+    }
+    if (inClass) {
+      inClass = character != ']';
+      fill();
+      continue;
+    }
+    switch (character) {
+      case '[':
+        inClass = true;
+        fill();
+      case '{':
+        fill();
+        filled.add(false);
+      case ',':
+        // Outside braces a comma is an ordinary character in a file name.
+        if (filled.isEmpty) {
+          continue;
+        }
+        if (!filled.last) {
+          return true;
+        }
+        filled[filled.length - 1] = false;
+      case '}':
+        // A stray `}` is `Glob`'s to refuse, and it does.
+        if (filled.isEmpty) {
+          continue;
+        }
+        if (!filled.last) {
+          return true;
+        }
+        filled.removeLast();
+      default:
+        fill();
+    }
+  }
+  return false;
+}
 
 /// [pattern], short enough to read in a refusal.
 ///

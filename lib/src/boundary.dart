@@ -91,13 +91,24 @@ String workingDirectoryLeavesRoot({
 /// platform's notation, because it is about to be joined with the platform's
 /// own `p.join`.
 String? verbDirectoryUnderRoot(String root, String written) {
+  final String resolved;
   if (p.isAbsolute(written)) {
-    final resolved = p.normalize(written);
-    return p.equals(root, resolved) || p.isWithin(root, resolved)
-        ? resolved
-        : null;
+    resolved = p.normalize(written);
+    if (!p.equals(root, resolved) && !p.isWithin(root, resolved)) {
+      return null;
+    }
+  } else {
+    if (leavesRoot(written)) {
+      return null;
+    }
+    resolved = underRoot(root, written);
   }
-  return leavesRoot(written) ? null : underRoot(root, written);
+  // **And the machine's half, which `in:` was already asked and this was
+  // not.** The two say the same sentence about the same fence, so a directory
+  // inside the root that links outside it was refused for `in: linked` and
+  // handed to `context.run(workingDirectory: 'linked')` — the seam whose whole
+  // promise is that a verb starts a program the way a `run:` body does.
+  return staysUnder(root, resolved) ? resolved : null;
 }
 
 /// Why a verb's own working directory is refused on task [task].

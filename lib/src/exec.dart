@@ -465,7 +465,23 @@ final class Executor {
     final List<Resolved> resolved;
     try {
       resolved = bodies.resolveTask(task);
-    } on Object {
+    } on Object catch (thrown) {
+      // **Said before the place is given back, for the reason `_runMembers`
+      // gives when a member fails:** whoever is waiting for the place must
+      // find the run already over. This is `async`, so the rethrow reaches
+      // `_runOne` a microtask later — and the walk, handed a free slot by the
+      // line below and a run that has not failed yet, admitted the next task
+      // in the same pass. A missing program then stopped nothing, and the
+      // task it wrongly admitted bound `stdout` with its ordering flush while
+      // the failure's own error line was still on its way out, which ended
+      // the run at 255 with the diagnostic never printed.
+      //
+      // Every way `resolveTask` can refuse arrives here: a missing tool, an
+      // unset `env-required`, an unknown verb, a set that expands to nothing,
+      // an `in:` outside the root.
+      if (thrown is XtaskFormatException || !keepGoing) {
+        _givenUp.now();
+      }
       place.release();
       rethrow;
     }

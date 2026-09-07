@@ -325,4 +325,82 @@ void main() {
       expect(run.code, 0, reason: said);
     }, testOn: '!windows');
   });
+
+  group('a body that cannot be resolved is answered, not crashed into', () {
+    // **A subprocess, because a fake starter cannot show this.** Every
+    // executor test injects one, so the ordering flush that `stdout` really
+    // performs — and the window during which that sink is bound — never
+    // happens there. The defect lived in exactly that gap: the walk released
+    // the failing task's place before its failure was recorded, admitted the
+    // next task, and the next task's flush turned the first one's own error
+    // line into `StreamSink is bound to a stream` and exit 255.
+    late Directory root;
+
+    setUp(() {
+      root = tempRepo('unresolvable');
+      File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
+        'version: 1\n'
+        'gates: [check]\n'
+        'tasks:\n'
+        '  gone:\n'
+        '    desc: names a program that is not installed\n'
+        '    gate: [check]\n'
+        '    run: [no-such-program-4f3a9]\n'
+        '  after:\n'
+        '    desc: a program that is\n'
+        '    gate: [check]\n'
+        '    run: [sh, -c, "touch ran-after"]\n',
+      );
+    });
+
+    Future<({int code, String out})> run(List<String> args) async {
+      final result = await Process.run(
+        Platform.resolvedExecutable,
+        ['run', p.join(Directory.current.path, 'bin', 'xtask.dart'), ...args],
+        workingDirectory: root.path,
+      );
+      return (code: result.exitCode, out: '${result.stdout}${result.stderr}');
+    }
+
+    bool ranAfter() => File(p.join(root.path, 'ran-after')).existsSync();
+
+    test('it says which program is missing, and stops the run', () async {
+      final it = await run(['check']);
+      expect(
+        it.code,
+        3,
+        reason: 'a missing tool is 3, and 255 is not in the table: ${it.out}',
+      );
+      expect(
+        it.out,
+        contains('no-such-program-4f3a9'),
+        reason: 'the diagnostic was the thing being lost: ${it.out}',
+      );
+      expect(
+        ranAfter(),
+        isFalse,
+        reason: 'a failure stops what has not started: ${it.out}',
+      );
+      expect(it.out, contains('skipped'), reason: it.out);
+    }, testOn: '!windows');
+
+    test('and with --keep-going it says so and carries on', () async {
+      // The other half, and the one the first fix alone does not cover: here
+      // the next task IS admitted, on purpose, so the failing task's error
+      // line really is written while a real process is starting.
+      final it = await run(['check', '--keep-going']);
+      expect(it.code, 3, reason: it.out);
+      expect(it.out, contains('no-such-program-4f3a9'), reason: it.out);
+      expect(
+        it.out,
+        isNot(contains('StreamSink is bound')),
+        reason: 'a diagnostic must never end the run at 255: ${it.out}',
+      );
+      expect(
+        ranAfter(),
+        isTrue,
+        reason: '--keep-going means the rest still runs: ${it.out}',
+      );
+    }, testOn: '!windows');
+  });
 }

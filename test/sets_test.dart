@@ -801,4 +801,65 @@ void main() {
       expect(expandGlob(['**/*.lake']), ['deep/a.lake']);
     });
   }, testOn: 'posix');
+
+  group('a brace alternative with nothing in it', () {
+    // **Refused when the pattern is read, because the library refuses it
+    // nowhere.** `package:glob` compiles `{lib,}/**.dart` without complaint
+    // and throws `Bad state: No element` from it at MATCH time, past the
+    // `FormatException` guard every caller wraps compilation in — so
+    // `--validate` ended at 255 on a pattern a person wrote. Whether one
+    // crashes depends on which segment holds it, which is the library's
+    // internals; the rule here is the shape, so there is nothing to know.
+    test('is refused wherever it stands', () {
+      for (final pattern in [
+        '{lib,}/**.dart',
+        '{,b}/x',
+        '{a,}',
+        '{a,,b}',
+        '{,}',
+        '{a,b,}',
+        '{a,{b,}}',
+        'x/{a,}/y',
+        'a{,}b',
+      ]) {
+        expect(
+          () => zeroOrMoreDirectories(pattern),
+          throwsA(isA<FormatException>()),
+          reason: '`$pattern` has an alternative that is nothing',
+        );
+      }
+    });
+
+    test('and a full one still reads as it always did', () {
+      for (final pattern in [
+        '{lib,src}/**.dart',
+        '{a,b}',
+        'a{b,c}d',
+        '{**/,b}',
+        r'\{a,\}',
+        '[{,}]',
+        r'{a,\,}',
+      ]) {
+        expect(
+          () => zeroOrMoreDirectories(pattern),
+          returnsNormally,
+          reason: '`$pattern` names an alternative in every branch',
+        );
+      }
+    });
+
+    test(
+      'and the escape and the character class are read, not scanned for',
+      () {
+        // The two shapes a plain search for `,}` gets wrong: a backslash makes
+        // the brace a literal, and inside `[…]` a comma is one of the
+        // characters rather than a separator.
+        expect(hasEmptyAlternative(r'\{a,\}'), isFalse);
+        expect(hasEmptyAlternative('[{,}]'), isFalse);
+        expect(hasEmptyAlternative(r'{a,\,}'), isFalse);
+        expect(hasEmptyAlternative('{a,}'), isTrue);
+        expect(hasEmptyAlternative('a,b'), isFalse);
+      },
+    );
+  });
 }

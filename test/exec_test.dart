@@ -2139,6 +2139,30 @@ void main() {
       expect(starter.started, isEmpty);
     });
 
+    test('and so is one inside the root that links out of it', () async {
+      // **The half `in:` was already asked and this was not.** The written
+      // form of `linked` is unimpeachable — one segment, relative, nothing
+      // climbing — and the machine is where it leaves: `in: linked` was
+      // refused for exactly this and `context.run(workingDirectory: 'linked')`
+      // was allowed, in the seam whose promise is that a verb starts a program
+      // the way a `run:` body does.
+      Directory(p.join(root.parent.path, 'outside-the-root')).createSync();
+      Link(p.join(root.path, 'linked')).createSync(
+        p.join(root.parent.path, 'outside-the-root'),
+      );
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',
+        'a',
+        verbs: {
+          'shell-out': (context) =>
+              context.run(['ruff'], workingDirectory: 'linked'),
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(starter.started, isEmpty);
+      expect(logged.join('\n'), contains('outside the repository'));
+    }, testOn: 'posix');
+
     test('and a program it cannot find is still code 3', () async {
       final code = await runFile(
         'version: 1\ntasks:\n  a: {desc: x, do: shell-out}\n',

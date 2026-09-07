@@ -1,6 +1,8 @@
 /// `--validate` — the first gate any project should adopt.
 library;
 
+import 'package:path/path.dart' as p;
+
 import 'boundary.dart';
 import 'context.dart';
 import 'errors.dart';
@@ -49,12 +51,20 @@ ValidationReport validateFile(
 }) {
   final problems = <XtaskFormatException>[];
 
+  // **The machine half of the boundary, asked exactly when the machine is
+  // available.** `sets` is already the one thing here that reads the disk, and
+  // its root is the fence every path is measured against — so a link out of
+  // the repository is answered in the same run as the written form, rather
+  // than left for `--dry-run` to find. Where the filesystem was withheld it
+  // is not asked, which is what the parameter has always meant.
+  final root = sets?.root;
+
   for (final task in file.tasks.values) {
     _checkDoesSomething(task, problems);
     _checkVerb(task, knownVerbs, problems);
     _checkSetReferences(task, file, problems);
-    _checkWorkingDirectory(task, file, problems);
-    _checkRemoveArguments(task, file, problems);
+    _checkWorkingDirectory(task, file, problems, root);
+    _checkRemoveArguments(task, file, problems, root);
   }
 
   _checkGraph(file, problems);
@@ -103,6 +113,7 @@ void _checkWorkingDirectory(
   Task task,
   XtaskFile file,
   List<XtaskFormatException> problems,
+  String? root,
 ) {
   final written = task.workingDirectory;
   if (written == null) {
@@ -136,6 +147,30 @@ void _checkWorkingDirectory(
     );
     return;
   }
+
+  if (root == null) {
+    return;
+  }
+  // Nothing above climbs, so what is left can only leave through a link — the
+  // half `staysUnder` answers and the written form cannot. The run asks it
+  // when it reaches the task, and asking it only there is the split this
+  // function was written to close.
+  for (final path in composed) {
+    if (staysUnder(root, underRoot(root, path))) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        workingDirectoryLeavesRoot(
+          task: task.name,
+          written: path,
+          throughALink: true,
+        ),
+        task.span,
+      ),
+    );
+    return;
+  }
 }
 
 /// The repository boundary, asked of the arguments `do: remove` will delete.
@@ -153,6 +188,7 @@ void _checkRemoveArguments(
   Task task,
   XtaskFile file,
   List<XtaskFormatException> problems,
+  String? root,
 ) {
   final body = task.body;
   if (body is! DoBody || body.verb != removeVerbName) {
@@ -185,6 +221,48 @@ void _checkRemoveArguments(
       XtaskFormatException(removeLeavesRoot(written: argument), task.span),
     );
   }
+
+  final base = _removeBase(task, root);
+  if (base == null) {
+    return;
+  }
+  // The machine's half, asked of the directory holding what would go — which
+  // is what the verb asks, because the delete lands where the link leads.
+  for (final argument in written.toSet()) {
+    if (leavesRoot(argument) ||
+        staysUnder(base, p.dirname(underRoot(base, argument)))) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        removeLeavesRoot(written: argument, throughALink: true),
+        task.span,
+      ),
+    );
+  }
+}
+
+/// Where `do: remove`'s arguments are read from, or null when this cannot say.
+///
+/// The verb expands them from the directory the task runs in, so this has to
+/// as well or the two answer different questions about the same file. An `in:`
+/// carrying a marker stands for one directory per member and is not one path
+/// here; the run asks the machine about each of them as it reaches it, and
+/// answering for the wrong one would be worse than not answering.
+String? _removeBase(Task task, String? root) {
+  if (root == null) {
+    return null;
+  }
+  final written = task.workingDirectory;
+  if (written == null) {
+    return root;
+  }
+  if (written.contains(allMarker) ||
+      written.contains(eachMarker) ||
+      leavesRoot(written)) {
+    return null;
+  }
+  return underRoot(root, written);
 }
 
 void _checkVerb(

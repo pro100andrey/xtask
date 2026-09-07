@@ -58,6 +58,18 @@ here — a reader of 0.1.0 never saw them.
   not UTF-8 from a task, a pattern that will not compile, a `remove` that could
   not delete, a `needs:` chain deep enough to overflow the stack, and a body
   that threw anything at all.
+- **`do: remove` deletes from where its task runs.** A task written `in: sub`
+  had its `build` looked for and deleted at the repository root instead, while
+  `--dry-run` printed `in …/sub` on the line directly above `del build` — so
+  the plan promised the one thing the run would not do, in the only body that
+  deletes recursively. The fence has not moved: an argument still may not
+  climb, and a link out of the repository is still refused.
+- **A brace alternative with nothing in it is refused.** `include:
+  ['{lib,}/**.dart']` compiles — `package:glob` builds it without complaint —
+  and throws `Bad state: No element` at MATCH time, past the guard every
+  caller wraps compilation in, so `--validate` ended at 255 on a pattern the
+  file wrote. The rule is the shape rather than the shapes that happen to
+  crash, which depend on which segment holds the alternative.
 - **A closed reader is an ordinary end.** `xtask check | head -1` and
   `xtask check >&-` both used to end the run — the first reporting a task
   failure having started nothing, the second at 255 from inside its own failure

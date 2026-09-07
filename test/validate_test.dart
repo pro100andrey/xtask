@@ -624,4 +624,86 @@ void main() {
       expect(report.toString(), contains('line 4'));
     });
   });
+
+  group('the boundary a link crosses', () {
+    // **`--validate` asked the written form and stopped there.** A directory
+    // inside the root that is a link to one outside it passes every question
+    // a string can be asked, so `in: linked` and `remove`'s `linked/secret`
+    // were called "nothing wrong" here and refused by the run — the split
+    // this module says it exists to close, in the two places that reach a
+    // working directory and a recursive delete.
+    //
+    // Asked only where the filesystem is: `sets` is already what decides that,
+    // and it carries the root the fence is measured from.
+    late Directory root;
+
+    setUp(() {
+      root = tempRepo('validate_link');
+      Directory(p.join(root.parent.path, 'outside-the-root')).createSync();
+      Link(
+        p.join(root.path, 'linked'),
+      ).createSync(p.join(root.parent.path, 'outside-the-root'));
+    });
+
+    String reportFor(String yaml) => validateFile(
+      parseXtaskFile(yaml),
+      knownVerbs: const {'remove'},
+      sets: SetExpander(root: root.path),
+    ).toString();
+
+    test('is refused for a working directory', () {
+      expect(
+        reportFor(
+          'version: 1\n'
+          'tasks:\n'
+          '  a: {desc: x, in: linked, run: [echo, hi]}\n',
+        ),
+        contains('outside the repository'),
+      );
+    });
+
+    test('and for what `remove` would delete', () {
+      expect(
+        reportFor(
+          'version: 1\n'
+          'tasks:\n'
+          '  a: {desc: x, do: remove, args: [linked/secret]}\n',
+        ),
+        contains('through a link'),
+      );
+    });
+
+    test('and a directory the root really owns is still clean', () {
+      Directory(p.join(root.path, 'sub')).createSync();
+      expect(
+        validateFile(
+          parseXtaskFile(
+            'version: 1\n'
+            'tasks:\n'
+            '  a: {desc: x, in: sub, run: [echo, hi]}\n',
+          ),
+          knownVerbs: const {'remove'},
+          sets: SetExpander(root: root.path),
+        ).problems,
+        isEmpty,
+      );
+    });
+
+    test('and without a filesystem the question is not asked', () {
+      // `sets: null` is what "the filesystem is genuinely unavailable" means
+      // here, and it has always meant the checks that read the disk are not
+      // done rather than that they answer wrongly.
+      expect(
+        validateFile(
+          parseXtaskFile(
+            'version: 1\n'
+            'tasks:\n'
+            '  a: {desc: x, in: linked, run: [echo, hi]}\n',
+          ),
+          knownVerbs: const {'remove'},
+        ).problems,
+        isEmpty,
+      );
+    });
+  }, testOn: 'posix');
 }

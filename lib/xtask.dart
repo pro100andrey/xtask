@@ -72,7 +72,17 @@ Future<int> runXtask(
     // went away stops writing AND stops handing that descriptor to its
     // children. Two answers to "is anybody reading" is two things that can
     // disagree, and this is the one place that has the answer.
-    starter: SystemProcessStarter(readerGone: () => out.gone),
+    starter: SystemProcessStarter(
+      readerGone: () => out.gone,
+      // **The ordering flush goes through the writer, not around it.** An
+      // `IOSink` counts as bound to a stream for as long as a flush is in
+      // flight, and a `writeln` inside that window throws `StateError`
+      // instead of writing — ending the run at 255, a code the table does not
+      // have, over a line that was only a diagnostic. Asked of the sink
+      // directly, that window is one nothing else can see; asked here, it is
+      // the same one fact `readerGone` already comes from.
+      flushStdout: out.flush,
+    ),
     verbs: verbs,
   );
 }
@@ -120,12 +130,55 @@ final class _Writer {
 
   final IOSink _sink;
   var _closed = false;
+  var _flushing = false;
+
+  /// Lines written while a flush was in flight, in the order they were
+  /// written.
+  final _held = <String>[];
 
   /// Whether the reader has gone away.
   bool get gone => _closed;
 
+  /// Flushes the sink, holding back what is written until it has settled.
+  ///
+  /// **The starter's ordering flush, so that the window it opens is visible
+  /// from here.** The flush exists to put this process's buffered lines ahead
+  /// of an inheriting child's direct ones, and for as long as it is in flight
+  /// the sink is bound: a `writeln` then throws rather than writes. Held
+  /// lines go out in order the moment it settles, which is what the flush was
+  /// asked for in the first place.
+  ///
+  /// The hold lasts as long as the real flush and not a moment less. A caller
+  /// may stop WAITING on this — the starter bounds it, because a flush on a
+  /// pipe whose reader has gone can return a future nothing completes — but
+  /// the sink is bound until it settles either way, so releasing the hold at
+  /// a deadline would only put the crash back. Where that future never
+  /// settles there is no reader left, `done` latches [gone], and a held line
+  /// had nowhere to go.
+  Future<void> flush() {
+    if (_closed || _flushing) {
+      return Future<void>.value();
+    }
+    _flushing = true;
+    return _sink.flush().whenComplete(_letHeldOut);
+  }
+
+  void _letHeldOut() {
+    _flushing = false;
+    if (_held.isEmpty) {
+      return;
+    }
+    final waiting = List<String>.of(_held);
+    _held.clear();
+    waiting.forEach(write);
+  }
+
   void write(String line) {
     if (_closed) {
+      return;
+    }
+    if (_flushing) {
+      _held.add(line);
       return;
     }
     try {

@@ -43,6 +43,19 @@ Map<String, Verb> builtInVerbs({required String root}) => {
 /// nothing is not, because "delete what is there" is satisfied by there being
 /// nothing.
 Future<int> removeVerb(VerbContext context, {required String root}) async {
+  // **Where the task runs, fenced by where the repository ends.** Two
+  // different questions were both answered with [root]: a task written
+  // `in: sub` had its `build` looked for and deleted at the repository root
+  // instead, while `--dry-run` printed `in …/sub` directly above `del build`
+  // and so promised the one thing the run would not do. Every other body
+  // reads its paths from `in:`, and this is the only body that deletes.
+  //
+  // The fence stays [root] and does not move with the base: an argument
+  // cannot climb — [leavesRoot] refused that above — so joining onto a
+  // directory the root already owns only ever goes deeper, and a link out is
+  // still asked about against the root itself.
+  final base = context.workingDirectory;
+
   for (final argument in context.args) {
     final refusal = _outsideRoot(argument);
     if (refusal != null) {
@@ -54,7 +67,7 @@ Future<int> removeVerb(VerbContext context, {required String root}) async {
   {
     final List<String> paths;
     try {
-      paths = pathsMatchingAll(context.args, root: root);
+      paths = pathsMatchingAll(context.args, root: base);
     } on FormatException catch (problem) {
       // **The same refusal a set gets for the same typo.** Uncaught, a `[` or
       // an `a{b` among these arguments left the verb as a raw
@@ -65,14 +78,14 @@ Future<int> removeVerb(VerbContext context, {required String root}) async {
       return ExitCode.invalidFile;
     }
     for (final path in paths) {
-      final refusal = _throughALink(root, path);
+      final refusal = _throughALink(root, path, underRoot(base, path));
       if (refusal != null) {
         context.log(refusal);
         return ExitCode.invalidFile;
       }
     }
     for (final path in paths) {
-      await _delete(underRoot(root, path), context);
+      await _delete(underRoot(base, path), context);
     }
   }
   return ExitCode.success;
@@ -221,17 +234,22 @@ bool _looksLikeGlob(String argument) =>
     argument.contains('[') ||
     argument.contains('{');
 
-/// Why [path] under [root] may not be deleted on this machine, or null.
+/// Why [absolute] may not be deleted on this machine, or null; [written] is
+/// what the refusal quotes back.
 ///
 /// The path's own last component is removed and never followed. What leads
 /// to it may be a link too, and one that leads outside the repository would
 /// take a recursive delete with it — so the fence the file was asked when the
 /// arguments were read is asked of the machine here, and by `--dry-run`, at
 /// the moment of the delete.
-String? _throughALink(String root, String path) =>
-    staysUnder(root, p.dirname(underRoot(root, path)))
+///
+/// [absolute] is passed in rather than rebuilt here, because what it is
+/// relative to is the task's working directory and what it is fenced by is
+/// [root] — the two this verb had confused.
+String? _throughALink(String root, String written, String absolute) =>
+    staysUnder(root, p.dirname(absolute))
     ? null
-    : removeLeavesRoot(written: path, throughALink: true);
+    : removeLeavesRoot(written: written, throughALink: true);
 
 Future<void> _delete(String path, VerbContext context) async {
   // `Link` first, and by type rather than by asking the path: a symlink is
@@ -294,6 +312,7 @@ Future<void> _deleting(String path, Future<void> Function() delete) async {
 ({List<String> paths, String? refused}) removeWouldDelete(
   List<String> arguments, {
   required String root,
+  required String base,
 }) {
   for (final argument in arguments) {
     if (leavesRoot(argument)) {
@@ -302,7 +321,7 @@ Future<void> _deleting(String path, Future<void> Function() delete) async {
   }
   final List<String> matched;
   try {
-    matched = pathsMatchingAll(arguments, root: root);
+    matched = pathsMatchingAll(arguments, root: base);
   } on FormatException catch (problem) {
     return (paths: const [], refused: '`remove`: ${problem.message}');
   }
@@ -312,7 +331,7 @@ Future<void> _deleting(String path, Future<void> Function() delete) async {
       // something this would delete — and saying it would be a promise about
       // a file that does not exist.
       if (FileSystemEntity.typeSync(
-            underRoot(root, path),
+            underRoot(base, path),
             followLinks: false,
           ) !=
           FileSystemEntityType.notFound)
@@ -321,7 +340,7 @@ Future<void> _deleting(String path, Future<void> Function() delete) async {
   for (final path in present) {
     // The same fence the verb asks of the machine, so the plan does not
     // promise a delete the run refuses.
-    if (_throughALink(root, path) case final refusal?) {
+    if (_throughALink(root, path, underRoot(base, path)) case final refusal?) {
       return (paths: const [], refused: refusal);
     }
   }

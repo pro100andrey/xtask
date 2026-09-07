@@ -64,7 +64,11 @@ void main() {
     });
 
     test('and the plan says so rather than promising the delete', () {
-      final would = removeWouldDelete(['out/x'], root: root.path);
+      final would = removeWouldDelete(
+        ['out/x'],
+        root: root.path,
+        base: root.path,
+      );
       expect(would.refused, contains('through a link'));
       expect(would.paths, isEmpty);
     });
@@ -344,6 +348,7 @@ void main() {
       final would = removeWouldDelete(
         ['build', 'coverage', 'keep.txt'],
         root: root.path,
+        base: root.path,
       );
       expect(
         would.paths,
@@ -358,19 +363,23 @@ void main() {
       // "nothing of these is on disk, which is not an error" — a positive
       // assurance about a recursive delete aimed outside the repository.
       given(['a.txt']);
-      final outside = removeWouldDelete(['../etc'], root: root.path);
+      final outside = removeWouldDelete(
+        ['../etc'],
+        root: root.path,
+        base: root.path,
+      );
       expect(outside.paths, isEmpty);
       expect(outside.refused, contains('outside the repository'));
       expect(outside.refused, contains('../etc'));
 
-      final bad = removeWouldDelete(['a{b'], root: root.path);
+      final bad = removeWouldDelete(['a{b'], root: root.path, base: root.path);
       expect(bad.paths, isEmpty);
       expect(bad.refused, contains('not a valid pattern'));
     });
 
     test('and it deletes nothing itself', () {
       given(['build/out/a.o']);
-      removeWouldDelete(['build'], root: root.path);
+      removeWouldDelete(['build'], root: root.path, base: root.path);
       expect(exists('build/out/a.o'), isTrue);
     });
   });
@@ -413,6 +422,43 @@ void main() {
       // remove, and this is the pair most likely to drift: a primitive added to
       // the map and forgotten in the set is one `--validate` would then refuse.
       expect(builtInVerbs(root: root.path).keys.toSet(), builtInVerbNames);
+    });
+  });
+
+  group('what `remove` is relative to', () {
+    // **The task's `in:`, and it was the repository root.** A task written
+    // `in: sub` had `build` looked for and deleted at the root instead, and
+    // `--dry-run` printed `in …/sub` on the line directly above `del build` —
+    // so the plan promised the one thing the run would not do, in the only
+    // body that deletes.
+    test('is where the task runs, not where the repository starts', () {
+      given(['sub/build/inner.o', 'build/outer.o']);
+      final base = p.join(root.path, 'sub');
+
+      final would = removeWouldDelete(['build'], root: root.path, base: base);
+      expect(would.refused, isNull);
+      expect(would.paths, ['build']);
+
+      expect(
+        pathsMatchingAll(['build'], root: base),
+        ['build'],
+        reason: 'read from `sub`, where the body runs',
+      );
+    });
+
+    test('and the fence is still where the repository ends', () {
+      // The base moves with `in:`; the boundary does not. An argument cannot
+      // climb, so a deeper base only ever reaches deeper — and a link out is
+      // asked about against the root itself.
+      given(['sub/build/inner.o']);
+      final base = p.join(root.path, 'sub');
+      final would = removeWouldDelete(
+        ['../../etc'],
+        root: root.path,
+        base: base,
+      );
+      expect(would.refused, isNotNull);
+      expect(would.paths, isEmpty);
     });
   });
 }

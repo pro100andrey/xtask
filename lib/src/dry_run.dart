@@ -99,7 +99,14 @@ Future<int> dryRun({
   if (body is! ResolvedVerb || body.verb != removeVerbName) {
     return (lines: const [], refused: false);
   }
-  final would = removeWouldDelete(body.arguments, root: root);
+  // Read from where the body runs, which is the directory printed on the
+  // `in` line just above these: a plan whose two lines disagree is worse than
+  // no plan, and this is the operation a reader checks line by line.
+  final would = removeWouldDelete(
+    body.arguments,
+    root: root,
+    base: body.workingDirectory,
+  );
   if (would.refused case final refusal?) {
     // In the run's own words, and in the run's own place: a `remove` aimed
     // outside the repository is not harmless, and "nothing of these is on
