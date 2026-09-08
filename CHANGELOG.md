@@ -58,6 +58,23 @@ here — a reader of 0.1.0 never saw them.
   not UTF-8 from a task, a pattern that will not compile, a `remove` that could
   not delete, a `needs:` chain deep enough to overflow the stack, and a body
   that threw anything at all.
+- **`do: remove` refuses an argument that names the directory it runs in.**
+  `args: ['']` — and `.`, and `./` — resolved to the working directory itself
+  and deleted it whole, recursively, answering 0. An empty entry in `args:` is
+  ordinary for a program, which is why it is legal, and every fence passed:
+  that directory really is inside the repository and nothing climbed out of
+  it.
+- **A `then:` target that needs a task still being resolved is not a ring.**
+  `x needs y`, `y then z`, `z needs x` is satisfiable — y, x, z — and was
+  refused with `x → z → x`, a pair with one edge between them. `then:` is the
+  one edge that reaches forwards, so such a continuation waits for the task it
+  follows instead of closing a cycle.
+- **`--check-ci` asks whether a job ENFORCES the gate set.** A step under a
+  `working-directory:` holding its own `xtask.yaml` runs THAT file's gate of
+  the same name, and a step carrying `continue-on-error: true` runs the gate
+  and cannot fail anything. Both were counted as the job that runs it, so the
+  gate looked covered and was not — the silent green this mode exists to find,
+  twice, inside the mode itself.
 - **`do: remove` deletes from where its task runs.** A task written `in: sub`
   had its `build` looked for and deleted at the repository root instead, while
   `--dry-run` printed `in …/sub` on the line directly above `del build` — so
