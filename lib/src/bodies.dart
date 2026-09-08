@@ -350,55 +350,24 @@ final class BodyResolver {
   /// Refuses a member the engine FOUND that the program would read as an
   /// option.
   ///
-  /// Found, not written: a repository may hold a file called `-n.dart`, and a
-  /// glob handing it over bare gives the program `-n`. A `values:` or list set
-  /// is the opposite — `--enable-asserts` is there because somebody wrote it —
-  /// so this asks where the member came from, not what it looks like.
-  ///
-  /// And it asks about the ARGUMENT: `--flavor=$each` is one word the author
-  /// composed, so only a marker standing alone becomes a word this engine
-  /// chose.
-  ///
-  /// Refused rather than fixed, because inserting `--` would change the argv a
-  /// task wrote.
+  /// The rule itself is `model.dart`'s, so that `--validate` — which expands
+  /// every set already — asks the same question and gets the same sentence.
   void _refuseFoundMemberReadAsOption(
     Task task,
     String program,
     List<String> written,
     List<String> members,
   ) {
-    final from = sets[task.all ?? task.each];
-    if (from is! GlobSet) {
-      return;
-    }
-    // **`args:` is argv too**, which the schema says in as many words:
-    // `run: [dart, format]` with `args: [\$all]` hands a repository file
-    // called `-n.dart` to the child as an option, and this is where that is
-    // caught.
-    final bare = written.indexWhere(
-      (word) => word == allMarker || word == eachMarker,
+    final refusal = foundMemberReadAsOption(
+      task: task,
+      program: program,
+      written: written,
+      members: members,
+      from: sets[task.all ?? task.each],
     );
-    if (bare == -1) {
-      // The member reaches `in:` or `env:` and never argv. Saying it would be
-      // read as an option would be false, and the advice — a `--` before a
-      // marker that is not there — impossible to follow.
-      return;
+    if (refusal != null) {
+      throw RunFailure(ExitCode.invalidFile, refusal);
     }
-    if (written.take(bare).contains('--')) {
-      return;
-    }
-    final found = members.where((member) => member.startsWith('-'));
-    if (found.isEmpty) {
-      return;
-    }
-    throw RunFailure(
-      ExitCode.invalidFile,
-      'task `${task.name}` would hand `${found.first}` to `$program` as '
-      'an argument, and a word beginning with `-` is an option to almost every '
-      'program. This one was matched by a glob rather than written, so write '
-      '`--` before the marker, which is where a command line says its operands '
-      'begin',
-    );
   }
 
   /// Where a body runs. `$each` is the member; anything else is relative to

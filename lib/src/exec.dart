@@ -569,10 +569,26 @@ final class Executor {
     }
 
     if (together) {
-      await Future.wait([
-        for (var at = 0; at < resolved.length; at++)
-          member(at, at == 0 ? first : null),
-      ]);
+      // **One request in the queue at a time, not one per member.** Written as
+      // a list literal, every member called `Slots.take()` before control
+      // returned to the walk — and a freed place is handed straight to
+      // whoever has waited longest, so with the queue full of this task's
+      // members no other plan step could begin until all of them had. `-j 4`
+      // over an eight-member suite ran the suite and only then the
+      // independent `format` that had been asked for first, which is the
+      // opposite of what the budget says it does. Asking for the next place
+      // only when there is one to ask for puts this task back in the same
+      // first-come-first-served queue as everything else.
+      final inFlight = <Future<void>>[];
+      for (var at = 0; at < resolved.length; at++) {
+        if (at > 0 && (stop || _givenUp.already)) {
+          // Checked before a place is taken rather than after: a member that
+          // takes one only to give it back is a place the walk could not see.
+          break;
+        }
+        inFlight.add(member(at, at == 0 ? first : await _slots.take()));
+      }
+      await Future.wait(inFlight);
     } else {
       for (var at = 0; at < resolved.length; at++) {
         await member(at, at == 0 ? first : null);

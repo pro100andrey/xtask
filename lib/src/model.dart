@@ -351,3 +351,57 @@ final class Task with Located {
   /// `parse` refuses the combination rather than letting it half-work.
   final int? timeout;
 }
+
+/// Why [task] would hand a member its glob FOUND to [program] as an option,
+/// or null.
+///
+/// Found, not written: a repository may hold a file called `-n.dart`, and a
+/// glob handing it over bare gives the program `-n`. A `values:` or list set
+/// is the opposite — `--enable-asserts` is there because somebody wrote it —
+/// so this asks where the member came from, not what it looks like.
+///
+/// And it asks about the ARGUMENT: `--flavor=$each` is one word the author
+/// composed, so only a marker standing alone becomes a word this engine chose.
+///
+/// Refused rather than fixed, because inserting `--` would change the argv a
+/// task wrote.
+///
+/// **Here rather than on the resolver**, because two readers ask it and only
+/// one could: the run and `--dry-run` reached it, `--validate` did not, and it
+/// already expands every set — so a file it called clean died at exit 2 the
+/// moment anybody ran the task.
+String? foundMemberReadAsOption({
+  required Task task,
+  required String program,
+  required List<String> written,
+  required List<String> members,
+  required NamedSet? from,
+}) {
+  if (from is! GlobSet) {
+    return null;
+  }
+  // **`args:` is argv too**, which the schema says in as many words:
+  // `run: [dart, format]` with `args: [$all]` hands a repository file called
+  // `-n.dart` to the child as an option, and this is where that is caught.
+  final bare = written.indexWhere(
+    (word) => word == allMarker || word == eachMarker,
+  );
+  if (bare == -1) {
+    // The member reaches `in:` or `env:` and never argv. Saying it would be
+    // read as an option would be false, and the advice — a `--` before a
+    // marker that is not there — impossible to follow.
+    return null;
+  }
+  if (written.take(bare).contains('--')) {
+    return null;
+  }
+  final found = members.where((member) => member.startsWith('-'));
+  if (found.isEmpty) {
+    return null;
+  }
+  return 'task `${task.name}` would hand `${found.first}` to `$program` as '
+      'an argument, and a word beginning with `-` is an option to almost every '
+      'program. This one was matched by a glob rather than written, so write '
+      '`--` before the marker, which is where a command line says its operands '
+      'begin';
+}

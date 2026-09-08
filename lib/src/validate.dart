@@ -547,6 +547,38 @@ void _checkSetsExpand(
   SetExpander sets,
   List<XtaskFormatException> problems,
 ) {
+  // **The members are here, so the question a run asks about them is here.**
+  // A file holding `-n.dart` with `include: ['*.dart']` and `args: [\$all]`
+  // was called clean and then refused at exit 2 by `--dry-run` and by the run
+  // — code 2 being, by its own classification, the file being wrong, which is
+  // this mode's whole remit.
+  for (final task in file.tasks.values) {
+    final body = task.body;
+    final named = task.all ?? task.each;
+    final from = named == null ? null : file.sets[named];
+    if (body is! RunBody || from is! GlobSet) {
+      continue;
+    }
+    final List<String> members;
+    try {
+      members = sets.expand(named!, from);
+    } on XtaskFormatException {
+      // Its own refusal is reported below; asking this of a set that would
+      // not expand would answer about nothing.
+      continue;
+    }
+    final refusal = foundMemberReadAsOption(
+      task: task,
+      program: body.argv.first,
+      written: [...body.argv.skip(1), ...task.args],
+      members: members,
+      from: from,
+    );
+    if (refusal != null) {
+      problems.add(XtaskFormatException(refusal, task.span));
+    }
+  }
+
   file.sets.forEach((name, set) {
     try {
       sets.expand(name, set);

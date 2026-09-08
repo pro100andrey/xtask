@@ -2323,6 +2323,44 @@ void main() {
       expect(marker.existsSync(), isTrue, reason: 'the child never ran');
     }, testOn: '!windows');
 
+    test('and a slow flush costs the ordering, not every later task', () async {
+      // **A deadline reached says the descriptor is SLOW.** It was latched as
+      // proof it was dead, and after that `inherits` was false for the rest of
+      // the run — so in a sequential run, where nothing collects, every later
+      // child's output went to `_nowhere`. The run looked normal and answered
+      // the right code with the analyzer's and the test runner's output gone.
+      final starter = SystemProcessStarter(
+        orderingDeadline: const Duration(milliseconds: 50),
+        flushStdout: () => Completer<void>().future,
+      );
+      final directory = Directory.systemTemp.createTempSync('xtask_slow');
+      addTearDown(() => directory.deleteSync(recursive: true));
+
+      Future<int> touch(String name) => starter.start(
+        '/bin/sh',
+        ['-c', 'touch ${p.join(directory.path, name)}'],
+        workingDirectory: Directory.current.path,
+        environment: const {},
+        runInShell: false,
+      );
+
+      expect(await touch('first'), 0);
+      final began = DateTime.now();
+      expect(await touch('second'), 0);
+      final again = DateTime.now().difference(began);
+
+      expect(
+        File(p.join(directory.path, 'second')).existsSync(),
+        isTrue,
+        reason: 'the second child ran',
+      );
+      expect(
+        again,
+        lessThan(const Duration(milliseconds: 500)),
+        reason: 'the deadline is paid once, not once per task',
+      );
+    }, testOn: '!windows');
+
     test('a child still runs when nobody is reading this process', () async {
       // The coupling this removes: with a reader, the engine flushes its own
       // stdout before an inheriting child and hands that descriptor down. With
@@ -2547,6 +2585,42 @@ void main() {
       expect(code, isNot(0));
     });
   }, testOn: 'vm');
+
+  group('a fan-out shares the budget it is counted against', () {
+    test('so an independent task is not made to wait for it all', () async {
+      // **Written as a list literal, every member asked for a place before
+      // control returned to the walk** — and a freed place goes straight to
+      // whoever has waited longest, so with the queue full of one task's
+      // members no other plan step could begin until all of them had. `-j 3`
+      // over an eight-member suite ran the suite and only then the
+      // independent task that had been asked for first, which is the opposite
+      // of what `budget.dart` says counting units buys.
+      starter = FakeStarter()..holds['ruff'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n'
+            '  many:\n'
+            '    values: [m1, m2, m3, m4, m5, m6, m7, m8]\n'
+            'tasks:\n'
+            '  all: {desc: a, needs: [suite, fmt]}\n'
+            r'  suite: {desc: s, each: many, run: [ruff, $each]}'
+            '\n'
+            '  fmt: {desc: f, run: [black]}\n',
+        'all',
+        concurrency: 3,
+      );
+      await pumpEventQueue();
+      expect(
+        starter.started.map((s) => p.basename(s.executable)),
+        contains('black'),
+        reason:
+            'the independent task never began while eight held members '
+            'occupied the queue',
+      );
+      starter.holds['ruff']!.complete();
+      await running;
+    });
+  });
 }
 
 void _admissionTable() {

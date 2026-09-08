@@ -34,9 +34,26 @@ final class SystemProcessStarter implements ProcessStarter {
 
   static Future<void> _flushStdout() => stdout.flush();
 
-  /// Whether this process's stdout has proved it cannot be flushed. Latched,
-  /// so [orderingDeadline] is paid once and not once per task.
+  /// Whether this process's stdout has proved it cannot be written to.
+  ///
+  /// **A real error, and no longer a slow answer.** A flush that exceeds
+  /// [orderingDeadline] proves the descriptor is SLOW — a paused terminal, a
+  /// pager, a CI log shipper — and that was being latched as proof it was
+  /// dead. After it, `inherits` is false for every remaining task, and a
+  /// sequential run gives those children no collector, so their output went
+  /// to `_nowhere`: the run looked normal, answered the right code, and the
+  /// analyzer's and the test runner's output was gone with nothing saying so.
+  ///
+  /// Whether anybody is reading is [readerGone]'s question and it is already
+  /// asked above; this is only about the descriptor failing outright.
   var _stdoutIsGone = false;
+
+  /// Whether the ordering flush has already cost a full [orderingDeadline].
+  ///
+  /// Latched so the wait is paid once rather than once per task. Losing the
+  /// ordering is all this costs: the child still writes to the real
+  /// descriptor, which is the part that matters.
+  var _orderingGivenUp = false;
 
   /// Whether the process this run writes to has stopped reading.
   ///
@@ -80,13 +97,16 @@ final class SystemProcessStarter implements ProcessStarter {
     //
     // The reader going away is not this task failing, so a closed pipe is
     // swallowed; and the flush is bounded because it can hang, which would end
-    // the isolate at 0. Either way the answer is latched and read back, since
-    // the flush is where a dead descriptor proves itself.
-    if (inherits) {
+    // the isolate at 0.
+    //
+    // **A deadline reached gives up the ORDERING and nothing else.** Only the
+    // closed pipe says the descriptor is unusable. Reading a slow flush as a
+    // dead one sent every later task's output to `_nowhere`.
+    if (inherits && !_orderingGivenUp) {
       try {
         await flushStdout().timeout(
           orderingDeadline,
-          onTimeout: () => _stdoutIsGone = true,
+          onTimeout: () => _orderingGivenUp = true,
         );
       } on FileSystemException catch (error) {
         if (!isAClosedPipe(error)) {
