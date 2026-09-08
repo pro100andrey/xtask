@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:xtask/src/boundary.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/exit_codes.dart';
@@ -460,5 +461,62 @@ void main() {
       expect(would.refused, isNotNull);
       expect(would.paths, isEmpty);
     });
+  });
+
+  group('what `remove` may not be handed', () {
+    // **The directory it runs in.** `args: ['']` is an ordinary entry for a
+    // program — `dart test --name ''` is why an empty argument is legal at all
+    // — and here every fence passed: the working directory is inside the
+    // repository, nothing climbs, no link is crossed. `in: sub` with an empty
+    // argument deleted `sub` whole and answered 0.
+    test('is the whole of where it stands, however that is written', () {
+      for (final argument in ['', '.', './']) {
+        expect(
+          removeRefuses(
+            root: root.path,
+            base: root.path,
+            written: argument,
+            absolute: underRoot(root.path, argument),
+          ),
+          isNotNull,
+          reason: '`$argument` names the working directory itself',
+        );
+      }
+    });
+
+    test('while something inside it is what the verb is for', () {
+      expect(
+        removeRefuses(
+          root: root.path,
+          base: root.path,
+          written: 'build',
+          absolute: underRoot(root.path, 'build'),
+        ),
+        isNull,
+      );
+    });
+
+    test('and a dry run asks before it asks what is on disk', () {
+      // `--dry-run` filtered the absent paths away and only then asked the
+      // boundary, so a leaf that is missing behind a link out of the
+      // repository was dropped before the fence was reached: the plan said
+      // "nothing of these is on disk" about an argument the run refuses.
+      Directory(p.join(root.parent.path, 'outside-remove')).createSync();
+      addTearDown(
+        () => Directory(
+          p.join(root.parent.path, 'outside-remove'),
+        ).deleteSync(recursive: true),
+      );
+      Link(
+        p.join(root.path, 'build'),
+      ).createSync(p.join(root.parent.path, 'outside-remove'));
+      final would = removeWouldDelete(
+        ['build/x'],
+        root: root.path,
+        base: root.path,
+      );
+      expect(would.refused, contains('through a link'));
+      expect(would.paths, isEmpty);
+    }, testOn: 'posix');
   });
 }

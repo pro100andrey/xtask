@@ -154,6 +154,54 @@ String removeLeavesRoot({required String written, bool throughALink = false}) =>
     'A verb that deletes recursively and treats a missing path '
     'as ordinary is the last place to take a path on trust';
 
+/// Why `remove` refuses [written], which names the directory it would run in.
+///
+/// **The verb deletes things INSIDE where it runs, never that directory.**
+/// `args: ['']` is an ordinary entry for a program — `dart test --name ''` is
+/// why an empty argument is legal at all — and here it resolves to the working
+/// directory itself: every fence passed, because the directory is inside the
+/// repository, and `in: sub` with an empty argument deleted `sub` whole and
+/// answered 0. `.` and `./` say the same thing, and so does any pattern that
+/// expands to it.
+String removeNamesItsOwnDirectory({required String written}) =>
+    '`remove` refuses ${written.isEmpty ? 'an empty argument' : '`$written`'}: '
+    'it names the directory the task runs in, not something inside it. This '
+    'verb deletes recursively and treats a missing path as ordinary, so the '
+    'one thing it must not be handed is the whole of where it stands';
+
+/// Why `remove` may not touch [absolute], or null if it may.
+///
+/// **One function, because four readers ask it and they had drifted.** The
+/// verb refuses when a run reaches it, `--dry-run` has to print the same
+/// refusal rather than a plan the run will not carry out, and `--validate`
+/// answers it when the file is read. Written out per caller, they disagreed in
+/// both directions: `--validate` fenced against the task's directory where the
+/// verb fences against the repository, and `--dry-run` dropped a path that was
+/// not on disk BEFORE asking about it, so it promised a delete the run
+/// refused.
+///
+/// [root] is where the repository ends and does not move. [base] is where the
+/// task runs, which is what the arguments are relative to. [written] is what
+/// the refusal quotes back.
+String? removeRefuses({
+  required String root,
+  required String base,
+  required String written,
+  required String absolute,
+}) {
+  if (p.equals(absolute, base)) {
+    return removeNamesItsOwnDirectory(written: written);
+  }
+  // The path's own last component is removed and never followed; what LEADS to
+  // it may be a link, and one leading out would take a recursive delete with
+  // it. A path that is not there cannot lead anywhere, so it is asked all the
+  // same and answered by `staysUnder` without being refused for absence.
+  if (!staysUnder(root, p.dirname(absolute))) {
+    return removeLeavesRoot(written: written, throughALink: true);
+  }
+  return null;
+}
+
 /// [posixPath], written the way this machine writes paths, under [root].
 ///
 /// **The file speaks POSIX and the machine may not.** Every path in

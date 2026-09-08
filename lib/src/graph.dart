@@ -226,7 +226,8 @@ const mostDepth = 1000;
 /// Throws [XtaskFormatException] — exit code 2 — for a name that does not
 /// exist and for a cycle, which is reported with the cycle spelled out.
 Plan planRun(XtaskFile file, String taskName) {
-  final planner = _Planner(file)..resolve(taskName, from: null);
+  final planner = _Planner(file, directly: {taskName})
+    ..resolve(taskName, from: null);
   return Plan(List.unmodifiable(planner.steps));
 }
 
@@ -236,8 +237,12 @@ Plan planRun(XtaskFile file, String taskName) {
 /// `needs:` and `then:` and a gate set is not a third kind of edge. Same
 /// order, same run-once rule and same cycle report as [planRun].
 Plan planGate(XtaskFile file, String gate) {
-  final planner = _Planner(file);
-  for (final task in _seedOrder(file, tasksInGate(file, gate))) {
+  final members = tasksInGate(file, gate);
+  final planner = _Planner(
+    file,
+    directly: {for (final task in members) task.name},
+  );
+  for (final task in _seedOrder(file, members)) {
     planner.resolve(task.name, from: null);
   }
   return Plan(List.unmodifiable(planner.steps));
@@ -469,9 +474,24 @@ void refuseUnlessATask(XtaskFile file, String name) {
 }
 
 final class _Planner {
-  _Planner(this.file);
+  _Planner(this.file, {this.directly = const {}});
 
   final XtaskFile file;
+
+  /// The names this plan reaches because somebody asked for them: the task on
+  /// the command line, or the members of the gate set being run.
+  ///
+  /// **A member the plan asks for is not made a continuation by INHERITING
+  /// one.** A continuation carries `then:`'s outcome — exit 4, and the
+  /// sentence saying the publish happened and the red result below it does
+  /// not undo that — and it is skipped when what it follows fails. Both are
+  /// right for the task a `then:` names, whether or not the gate also lists
+  /// it. Neither is right for a member that a continuation's `needs:`
+  /// happened to reach on the way: a plain build failure answered 4 and
+  /// printed the notice, and which of the two happened turned on which member
+  /// was declared first.
+  final Set<String> directly;
+
   final steps = <PlanStep>[];
 
   /// Tasks already emitted — the run-once rule.
@@ -481,6 +501,17 @@ final class _Planner {
   /// is the thing that can print the cycle; [_opened] is the thing that
   /// detects one.
   final _open = <String>[];
+
+  /// Continuations that cannot be emitted yet, oldest first.
+  ///
+  /// **A `then:` target is reached from inside whatever is still open above
+  /// it, and those are tasks it must come AFTER.** `x needs y`, `y then z`,
+  /// `z needs x` is satisfiable — y, x, z — and was refused as the cycle
+  /// `x → z → x`, because z's `needs:` found x on the stack and the stack
+  /// cannot tell "must precede" from "is still being resolved". Held here
+  /// instead and let out when the frame that was in the way ends, which is
+  /// exactly where the task it waits for has been emitted.
+  final _deferred = <({String name, Task from, String continuationOf})>[];
 
   /// The same names, as a set.
   ///
@@ -511,6 +542,7 @@ final class _Planner {
     String name, {
     required Task? from,
     String? continuationOf,
+    bool named = false,
     int depth = 0,
   }) {
     if (_done.contains(name)) {
@@ -587,7 +619,17 @@ final class _Planner {
     // continuation rather than a dependency: the body has happened by the time
     // anything in `then:` is reached.
     _done.add(name);
-    steps.add(PlanStep(task, continuationOf: continuationOf));
+    steps.add(
+      PlanStep(
+        task,
+        // [named] is a `then:` naming this task; anything else is inheritance
+        // down a `needs:` chain, which a task the plan already asks for does
+        // not take.
+        continuationOf: named || !directly.contains(name)
+            ? continuationOf
+            : null,
+      ),
+    );
 
     for (final next in task.then) {
       if (_opened.contains(next)) {
@@ -598,7 +640,72 @@ final class _Planner {
         // says nothing contradictory.
         continue;
       }
-      resolve(next, from: task, continuationOf: name, depth: depth + 1);
+      if (_waitsOnSomethingOpen(next)) {
+        _deferred.add((name: next, from: task, continuationOf: name));
+        continue;
+      }
+      resolve(
+        next,
+        from: task,
+        continuationOf: name,
+        named: true,
+        depth: depth + 1,
+      );
+    }
+
+    _letOutWhatThisFrameUnblocked(depth);
+  }
+
+  /// Whether [name] needs, directly or through its own `needs:`, a task whose
+  /// frame is still open.
+  ///
+  /// Asked only of a `then:` target, which is the one edge that reaches
+  /// forwards: everything else on the stack is something the walk is on its
+  /// way into, and needing one of those really is a ring.
+  bool _waitsOnSomethingOpen(String name, [Set<String>? walked]) {
+    final seen = walked ?? <String>{};
+    if (!seen.add(name)) {
+      return false;
+    }
+    if (_opened.contains(name)) {
+      return true;
+    }
+    final task = file.tasks[name];
+    if (task == null) {
+      // A name that is not a task is the resolver's to refuse, with the
+      // sentence it has for it. Answering here would refuse it as an ordering.
+      return false;
+    }
+    return task.needs.any((need) => _waitsOnSomethingOpen(need, seen));
+  }
+
+  /// Resolves whatever the ending of this frame has made possible.
+  ///
+  /// Run after the continuations, so a deferred one lands behind the task it
+  /// was waiting for and behind that task's own `then:`. At the outermost
+  /// frame nothing is open, so nothing can still be waiting.
+  void _letOutWhatThisFrameUnblocked(int depth) {
+    var at = 0;
+    while (at < _deferred.length) {
+      final held = _deferred[at];
+      if (_done.contains(held.name)) {
+        _deferred.removeAt(at);
+        continue;
+      }
+      if (_waitsOnSomethingOpen(held.name)) {
+        at++;
+        continue;
+      }
+      _deferred.removeAt(at);
+      resolve(
+        held.name,
+        from: held.from,
+        continuationOf: held.continuationOf,
+        named: true,
+        depth: depth + 1,
+      );
+      // One let out can be what another was waiting for.
+      at = 0;
     }
   }
 }

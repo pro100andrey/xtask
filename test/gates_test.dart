@@ -326,4 +326,64 @@ tasks:
       expect(markers.error('boom').single, contains('boom'));
     });
   });
+
+  group('what a gate set calls a continuation', () {
+    // **A continuation carries `then:`'s outcome — exit 4, and the sentence
+    // saying the publish happened — and is skipped when what it follows
+    // fails.** Both belong to the task a `then:` names. Neither belongs to a
+    // member that a continuation's `needs:` happened to reach on the way, and
+    // that member was getting them: a plain build failure answered 4 and
+    // printed the notice, and which of the two happened turned on which
+    // member was declared first.
+    const yaml = '''
+version: 1
+gates: [check]
+tasks:
+  publish: {desc: p, gate: [check], then: [verify], run: [dart]}
+  build: {desc: b, gate: [check], run: [dart]}
+  verify: {desc: v, needs: [build], run: [dart]}
+''';
+
+    test('is the task its `then:` names, not what that task needs', () {
+      final plan = planGate(parseXtaskFile(yaml), 'check');
+      final of = {
+        for (final step in plan.steps) step.task.name: step.continuationOf,
+      };
+      expect(of['build'], isNull, reason: 'a member the gate runs itself');
+      expect(of['verify'], 'publish');
+      expect(of['publish'], isNull);
+    });
+
+    test('and it does not turn on declaration order', () {
+      final swapped = yaml.replaceFirst(
+        '  publish: {desc: p, gate: [check], then: [verify], run: [dart]}\n'
+            '  build: {desc: b, gate: [check], run: [dart]}',
+        '  build: {desc: b, gate: [check], run: [dart]}\n'
+            '  publish: {desc: p, gate: [check], then: [verify], run: [dart]}',
+      );
+      String? continuationOfBuild(String document) => planGate(
+        parseXtaskFile(document),
+        'check',
+      ).steps.firstWhere((s) => s.task.name == 'build').continuationOf;
+      expect(continuationOfBuild(yaml), continuationOfBuild(swapped));
+      expect(continuationOfBuild(swapped), isNull);
+    });
+
+    test('and a member a `then:` names directly is still one', () {
+      // The other half, and the reason the rule is about the EDGE rather than
+      // about membership: `verify` is a member of `release` and the task
+      // `publish` continues into, and a failed verification has to answer 4.
+      final plan = planGate(
+        parseXtaskFile('''
+version: 1
+gates: [release]
+tasks:
+  verify: {desc: check what went out, gate: [release], run: [dart]}
+  publish: {desc: upload, gate: [release], then: [verify], run: [dart]}
+'''),
+        'release',
+      );
+      expect(plan.steps.last.continuationOf, 'publish');
+    });
+  });
 }

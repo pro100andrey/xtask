@@ -413,4 +413,42 @@ tasks:
       expect(routesTo(file, 'z').keys, contains('gate g'));
     });
   });
+
+  group('a continuation waits rather than closing a ring', () {
+    // **`then:` is the one edge that reaches forwards.** Every other name on
+    // the resolution stack is a task the walk is on its way INTO, so needing
+    // one of those is a ring; a `then:` target needing one is a task that must
+    // come after it, and the stack could not tell the two apart. Both files
+    // below are satisfiable and both were refused.
+    test('where a needs: from inside a then: reaches an open ancestor', () {
+      expect(
+        planOf('x', {'x': 'y', 'y': '-> z', 'z': 'x'}).names,
+        ['y', 'x', 'z'],
+        reason: 'y before x, y before z, x before z — all three hold',
+      );
+    });
+
+    test('and the deferred one lands behind what it was waiting for', () {
+      expect(
+        planOf('y', {
+          'x': 'a, y',
+          'a': '-> b',
+          'b': 'y',
+          'y': 'a',
+        }).names,
+        ['a', 'y', 'b'],
+      );
+    });
+
+    test('while a ring of `needs:` is still a ring', () {
+      expect(
+        refusalOf(() => planOf('a', {'a': 'b', 'b': 'a'})),
+        contains('these tasks need each other'),
+      );
+    });
+
+    test('and `a needs b`, `b then a` still means b, then a', () {
+      expect(planOf('a', {'a': 'b', 'b': '-> a'}).names, ['b', 'a']);
+    });
+  });
 }

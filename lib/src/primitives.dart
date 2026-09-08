@@ -78,7 +78,12 @@ Future<int> removeVerb(VerbContext context, {required String root}) async {
       return ExitCode.invalidFile;
     }
     for (final path in paths) {
-      final refusal = _throughALink(root, path, underRoot(base, path));
+      final refusal = removeRefuses(
+        root: root,
+        base: base,
+        written: path,
+        absolute: underRoot(base, path),
+      );
       if (refusal != null) {
         context.log(refusal);
         return ExitCode.invalidFile;
@@ -234,23 +239,6 @@ bool _looksLikeGlob(String argument) =>
     argument.contains('[') ||
     argument.contains('{');
 
-/// Why [absolute] may not be deleted on this machine, or null; [written] is
-/// what the refusal quotes back.
-///
-/// The path's own last component is removed and never followed. What leads
-/// to it may be a link too, and one that leads outside the repository would
-/// take a recursive delete with it — so the fence the file was asked when the
-/// arguments were read is asked of the machine here, and by `--dry-run`, at
-/// the moment of the delete.
-///
-/// [absolute] is passed in rather than rebuilt here, because what it is
-/// relative to is the task's working directory and what it is fenced by is
-/// [root] — the two this verb had confused.
-String? _throughALink(String root, String written, String absolute) =>
-    staysUnder(root, p.dirname(absolute))
-    ? null
-    : removeLeavesRoot(written: written, throughALink: true);
-
 Future<void> _delete(String path, VerbContext context) async {
   // `Link` first, and by type rather than by asking the path: a symlink is
   // removed and never followed, and `Directory(link).delete` on a link to a
@@ -325,6 +313,21 @@ Future<void> _deleting(String path, Future<void> Function() delete) async {
   } on FormatException catch (problem) {
     return (paths: const [], refused: '`remove`: ${problem.message}');
   }
+  // **Every matched path, and BEFORE the existence filter.** The verb asks
+  // this of everything its patterns matched; filtering first dropped a path
+  // that is absent behind a link out of the repository, so the plan said
+  // "nothing of these is on disk" about an argument the run refuses.
+  for (final path in matched) {
+    if (removeRefuses(
+          root: root,
+          base: base,
+          written: path,
+          absolute: underRoot(base, path),
+        )
+        case final refusal?) {
+      return (paths: const [], refused: refusal);
+    }
+  }
   final present = [
     for (final path in matched)
       // A missing path is not an error, so a literal that is not there is not
@@ -337,12 +340,5 @@ Future<void> _deleting(String path, Future<void> Function() delete) async {
           FileSystemEntityType.notFound)
         path,
   ]..sort();
-  for (final path in present) {
-    // The same fence the verb asks of the machine, so the plan does not
-    // promise a delete the run refuses.
-    if (_throughALink(root, path, underRoot(base, path)) case final refusal?) {
-      return (paths: const [], refused: refusal);
-    }
-  }
   return (refused: null, paths: present);
 }

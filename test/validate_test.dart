@@ -706,4 +706,53 @@ void main() {
       );
     });
   }, testOn: 'posix');
+
+  group('`--validate` fences `remove` exactly as the verb does', () {
+    // **Written out here rather than called, it drifted the other way.** The
+    // verb fences against the repository root; this fenced against the task's
+    // own directory, so a link that stays INSIDE the repository was refused by
+    // `--validate` with a sentence saying it leaves — about a file the run
+    // accepts and carries out.
+    late Directory root;
+
+    setUp(() {
+      root = tempRepo('validate_fence');
+      Directory(p.join(root.path, 'inside')).createSync();
+      File(p.join(root.path, 'inside', 'gone')).writeAsStringSync('x');
+      Directory(p.join(root.path, 'sub')).createSync();
+      Link(p.join(root.path, 'sub', 'escape')).createSync('../inside');
+    });
+
+    String reportFor(String yaml) => validateFile(
+      parseXtaskFile(yaml),
+      knownVerbs: const {'remove'},
+      sets: SetExpander(root: root.path),
+    ).toString();
+
+    test('so a link that stays inside the repository is not refused', () {
+      expect(
+        validateFile(
+          parseXtaskFile(
+            'version: 1\n'
+            'tasks:\n'
+            '  clean: {desc: c, in: sub, do: remove, args: [escape/gone]}\n',
+          ),
+          knownVerbs: const {'remove'},
+          sets: SetExpander(root: root.path),
+        ).problems,
+        isEmpty,
+      );
+    });
+
+    test('and an empty argument is refused here too', () {
+      expect(
+        reportFor(
+          'version: 1\n'
+          'tasks:\n'
+          "  clean: {desc: c, in: sub, do: remove, args: ['']}\n",
+        ),
+        contains('names the directory the task runs in'),
+      );
+    });
+  }, testOn: 'posix');
 }

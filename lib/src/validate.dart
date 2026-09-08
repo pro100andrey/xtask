@@ -1,8 +1,6 @@
 /// `--validate` — the first gate any project should adopt.
 library;
 
-import 'package:path/path.dart' as p;
-
 import 'boundary.dart';
 import 'context.dart';
 import 'errors.dart';
@@ -222,23 +220,32 @@ void _checkRemoveArguments(
     );
   }
 
-  final base = _removeBase(task, root);
-  if (base == null) {
+  // Both or neither: `_removeBase` answers null without a root, and naming
+  // the fence separately is what lets the rule below be the verb's own.
+  final fence = root;
+  final base = _removeBase(task, fence);
+  if (fence == null || base == null) {
     return;
   }
-  // The machine's half, asked of the directory holding what would go — which
-  // is what the verb asks, because the delete lands where the link leads.
+  // **The verb's own rule, called rather than restated.** Written out here it
+  // fenced against the task's directory where the verb fences against the
+  // repository, so a link that stays inside the repository was refused by
+  // `--validate` and deleted by the run — the split this function exists to
+  // close, running the other way.
   for (final argument in written.toSet()) {
-    if (leavesRoot(argument) ||
-        staysUnder(base, p.dirname(underRoot(base, argument)))) {
+    if (leavesRoot(argument)) {
       continue;
     }
-    problems.add(
-      XtaskFormatException(
-        removeLeavesRoot(written: argument, throughALink: true),
-        task.span,
-      ),
+    final refusal = removeRefuses(
+      root: fence,
+      base: base,
+      written: argument,
+      absolute: underRoot(base, argument),
     );
+    if (refusal == null) {
+      continue;
+    }
+    problems.add(XtaskFormatException(refusal, task.span));
   }
 }
 
