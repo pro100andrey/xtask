@@ -547,6 +547,106 @@ jobs:
       ]);
     });
   });
+  group('a step that names the gate and does not enforce it', () {
+    // **Three ways a job looked like the one running a gate set and was
+    // not**, all of them green before: the mode written to stop a silent
+    // green had three of its own.
+    test("because it reads another package's file", () {
+      File(p.join(root.path, 'packages', 'a', 'xtask.yaml'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync(
+          'version: 1\ngates: [ci-analyze]\n'
+          'tasks:\n  x: {desc: x, gate: [ci-analyze], run: [dart]}\n',
+        );
+      steps('''
+      - run: dart run :xtask ci-analyze
+        working-directory: packages/a
+''');
+      final found = check();
+      expect(found.invocations, isEmpty);
+      expect(found.problems.single, isA<RunsSomewhereElse>());
+    });
+
+    test(
+      'while a directory with no file of its own still reaches this one',
+      () {
+        // `working-directory:` is the sanctioned prefix — `cd sub && …` is
+        // refused and this is what a step uses instead — and the file is looked
+        // for upwards, so a move that finds no file of its own runs THIS gate.
+        Directory(p.join(root.path, 'packages', 'lake')).createSync(
+          recursive: true,
+        );
+        steps('''
+      - run: dart run :xtask ci-analyze
+        working-directory: packages/lake
+''');
+        expect(check().invocations.single.gate, 'ci-analyze');
+      },
+    );
+
+    test('because its result cannot fail the job', () {
+      steps('''
+      - run: dart run :xtask ci-analyze
+        continue-on-error: true
+''');
+      final found = check();
+      expect(found.invocations, isEmpty);
+      expect(found.problems.single, isA<RunsAGateThatCannotFail>());
+    });
+
+    test('and the job may be where that is written', () {
+      workflow('ci.yml', '''
+jobs:
+  a:
+    continue-on-error: true
+    steps:
+      - run: dart run :xtask ci-analyze
+''');
+      final found = check();
+      expect(found.invocations, isEmpty);
+      expect(
+        (found.problems.single as RunsAGateThatCannotFail).onTheJob,
+        isTrue,
+      );
+    });
+
+    test('and either is what an exemption is for', () {
+      // The marker excuses a step that was never this file's gate. On a step
+      // that DOES enforce it the marker still excuses nothing, which the
+      // group above pins. A real invocation runs beside it because a workflow
+      // of nothing but exempted steps invokes xtask nowhere, which this mode
+      // refuses to answer about at all.
+      steps('''
+      - run: dart run :xtask ci-analyze
+      - run: dart run :xtask ci-web # xtask: not a gate — soft on purpose
+        continue-on-error: true
+''');
+      final found = check();
+      expect(found.problems, isEmpty);
+      expect(found.exempted, hasLength(1));
+      expect(found.invocations.single.gate, 'ci-analyze');
+    });
+  });
+
+  group('a step passing arguments after `--`', () {
+    test('is told what it runs when the name is a task with a body', () {
+      // Refused as "a gate set gathers tasks and runs nothing of its own",
+      // which is untrue about a task that has a body: `xtask analyze -- --x`
+      // runs and exits 0, and the marker produced a second untrue finding
+      // rather than clearing the first, so the gate could not be made green.
+      steps('''
+      - run: dart run :xtask analyze -- --fatal-infos
+''');
+      expect(check().problems.single, isA<RunsATaskNotAGate>());
+    });
+
+    test('and is still refused when the name is a gate set', () {
+      steps('''
+      - run: dart run :xtask ci-analyze -- --fatal-infos
+''');
+      expect(check().problems.single, isA<RunsSomethingRefused>());
+    });
+  });
 }
 
 /// [judge] on its own, with steps built by hand.

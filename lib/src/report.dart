@@ -10,6 +10,7 @@ import 'bodies.dart';
 import 'ci.dart';
 import 'graph.dart';
 import 'model.dart';
+import 'request.dart';
 
 /// Why a task in the plan did not run.
 ///
@@ -372,6 +373,17 @@ String _why(CiProblem problem) => switch (problem) {
     'runs the gate set `$gate`, which this file does not declare — so the job '
         'runs nothing'
         '${declared.isEmpty ? '' : '. Declared: ${_names(declared)}'}',
+  RunsSomewhereElse(:final gate, :final where) =>
+    'runs `$gate` under `working-directory: $where`, which has an '
+        '`$xtaskFileName` of its own — so the invocation reads that file and '
+        "runs ITS `$gate`, and says nothing about this one. This file's gate "
+        'set is left with no job running it: name it in a step at the root, '
+        'or say why this one is not it',
+  RunsAGateThatCannotFail(:final gate, :final onTheJob) =>
+    'runs the gate set `$gate` with `continue-on-error: true` on '
+        '${onTheJob ? 'its job' : 'the step'}, so the gate can go red and stop '
+        'nothing. A gate nothing enforces is the green nobody checked, which '
+        'is the whole of what this mode is for',
   RunsATaskNotAGate(:final task, :final declared) =>
     'runs the task `$task` rather than a gate set. The job does run it — and '
         'only it: the next task added to the gate this one is in is a task no '

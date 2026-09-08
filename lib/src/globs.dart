@@ -23,6 +23,16 @@ import 'package:path/path.dart' as p;
 /// Here rather than inside `sets`, because `sets:` and `do: remove` both
 /// compile patterns and a file format with two dialects is the defect the
 /// duplicate list exists to remove.
+///
+/// **What is shared is how a pattern is READ, and the two readers still do
+/// different things with what it matches** — written here so the difference is
+/// on the record rather than found by surprise. Neither ever descends into a
+/// symlink, so neither can loop. A set does not take one as a MEMBER, because
+/// its members are handed on as paths and a link to a matching file would
+/// arrive twice; `do: remove` deletes one it matches, because the verb's whole
+/// statement about links is that it removes them and never follows them. So
+/// `**/*.tmp` names one file to a set and two to `remove` where one of them is
+/// a link, and that is the verbs differing, not the pattern.
 Set<String> zeroOrMoreDirectories(String pattern) => _readings(pattern);
 
 /// How many readings of one pattern the engine will compile.

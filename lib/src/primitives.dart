@@ -152,7 +152,14 @@ List<String> pathsMatchingAll(
     // order, and `coverage, build, '**/*.tmp'` sorted, so whether one
     // `remove` block's `--dry-run` could be compared with another's turned on
     // an unrelated argument having a `*` in it.
-    return literals..sort();
+    //
+    // **And deduplicated, for the same reason.** The walking path below
+    // gathers into a set because its two halves can name the same path;
+    // `args: [build, build]` never reaches it, so a repeated literal printed
+    // `del build` twice and the verb deleted a path it had just removed — the
+    // exact case the changelog says is answered, on the one verb whose plan a
+    // reader checks line by line against what they meant.
+    return literals.toSet().toList()..sort();
   }
 
   // **Read the same way `sets:` reads it.** This compiled the argument raw,

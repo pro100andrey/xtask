@@ -485,10 +485,14 @@ void _checkNoNameCollision(
 /// A token only one task holds, and a `serial:` with nothing to serialise.
 ///
 /// **Both are a key that does nothing, said out loud.** `exclusive:` keeps two
-/// tasks apart; a name only one task writes keeps it apart from nobody, and
-/// reads in the file as a guarantee that is being made. `serial:` orders the
-/// members of an `each:`, and on a task with no `each:` there is one body and
-/// nothing to order.
+/// tasks apart; a name only one task writes, on a task with no `each:`, keeps
+/// it apart from nobody and reads in the file as a guarantee that is being
+/// made. `serial:` orders the members of an `each:`, and on a task with no
+/// `each:` there is one body and nothing to order.
+///
+/// The `each:` clause is not symmetry for its own sake: a token on a fanned-out
+/// task is how its own members are made serial, so the one-holder case there
+/// is the key doing its job rather than nothing.
 void _checkExclusive(XtaskFile file, List<XtaskFormatException> problems) {
   // Distinct TASKS, not occurrences: `exclusive: [db, db]` on one task counted
   // as two holders and slipped past the very check below.
@@ -512,12 +516,23 @@ void _checkExclusive(XtaskFile file, List<XtaskFormatException> problems) {
     if (entry.value.length > 1) {
       continue;
     }
+    final only = file.tasks[entry.value.single]!;
+    // **Unless it is keeping that task apart from ITSELF.** A token on a
+    // fanned-out task makes its own members run one at a time — the engine
+    // asks `exclusive.isNotEmpty` before it fans out, and the README and the
+    // changelog both say so — which is a guarantee, not a no-op. Refused, the
+    // advice was to drop the key or name it elsewhere, and following it takes
+    // the guarantee away.
+    if (only.each != null) {
+      continue;
+    }
     problems.add(
       XtaskFormatException(
-        'task `${entry.value.single}` holds `${entry.key}` exclusively and no '
-        'other task asks for it, so nothing is being kept apart. Name it in '
-        'the other task too, or drop it',
-        file.tasks[entry.value.single]!.span,
+        'task `${only.name}` holds `${entry.key}` exclusively, has no `each:` '
+        'whose members it could keep apart, and no other task asks for it — '
+        'so nothing is being kept apart. Name it in the other task too, or '
+        'drop it',
+        only.span,
       ),
     );
   }

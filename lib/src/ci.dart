@@ -35,6 +35,9 @@ final class CiStep {
     this.command, {
     this.exemption,
     this.condition,
+    this.readsAnotherFile,
+    this.cannotFail = false,
+    this.jobCannotFail = false,
   });
 
   /// The file it came from, relative to the repository root.
@@ -56,6 +59,34 @@ final class CiStep {
   /// condition holds is the workflow's business, and a checker that decided
   /// it would be reading an expression language it does not have.
   final String? condition;
+
+  /// The step's `working-directory:` when a different `xtask.yaml` is there,
+  /// as written; null otherwise.
+  ///
+  /// **`working-directory:` is the sanctioned prefix and stays one.** A step
+  /// that moves into a directory with no file of its own still reaches this
+  /// one, because the file is looked for upwards — so the gate it names is
+  /// this file's gate and the credit is right. What is not right is a
+  /// directory holding its own `xtask.yaml`: the invocation reads THAT file,
+  /// runs its gate set of that name, and says nothing about this one, while
+  /// being counted here as the job that runs it. A silent green in the mode
+  /// written to prevent them.
+  ///
+  /// Decided where the root is known and carried as a fact, so that judging a
+  /// step stays a question about the step.
+  final String? readsAnotherFile;
+
+  /// Whether `continue-on-error:` on the step or its job means the result
+  /// cannot fail the job.
+  ///
+  /// A gate whose red does not stop anything is a gate nothing enforces, and
+  /// it was being credited as an invocation. The sibling key `if:` was read
+  /// from the first; this one was not read at all.
+  final bool cannotFail;
+
+  /// Whether the key is on the JOB rather than on this step — which is where a
+  /// reader has to go to remove it, and the only reason the two are separate.
+  final bool jobCannotFail;
 }
 
 /// What a person writes on a `run:` line that is not a gate set.
@@ -172,6 +203,35 @@ final class RunsAnUndeclaredGate extends CiProblem {
 /// for a typo in a name that is spelt correctly. What is actually wrong is
 /// that the CI file has named a MEMBER of a list where the list belongs, so
 /// the next task added to that gate is one no job runs and nothing says so.
+/// A step that runs a gate set somewhere other than the repository root.
+///
+/// The invocation reads the `xtask.yaml` in that directory, so it says nothing
+/// about this one. Counted as this file's gate it is a silent green: the gate
+/// looked run, and the task added to it next week is run by nothing.
+final class RunsSomewhereElse extends CiProblem {
+  const RunsSomewhereElse(super.step, this.gate, this.where);
+
+  final String gate;
+
+  /// The step's `working-directory:`, as written.
+  final String where;
+}
+
+/// A step whose result cannot fail its job.
+///
+/// `continue-on-error: true`, on the step or on the job. The gate runs and its
+/// red stops nothing, so nothing is enforced — and it was being counted as the
+/// invocation that enforces it.
+final class RunsAGateThatCannotFail extends CiProblem {
+  const RunsAGateThatCannotFail(super.step, this.gate, this.onTheJob);
+
+  final String gate;
+
+  /// Whether the key is on the job rather than on the step, which is where a
+  /// reader has to go to remove it.
+  final bool onTheJob;
+}
+
 final class RunsATaskNotAGate extends CiProblem {
   const RunsATaskNotAGate(super.step, this.task, this.declared);
 
@@ -271,6 +331,22 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
       }
       return verdict();
     case _Gate(:final gate):
+      // **Two questions about one step: is the name right, and does this
+      // invocation ENFORCE the gate here?** The second is what
+      // `working-directory:` and `continue-on-error:` answer, and neither is
+      // about how the command line is spelt.
+      final elsewhere = step.readsAnotherFile;
+      final enforces = elsewhere == null && !step.cannotFail;
+
+      // The marker excuses a step that was never this file's gate to begin
+      // with — a nested package running its own, or one deliberately allowed
+      // to be soft — which is exactly what an exemption is for. A step that
+      // DOES enforce the gate is not excused by it: it runs, and saying it is
+      // not a gate set would be untrue.
+      if (reason != null && !enforces) {
+        return verdict(exempted: true);
+      }
+
       final undeclared = !declared.contains(gate);
       if (undeclared) {
         // Which of the two it is decides the sentence, and one of them would
@@ -281,11 +357,39 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
               : RunsAnUndeclaredGate(step, gate, declared),
         );
       }
+      if (elsewhere != null) {
+        problems.add(RunsSomewhereElse(step, gate, elsewhere));
+      }
+      if (step.cannotFail) {
+        problems.add(RunsAGateThatCannotFail(step, gate, step.jobCannotFail));
+      }
       if (reason != null) {
         problems.add(ExemptsNothing(step, gate));
       }
+      if (!enforces) {
+        return verdict();
+      }
       // The job runs it whatever the marker says, so it is not left unrun.
       return verdict(gate: undeclared ? null : gate);
+    case _GateWithArguments(:final name):
+      // A gate set has no body, so the arguments reach nothing and the step
+      // exits 2. A task with one takes them, and the step is then naming a
+      // task where a gate set belongs — which has its own sentence.
+      if (tasks.contains(name) && !declared.contains(name)) {
+        problems.add(RunsATaskNotAGate(step, name, declared));
+      } else {
+        problems.add(
+          RunsSomethingRefused(
+            step,
+            'a gate set gathers tasks and runs nothing of its own, so there '
+            'is nothing for the arguments after `--` to be arguments to',
+          ),
+        );
+      }
+      if (reason != null) {
+        problems.add(ExemptsNothing(step, 'a step the command line refuses'));
+      }
+      return verdict();
     case _Names(:final mode, :final named):
       problems.add(NamesAGateWithoutRunningIt(step, mode, named));
       if (reason != null) {
@@ -352,6 +456,7 @@ List<CiStep> workflowSteps(String root) {
         ..._steps(
           workflow,
           p.posix.join(workflowDirectory, p.basename(workflow.path)),
+          root,
         ),
   ];
 }
@@ -420,6 +525,16 @@ CiReport checkCi(XtaskFile file, {required String root}) {
 /// What one step's `run:` turns out to be.
 sealed class _Reading {
   const _Reading();
+}
+
+/// A step naming something and passing arguments after `--`.
+///
+/// Whether that reaches anything depends on what the name is, which only the
+/// file can say — so the reading carries the fact and the judgement decides.
+final class _GateWithArguments extends _Reading {
+  const _GateWithArguments(this.name);
+
+  final String name;
 }
 
 /// One invocation of the gate set (or task) [gate].
@@ -568,10 +683,11 @@ _Reading _readWords(List<String> arguments) {
     // A gate set has no body, so the arguments reach nothing and the step
     // exits 2. The command line does not refuse this — only the file can say
     // whether the name has a body — so the sentence is written here.
-    RunTask() => const _Refused(
-      'a gate set gathers tasks and runs nothing of its own, so there is '
-      'nothing for the arguments after `--` to be arguments to',
-    ),
+    // Whether the arguments reach anything depends on what the name IS, and
+    // this function does not have the file. Carried up to `judge`, which
+    // does: a task with a body takes arguments, and calling that "a gate set
+    // gathers tasks" was a refusal a correct step could not get out of.
+    RunTask(:final task) => _GateWithArguments(task),
     ShowUsage(problem: final problem?) => _Refused(problem),
     // The one mode that reads as a run and is not one: `--dry-run ci-analyze`
     // in a job called `ci-analyze` is the shape a step takes when somebody was
@@ -591,7 +707,7 @@ _Reading _readWords(List<String> arguments) {
 
 // ── reading the workflow ────────────────────────────────────────────────────
 
-Iterable<CiStep> _steps(File workflow, String name) sync* {
+Iterable<CiStep> _steps(File workflow, String name, String root) sync* {
   final source = _source(workflow, name);
   final document = _document(source, name);
   if (document is! YamlMap || document['jobs'] is! YamlMap) {
@@ -612,16 +728,50 @@ Iterable<CiStep> _steps(File workflow, String name) sync* {
         continue;
       }
       final condition = step.nodes['if'];
+      final where = step.nodes['working-directory'];
       yield CiStep(
         name,
         '${entry.key}',
         _joined((run.value.value as String).trim()),
         exemption: _exemptionOn(lines, run.key, run.value),
         condition: condition == null ? null : '${condition.value}',
+        readsAnotherFile: _anotherFile(root, where),
+        // Either place says it: GitHub applies a job's to every step.
+        cannotFail:
+            _saysTrue(step.nodes['continue-on-error']) ||
+            _saysTrue(job.nodes['continue-on-error']),
+        jobCannotFail: _saysTrue(job.nodes['continue-on-error']),
       );
     }
   }
 }
+
+/// [where], when a `working-directory:` of that name holds its own task file.
+///
+/// `.` and `./` are the root written out and move nothing. A directory that is
+/// not there, or one outside the repository, is not this checker's to refuse —
+/// the workflow is GitHub's file — so it is read as moving nowhere and the
+/// step is judged on its command line alone.
+String? _anotherFile(String root, YamlNode? where) {
+  if (where == null) {
+    return null;
+  }
+  final written = '${where.value}'.trim();
+  if (written.isEmpty || written == '.' || written == './') {
+    return null;
+  }
+  if (leavesRoot(written)) {
+    return null;
+  }
+  final own = p.join(underRoot(root, written), xtaskFileName);
+  return File(own).existsSync() ? written : null;
+}
+
+/// Whether [node] is the literal `true`.
+///
+/// A `${{ … }}` expression is not read: it is not this checker's language, and
+/// guessing would be the reading the rest of this file refuses to do.
+bool _saysTrue(YamlNode? node) => node?.value == true;
 
 /// The key node and the value node of [key] in [map], or null.
 ///

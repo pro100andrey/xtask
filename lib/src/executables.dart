@@ -58,13 +58,22 @@ final class ExecutableResolver {
 
   final p.Context _paths;
 
-  /// What each written name resolved to, this run.
+  /// What each written name was FOUND at, this run.
   ///
-  /// **The answer cannot change while a run is happening**, and finding it
-  /// costs a `stat` per directory on `PATH` — nineteen of them on an ordinary
-  /// machine, about 39µs — asked once per `run:` body, per member under
-  /// `each:`, and for every program a verb starts.
-  final _resolved = <(String, String), String?>{};
+  /// Finding it costs a `stat` per directory on `PATH` — nineteen of them on
+  /// an ordinary machine, about 39µs — asked once per `run:` body, per member
+  /// under `each:`, and for every program a verb starts.
+  ///
+  /// **Hits only, and re-checked before they are handed back.** The answer CAN
+  /// change while a run is happening: this is an engine whose `produced-by:`
+  /// sets exist because tasks make things. A remembered miss reported a
+  /// binary that a task had since compiled as "not installed, or not on PATH"
+  /// — exit 3, about a file sitting on disk — and a remembered hit handed out
+  /// the path of a program a `clean` had deleted, so the run answered 1 "could
+  /// not be started" where the table has 3 for a missing tool, and those two
+  /// are repaired by different people. One `stat` on the way out keeps the
+  /// walk saved and the answer true.
+  final _resolved = <(String, String), String>{};
 
   /// The default `PATHEXT`, used when the machine does not set a usable one.
   static const defaultPathExt = '.COM;.EXE;.BAT;.CMD';
@@ -91,17 +100,27 @@ final class ExecutableResolver {
   /// `dart.BAT`. NTFS does not care and the path starts either way, but
   /// `--dry-run` prints this string , so it is behaviour rather than an
   /// implementation detail, and a test pins it.
-  String? resolve(String executable, {required String from}) =>
-      // **Keyed on the directory only where the directory is part of the
-      // answer.** A bare name is looked up on `PATH`, which `from` does not
-      // touch, so keying every lookup on the pair missed the cache once per
-      // member of an `each:` — `in: packages/$each` gives each member its own
-      // directory — and re-walked `PATH` for a result that could not differ.
-      // That is the per-member cost this cache was added to remove.
-      _resolved.putIfAbsent(
-        (executable, _needsTheDirectory(executable) ? from : ''),
-        () => _find(executable, from),
-      );
+  String? resolve(String executable, {required String from}) {
+    // **Keyed on the directory only where the directory is part of the
+    // answer.** A bare name is looked up on `PATH`, which `from` does not
+    // touch, so keying every lookup on the pair missed the cache once per
+    // member of an `each:` — `in: packages/$each` gives each member its own
+    // directory — and re-walked `PATH` for a result that could not differ.
+    // That is the per-member cost this cache was added to remove.
+    final key = (executable, _needsTheDirectory(executable) ? from : '');
+    final remembered = _resolved[key];
+    if (remembered != null && isRunnable(remembered)) {
+      return remembered;
+    }
+    final found = _find(executable, from);
+    if (found == null) {
+      // Forgotten rather than remembered as absent: the next task may be the
+      // one that writes it.
+      _resolved.remove(key);
+      return null;
+    }
+    return _resolved[key] = found;
+  }
 
   String? _find(String executable, String from) {
     if (executable.isEmpty) {
