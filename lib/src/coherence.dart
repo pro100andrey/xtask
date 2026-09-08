@@ -106,13 +106,14 @@ Iterable<XtaskFormatException> _bodyCannotHonourIt(
 
 /// A marker written where nothing stands for it.
 ///
-/// `exclusive:`, `env-required:`, `needs:`, `then:` and `gate:` hold names,
-/// and a name is looked for as written: a token is taken when the walk
-/// admits a task, before its set has been read, so there is no member yet
-/// for `$each` to stand for; a variable, a task or a gate set called
-/// `$each` is one nobody has. Neither refused nor expanded is the one
+/// `exclusive:`, `env-required:`, `needs:`, `then:`, `gate:` and the KEYS of
+/// `env:` hold names, and a name is looked for as written: a token is taken
+/// when the walk admits a task, before its set has been read, so there is no
+/// member yet for `$each` to stand for; a variable, a task or a gate set
+/// called `$each` is one nobody has. Neither refused nor expanded is the one
 /// combination that says nothing — `exclusive: [lock-$each]` validated
-/// clean and made every member hold the same token.
+/// clean and made every member hold the same token, and `env: {$each: '1'}`
+/// set a variable literally called `$each` once per member.
 Iterable<XtaskFormatException> _markerInAName(Task task) sync* {
   for (final (key, names) in [
     ('exclusive', task.exclusive),
@@ -120,6 +121,9 @@ Iterable<XtaskFormatException> _markerInAName(Task task) sync* {
     ('needs', task.needs),
     ('then', task.then),
     ('gate', task.gate),
+    // The keys, not the values: a value is text handed to the child and a
+    // marker in one is a substitution like any other.
+    ('env', task.env.keys.toList()),
   ]) {
     final written = names.where(
       (name) => _bareMarker.hasMatch(name) || _bareEach.hasMatch(name),

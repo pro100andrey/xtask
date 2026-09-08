@@ -372,6 +372,11 @@ String _why(CiProblem problem) => switch (problem) {
     'runs the gate set `$gate`, which this file does not declare — so the job '
         'runs nothing'
         '${declared.isEmpty ? '' : '. Declared: ${_names(declared)}'}',
+  RunsATaskNotAGate(:final task, :final declared) =>
+    'runs the task `$task` rather than a gate set. The job does run it — and '
+        'only it: the next task added to the gate this one is in is a task no '
+        'job runs, which is the drift a job naming a gate set cannot have'
+        '${declared.isEmpty ? '' : '. Declared: ${_names(declared)}'}',
   NamesAGateWithoutRunningIt(:final mode, :final named) =>
     'names the gate set `$named` under `$mode`, which asks about it rather '
         'than running it — so the job passes having run nothing of it',

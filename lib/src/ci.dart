@@ -164,6 +164,24 @@ final class RunsAnUndeclaredGate extends CiProblem {
   final Set<String> declared;
 }
 
+/// A step naming a task where a gate set belongs.
+///
+/// **Its own finding, because the other one's sentence is untrue about it.**
+/// A step running a declared task runs something; reported as an undeclared
+/// gate set it was told "the job runs nothing", which sends the reader to look
+/// for a typo in a name that is spelt correctly. What is actually wrong is
+/// that the CI file has named a MEMBER of a list where the list belongs, so
+/// the next task added to that gate is one no job runs and nothing says so.
+final class RunsATaskNotAGate extends CiProblem {
+  const RunsATaskNotAGate(super.step, this.task, this.declared);
+
+  /// The task the step names.
+  final String task;
+
+  /// The gate sets the file declares, for the message to point at.
+  final Set<String> declared;
+}
+
 /// What `--check-ci` found.
 final class CiReport {
   const CiReport({
@@ -221,7 +239,7 @@ typedef StepVerdict = ({
 /// stands over is another — a misspelled gate set under an exemption is both
 /// a job that runs nothing and a marker that excuses nothing — and reporting
 /// one instead of the other is how a silent green gets in.
-StepVerdict judge(CiStep step, Set<String> declared) {
+StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
   final problems = <CiProblem>[];
   final written = step.exemption;
   if (written != null && written.isEmpty) {
@@ -255,7 +273,13 @@ StepVerdict judge(CiStep step, Set<String> declared) {
     case _Gate(:final gate):
       final undeclared = !declared.contains(gate);
       if (undeclared) {
-        problems.add(RunsAnUndeclaredGate(step, gate, declared));
+        // Which of the two it is decides the sentence, and one of them would
+        // be false about the other.
+        problems.add(
+          tasks.contains(gate)
+              ? RunsATaskNotAGate(step, gate, declared)
+              : RunsAnUndeclaredGate(step, gate, declared),
+        );
       }
       if (reason != null) {
         problems.add(ExemptsNothing(step, gate));
@@ -350,7 +374,7 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   final problems = <CiProblem>[];
 
   for (final step in workflowSteps(root)) {
-    final verdict = judge(step, declared);
+    final verdict = judge(step, declared, file.tasks.keys.toSet());
     problems.addAll(verdict.problems);
     if (verdict.gate case final gate?) {
       invocations.add((step: step, gate: gate));

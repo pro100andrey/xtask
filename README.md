@@ -506,7 +506,7 @@ An exit code is not a success flag; it is the shortest possible bug report.
 | --- | --- |
 | `0` | everything asked for ran and passed |
 | `1` | a task ran and failed |
-| `2` | the file was refused — a bad document, an unknown key, a cycle, a dangling reference, a set that expands to nothing |
+| `2` | the request was refused — a bad document, an unknown key, a cycle, a dangling reference, a set that expands to nothing; and a command line the parser turns down, or a `--check-ci` that found something |
 | `3` | a task's executable was not found |
 | `4` | a task's body succeeded and one of its `then:` continuations failed |
 

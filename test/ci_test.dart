@@ -560,41 +560,52 @@ void _judgeTable() {
         CiStep('ci.yml', 'job', command, exemption: exemption);
 
     test('the readings', () {
-      expect(judge(step('xtask check'), declared).gate, 'check');
-      expect(judge(step('xtask --list'), declared).question, '--list');
+      expect(judge(step('xtask check'), declared, const {}).gate, 'check');
       expect(
-        judge(step('npm ci', exemption: 'deps'), declared).exempted,
+        judge(step('xtask --list'), declared, const {}).question,
+        '--list',
+      );
+      expect(
+        judge(step('npm ci', exemption: 'deps'), declared, const {}).exempted,
         isTrue,
       );
       expect(
-        judge(step('npm ci'), declared).problems.single,
+        judge(step('npm ci'), declared, const {}).problems.single,
         isA<RunsACommand>(),
       );
       expect(
-        judge(step('xtask chekc'), declared).problems.single,
+        judge(step('xtask chekc'), declared, const {}).problems.single,
         isA<RunsAnUndeclaredGate>(),
       );
       expect(
-        judge(step('xtask check -j x'), declared).problems.single,
+        judge(step('xtask check -j x'), declared, const {}).problems.single,
         isA<RunsSomethingRefused>(),
       );
       expect(
-        judge(step('xtask --dry-run check'), declared).problems.single,
+        judge(
+          step('xtask --dry-run check'),
+          declared,
+          const {},
+        ).problems.single,
         isA<NamesAGateWithoutRunningIt>(),
       );
       expect(
-        judge(step('a\nb'), declared).problems.single,
+        judge(step('a\nb'), declared, const {}).problems.single,
         isA<RunsAScript>(),
       );
       expect(
-        judge(step(r'xtask ${{ matrix.gate }}'), declared).problems.single,
+        judge(
+          step(r'xtask ${{ matrix.gate }}'),
+          declared,
+          const {},
+        ).problems.single,
         isA<RunsAnExpression>(),
       );
     });
 
     test('a marker is one fact, and what it stands over is another', () {
       expect(
-        judge(step('npm ci', exemption: ''), declared).problems.map(
+        judge(step('npm ci', exemption: ''), declared, const {}).problems.map(
           (p) => p.runtimeType,
         ),
         [ExemptsWithoutSaying, RunsACommand],
@@ -603,9 +614,20 @@ void _judgeTable() {
         judge(
           step('xtask chekc', exemption: 'old'),
           declared,
+          const {},
         ).problems.map((p) => p.runtimeType),
         [RunsAnUndeclaredGate, ExemptsNothing],
       );
+    });
+
+    test('and a step naming a task is told what it actually runs', () {
+      // **Not the undeclared-gate sentence, which is untrue about it.** That
+      // one says the job runs nothing; this job runs the task, correctly
+      // spelt. What is wrong is the shape: a member named where the list
+      // belongs, so the next task added to the gate is one no job runs.
+      final it = judge(step('xtask format'), declared, const {'format'});
+      expect(it.problems.single, isA<RunsATaskNotAGate>());
+      expect(it.gate, isNull);
     });
   });
 }

@@ -106,7 +106,21 @@ Map<String, Map<String, Object?>> get _topLevel => {
 const _name = <String, Object?>{
   'type': 'string',
   'minLength': 1,
-  'pattern': r'^[^\r\n]+$',
+  // One line, and not blank. The parser refuses both — a name of spaces is a
+  // name a report prints as nothing — and the schema said only "not empty",
+  // so an editor accepted `  ` where the engine turns it down.
+  'pattern': r'^[^\r\n]*\S[^\r\n]*$',
+};
+
+/// An environment variable name, which is a name and also may not hold `=`.
+///
+/// `=` is what separates a name from its value in the environment a child is
+/// handed, so the parser refuses one holding it. Without this the schema
+/// offered `A=B` as a key.
+const _envName = <String, Object?>{
+  'type': 'string',
+  'minLength': 1,
+  'pattern': r'^[^\r\n=]*\S[^\r\n=]*$',
 };
 
 /// A named set, sets: a list of paths, a glob with exclusions, or values
@@ -203,7 +217,9 @@ const _strings = <String, Object?>{
 // make the test that says so pass whether it did or not.
 const _taskKeys = <String, Map<String, Object?>>{
   'all': {
-    'type': 'string',
+    // A set's name, read as one: `all: ''` is refused by the parser and was
+    // offered here.
+    ..._name,
     'description':
         r'A set whose members replace the `$all` marker in `run:` or `args:`, '
         'in one invocation. The marker is a whole argument and appears once.',
@@ -213,11 +229,10 @@ const _taskKeys = <String, Map<String, Object?>>{
     'description': 'Extra arguments appended to the body.',
   },
   'desc': {
-    'type': 'string',
-    'minLength': 1,
-    // Not blank, as the parser reads it: a description of spaces is no
-    // description.
-    'pattern': r'\S',
+    // A name's own rule: not blank, and one line — which the parser has always
+    // asked of a description and this said nothing about, so a `desc:` broken
+    // over two lines passed here and was refused by the engine.
+    ..._name,
     'description':
         'Required, one line, and what `--list` prints — so that a task cannot '
         'be added without saying what it is for.',
@@ -230,7 +245,8 @@ const _taskKeys = <String, Map<String, Object?>>{
         '`bin/xtask.dart`. The engine ships no project verbs.',
   },
   'each': {
-    'type': 'string',
+    // A set's name, as `all:` is.
+    ..._name,
     'description':
         'A set whose members the body runs once per, with '
         r'`$each` standing for the member — a whole argument, or the end of '
@@ -240,7 +256,7 @@ const _taskKeys = <String, Map<String, Object?>>{
   },
   'env': {
     'type': 'object',
-    'propertyNames': _name,
+    'propertyNames': _envName,
     'additionalProperties': {'type': 'string'},
     'description':
         'Environment for this task only. A key rather than syntax, because '
@@ -267,6 +283,9 @@ const _taskKeys = <String, Map<String, Object?>>{
   },
   'in': {
     'type': 'string',
+    // Not blank: `in: ''` names no directory, and the parser says so.
+    'minLength': 1,
+    'pattern': r'\S',
     'description':
         'Where the body runs, relative to the repository root. May end with '
         r'`$each`, which stands for the current member of `each:` — as the '
@@ -290,7 +309,16 @@ const _taskKeys = <String, Map<String, Object?>>{
   },
   'run': {
     'type': 'array',
-    'items': {'type': 'string'},
+    // **The first element is the executable, and it may not be blank.** Only
+    // the first: an empty ARGUMENT is ordinary — `dart test --name ''` — while
+    // an empty executable resolves to nothing and surfaces as a missing tool,
+    // code 3, when the defect is in the file and its code is 2. Draft-07
+    // spells a positional rule as an `items` array with `additionalItems` for
+    // the rest.
+    'items': [
+      {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
+    ],
+    'additionalItems': {'type': 'string'},
     'minItems': 1,
     'description':
         'An external program as argv: the program, then its arguments, each '
