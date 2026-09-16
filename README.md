@@ -375,9 +375,11 @@ the failure this whole mode exists to catch.
 
 Every exemption is printed with its reason next to the jobs that passed, so a
 workflow that has quietly exempted its way to green says so in the same
-breath. And a workflow whose every `run:` step is exempted invokes xtask
-nowhere, which is refused as it was before: the marker cannot stand in for the
-invocation.
+breath. And when every `run:` step under `.github/workflows` is exempted,
+nothing there invokes xtask, which is refused as it was before: the marker
+cannot stand in for the invocation. The count is over the directory, not the
+file, so a workflow with no gate in it at all can sit beside one that runs
+them.
 
 The rule stays blanket rather than growing a sense of which steps are
 "infrastructure" because no tool anywhere has one: the axis does not exist, and
