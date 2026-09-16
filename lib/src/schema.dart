@@ -1,21 +1,17 @@
-/// The JSON Schema an editor reads — `--emit-schema` of §7.
+/// The JSON Schema an editor reads — `--emit-schema`.
 ///
-/// **What this is for.** `--validate` answers when it is called; a schema
-/// answers while somebody types. An editor with this loaded completes the keys
-/// of a task, underlines `dsec:` and underlines `gate: check` where a list
-/// belongs, before anything is run. What it cannot do is anything needing the
-/// graph or the filesystem — a cycle, a `needs:` pointing at nothing, an
-/// orphan gate, a glob matching nothing, an unregistered verb. Those stay with
-/// §8 and do not move. A schema catches a mistyped KEY; `--validate` catches a
+/// `--validate` answers when it is called; a schema answers while somebody
+/// types, completing a task's keys and underlining `dsec:` before anything
+/// runs. It cannot reach anything needing the graph or the filesystem — a
+/// cycle, a dangling `needs:`, an unregistered verb — which stay with
+/// `--validate`. A schema catches a mistyped KEY; `--validate` catches a
 /// mistyped NAME.
 ///
-/// **It is a projection of `model.dart`, checked against it.** The names of
-/// the keys are not written here — they are read from [taskKeys],
-/// [topLevelKeys], [globSetKeys] and [bodyKeys], which §4 makes the only list
-/// of them. What IS written here is one shape and one sentence per key, and
-/// [checkedProperties] refuses to emit anything if that table has drifted
-/// from the set it describes. So there are not two lists: there is one list,
-/// and a projection that cannot survive disagreeing with it.
+/// A projection of `model.dart`, checked against it: the key names are read
+/// from [taskKeys], [topLevelKeys], [globSetKeys], [valueSetKeys] and
+/// [bodyKeys], and what is written here is one shape and one sentence per key.
+/// [checkedProperties] refuses to emit anything if that table has drifted from
+/// the set it describes.
 library;
 
 import 'dart:convert';
@@ -31,7 +27,7 @@ import 'model.dart';
 /// ```
 ///
 /// **That redirect is a person's shell, and it has to be.** A task cannot do
-/// it: `>` is shell, and §5.2 says a task's description contains none. So the
+/// it: `>` is shell, and a task's description contains none. So the
 /// generated file is committed and a gate compares it against this — writing
 /// is somebody's deliberate act, checking is the gate's.
 String xtaskJsonSchema() =>
@@ -57,7 +53,7 @@ Map<String, Object?> get _document => {
   'properties': checkedProperties(topLevelKeys, _topLevel, 'top-level key'),
 };
 
-/// The top level, §4.1.
+/// The top level, the top level.
 Map<String, Map<String, Object?>> get _topLevel => {
   'version': {
     'type': 'integer',
@@ -68,25 +64,68 @@ Map<String, Map<String, Object?>> get _topLevel => {
         'Required. The only version this engine reads; an unknown one is '
         'refused rather than read as best it can.',
   },
+  'gates': {
+    'type': 'array',
+    'items': _name,
+    'minItems': 1,
+    'uniqueItems': true,
+    'description':
+        'Every gate set this file has, in the order a report groups by. Names '
+        'only — a gate set is not a task and has nothing to describe. '
+        'A gate set is run by being named — `xtask check`. Declaring them '
+        'is what makes a misspelled `gate:` a refusal rather than a new gate '
+        'set nobody runs.',
+  },
   'sets': {
     'type': 'object',
     'description':
-        "Named lists and globs, referenced by a task's `each:` or "
-        '`argv-from:`. A set that expands to nothing is an error: a task given '
-        'no files checked nothing.',
+        "Named lists and globs, referenced by a task's `each:` or `all:`. A "
+        'set that expands to nothing is an error: a task given no files '
+        'checked nothing.',
+    'propertyNames': _name,
     'additionalProperties': _set,
   },
   'tasks': {
     'type': 'object',
     'description':
-        'The graph. Declaration order is meaningful: a `collects:` composite '
-        'runs its gate members in the order they appear here.',
+        'The graph. Declaration order is meaningful: a gate set runs its tasks '
+        'in the order they appear here, except where a `needs:` or a `then:` '
+        'puts one of them after another.',
+    'propertyNames': _name,
     'additionalProperties': _task,
   },
 };
 
-/// A named set, §4.2: a list of members, or a glob with exclusions.
-const _set = <String, Object?>{
+/// A name, as the parser reads one: not empty, and one line.
+///
+/// **Value-level, where this file is otherwise about shape.** The parser
+/// refuses both — a name is what a report prints and what something else
+/// writes to reach it, and `--gate-members` writes one per line — so an editor
+/// that accepted a name with a newline in it offered a file the engine turns
+/// down, which is the one thing this projection exists not to do.
+const _name = <String, Object?>{
+  'type': 'string',
+  'minLength': 1,
+  // One line, and not blank. The parser refuses both — a name of spaces is a
+  // name a report prints as nothing — and the schema said only "not empty",
+  // so an editor accepted `  ` where the engine turns it down.
+  'pattern': r'^[^\r\n]*\S[^\r\n]*$',
+};
+
+/// An environment variable name, which is a name and also may not hold `=`.
+///
+/// `=` is what separates a name from its value in the environment a child is
+/// handed, so the parser refuses one holding it. Without this the schema
+/// offered `A=B` as a key.
+const _envName = <String, Object?>{
+  'type': 'string',
+  'minLength': 1,
+  'pattern': r'^[^\r\n=]*\S[^\r\n=]*$',
+};
+
+/// A named set, sets: a list of paths, a glob with exclusions, or values
+/// that are not paths at all.
+Map<String, Object?> get _set => {
   'oneOf': [
     {
       'type': 'array',
@@ -98,12 +137,31 @@ const _set = <String, Object?>{
       'type': 'object',
       'additionalProperties': false,
       'required': ['include'],
-      'properties': _globSet,
+      'properties': checkedProperties(globSetKeys, _globSet, 'glob set key'),
       'description':
           'Globs, expanded by the engine rather than by a shell, in a '
           'deterministic order.',
     },
+    {
+      'type': 'object',
+      'additionalProperties': false,
+      'required': ['values'],
+      'properties': checkedProperties(valueSetKeys, _valueSet, 'value set key'),
+      'description':
+          'Members that are not paths — flavours, platforms, SDK versions. '
+          'Not checked against the repository root and never matched on disk.',
+    },
   ],
+};
+
+const _valueSet = <String, Map<String, Object?>>{
+  'values': {
+    'type': 'array',
+    'items': {'type': 'string'},
+    'minItems': 1,
+    'description':
+        'The members, written out. Whatever they name, it is not a path.',
+  },
 };
 
 const _globSet = <String, Map<String, Object?>>{
@@ -112,8 +170,20 @@ const _globSet = <String, Map<String, Object?>>{
     'items': {'type': 'string'},
     'minItems': 1,
     'description':
-        'Patterns, relative to the repository root. `**/` means one or more '
-        'directories.',
+        'Patterns, relative to the repository root. `**/` means NONE or more '
+        'directories, as bash and git read it — so `packages/**/x` finds '
+        '`packages/x` too.',
+  },
+  'produced-by': {
+    'type': 'string',
+    'minLength': 1,
+    'description':
+        "The task that makes this set's members. A set is read when the task "
+        'naming it is about to run, so `--validate` and `--dry-run` see a '
+        'different moment; naming the producer buys exactly one thing — the '
+        'emptiness of this set is not judged before that task has run. Every '
+        'task reading the set has to reach the producer through `needs:`, '
+        'and a run still refuses the set empty.',
   },
   'exclude': {
     'type': 'array',
@@ -122,7 +192,7 @@ const _globSet = <String, Map<String, Object?>>{
   },
 };
 
-/// A task, §4.3.
+/// A task, a task's keys.
 Map<String, Object?> get _task => {
   'type': 'object',
   'additionalProperties': false,
@@ -146,25 +216,23 @@ const _strings = <String, Object?>{
 // engine's own order, and writing this one in the engine's order too would
 // make the test that says so pass whether it did or not.
 const _taskKeys = <String, Map<String, Object?>>{
+  'all': {
+    // A set's name, read as one: `all: ''` is refused by the parser and was
+    // offered here.
+    ..._name,
+    'description':
+        r'A set whose members replace the `$all` marker in `run:` or `args:`, '
+        'in one invocation. The marker is a whole argument and appears once.',
+  },
   'args': {
     ..._strings,
     'description': 'Extra arguments appended to the body.',
   },
-  'argv-from': {
-    'type': 'string',
-    'description':
-        'A set whose members are appended as arguments, already expanded.',
-  },
-  'collects': {
-    'type': 'string',
-    'description':
-        'Names a gate set this task is the composite of — it needs every task '
-        'in that set. Spelled nothing like `gate:` on purpose: the two mean '
-        'opposite things.',
-  },
   'desc': {
-    'type': 'string',
-    'minLength': 1,
+    // A name's own rule: not blank, and one line — which the parser has always
+    // asked of a description and this said nothing about, so a `desc:` broken
+    // over two lines passed here and was refused by the engine.
+    ..._name,
     'description':
         'Required, one line, and what `--list` prints — so that a task cannot '
         'be added without saying what it is for.',
@@ -177,13 +245,18 @@ const _taskKeys = <String, Map<String, Object?>>{
         '`bin/xtask.dart`. The engine ships no project verbs.',
   },
   'each': {
-    'type': 'string',
+    // A set's name, as `all:` is.
+    ..._name,
     'description':
-        'A set whose members the body runs once per, sequentially. A failure '
-        'stops at that member, and the member is named.',
+        'A set whose members the body runs once per, with '
+        r'`$each` standing for the member — a whole argument, or the end of '
+        r'one: `packages/$each`. Nothing may follow it. A failure names the '
+        'member; without `--keep-going` no further member is STARTED, so at '
+        '`-j 1` it stops the rest and above that it stops what had not begun.',
   },
   'env': {
     'type': 'object',
+    'propertyNames': _envName,
     'additionalProperties': {'type': 'string'},
     'description':
         'Environment for this task only. A key rather than syntax, because '
@@ -195,6 +268,13 @@ const _taskKeys = <String, Map<String, Object?>>{
         'Variables that must already be set. Checked before the body runs; '
         'the engine installs nothing, it only says which one is missing.',
   },
+  'exclusive': {
+    ..._strings,
+    'description':
+        'Tokens this task holds alone while it runs. Two tasks the graph '
+        'calls independent may still share a port or a browser; naming what '
+        'they share is what keeps them apart.',
+  },
   'gate': {
     ..._strings,
     'description':
@@ -203,9 +283,23 @@ const _taskKeys = <String, Map<String, Object?>>{
   },
   'in': {
     'type': 'string',
+    // Not blank: `in: ''` names no directory, and the parser says so.
+    'minLength': 1,
+    'pattern': r'\S',
     'description':
-        'Where the body runs, relative to the repository root — or the '
-        r'literal `$each`, which stands for the current member of `each:`.',
+        'Where the body runs, relative to the repository root. May end with '
+        r'`$each`, which stands for the current member of `each:` — as the '
+        r'whole value, or composed: `packages/$each`.',
+  },
+  'interruptible': {
+    'type': 'boolean',
+    'description':
+        'Whether a failure elsewhere may stop this task where it stands. A '
+        'run does not reach into what is already running, because a build '
+        'killed half-way leaves whatever it was doing in whatever state that '
+        'half is — this is the author saying a read-only check leaves '
+        'nothing. A `do:` cannot carry it: stopping a Dart function from '
+        'outside is not something Dart can do.',
   },
   'needs': {
     ..._strings,
@@ -215,12 +309,37 @@ const _taskKeys = <String, Map<String, Object?>>{
   },
   'run': {
     'type': 'array',
-    'items': {'type': 'string'},
+    // **The first element is the executable, and it may not be blank.** Only
+    // the first: an empty ARGUMENT is ordinary — `dart test --name ''` — while
+    // an empty executable resolves to nothing and surfaces as a missing tool,
+    // code 3, when the defect is in the file and its code is 2. Draft-07
+    // spells a positional rule as an `items` array with `additionalItems` for
+    // the rest.
+    'items': [
+      {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
+    ],
+    'additionalItems': {'type': 'string'},
     'minItems': 1,
     'description':
         'An external program as argv: the program, then its arguments, each '
         'its own entry. Never a command line — nothing splits a string here, '
         'and no shell sees it.',
+  },
+  'serial': {
+    'type': 'boolean',
+    'description':
+        "Whether this task's `each:` members must not overlap. `-j` says how "
+        'much may happen at once; this says whether these particular members '
+        'may happen together at all — one shared `pub` cache, one git index. '
+        'Getting it wrong makes a run flaky rather than slow, which is why it '
+        'is in the file and the number is not.',
+  },
+  'then': {
+    ..._strings,
+    'description':
+        "Continuations, run after this task's body rather than before it. A "
+        'body that succeeded and a continuation that failed is its own '
+        'outcome, with its own exit code.',
   },
   'timeout': {
     'type': 'integer',
@@ -230,13 +349,6 @@ const _taskKeys = <String, Map<String, Object?>>{
         'carry one: a verb is a Dart function and nothing outside it can stop '
         'one, so the limit would pass while the verb kept running. Under '
         '`each:` it is a limit per member.',
-  },
-  'then': {
-    ..._strings,
-    'description':
-        "Continuations, run after this task's body rather than before it. A "
-        'body that succeeded and a continuation that failed is its own '
-        'outcome, with its own exit code.',
   },
 };
 
@@ -248,9 +360,9 @@ const _taskKeys = <String, Map<String, Object?>>{
 ///
 /// **The whole guard, in one function.** [keys] is the engine's list; [table]
 /// is this file's description of it. A key added to one and forgotten in the
-/// other is the drift §1 exists to remove, and the failure it would cause is
-/// quiet in the worst way — an editor happily completing a key the parser
-/// refuses, or underlining one it accepts. So the disagreement stops
+/// other is the drift the duplicate list exists to remove, and the failure it
+/// would cause is quiet in the worst way — an editor happily completing a key
+/// the parser refuses, or underlining one it accepts. So the disagreement stops
 /// `--emit-schema` rather than reaching a file, and the message names both
 /// sides.
 Map<String, Map<String, Object?>> checkedProperties(

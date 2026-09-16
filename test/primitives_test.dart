@@ -2,23 +2,21 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:xtask/src/boundary.dart';
 import 'package:xtask/src/context.dart';
+import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/primitives.dart';
+
+import 'helpers.dart';
 
 void main() {
   late Directory root;
   late List<String> logged;
 
   setUp(() {
-    root = Directory.systemTemp.createTempSync('xtask_remove_');
+    root = tempRepo('remove');
     logged = [];
-  });
-
-  tearDown(() {
-    if (root.existsSync()) {
-      root.deleteSync(recursive: true);
-    }
   });
 
   void given(List<String> paths) {
@@ -42,9 +40,46 @@ void main() {
       env: const {},
       workingDirectory: root.path,
       log: logged.add,
+      start: (_, {workingDirectory}) async =>
+          throw StateError('`remove` starts nothing'),
     ),
     root: root.path,
   );
+
+  group('a link that leads outside the repository', () {
+    late Directory outside;
+
+    setUp(() {
+      outside = Directory.systemTemp.createTempSync('xtask_outside_');
+      addTearDown(() => outside.deleteSync(recursive: true));
+      File(p.join(outside.path, 'x')).writeAsStringSync('x');
+      Link(p.join(root.path, 'out')).createSync(outside.path);
+    });
+
+    test('is not followed by a delete', () async {
+      // The written fence is asked of the file and cannot see a link; this is
+      // the same fence asked of the machine, at the moment of the delete.
+      expect(await remove(['out/x']), ExitCode.invalidFile);
+      expect(File(p.join(outside.path, 'x')).existsSync(), isTrue);
+      expect(logged.join('\n'), contains('through a link'));
+    });
+
+    test('and the plan says so rather than promising the delete', () {
+      final would = removeWouldDelete(
+        ['out/x'],
+        root: root.path,
+        base: root.path,
+      );
+      expect(would.refused, contains('through a link'));
+      expect(would.paths, isEmpty);
+    });
+
+    test('while the link itself is removed and never followed', () async {
+      expect(await remove(['out']), ExitCode.success);
+      expect(exists('out'), isFalse);
+      expect(File(p.join(outside.path, 'x')).existsSync(), isTrue);
+    });
+  }, testOn: '!windows');
 
   group('deletes what it is given', () {
     test('a file', () async {
@@ -85,7 +120,7 @@ void main() {
     });
 
     test('and so `clean` can run twice, which is the whole point', () async {
-      // The reading of §6 this verb takes, stated as a test because the
+      // The reading of `remove` this verb takes, stated as a test because the
       // section can be read the other way. `clean` names build output that is
       // usually already gone; a second run must not fail.
       given(['vscode/out/a.js', 'vscode/plugin.vsix']);
@@ -94,10 +129,10 @@ void main() {
     });
 
     test('a glob matching nothing is not an error either', () async {
-      // The other half of the §6 reading. A NAMED SET expanding to nothing is
-      // an error (§4.2) because a task given no files checked nothing; a
-      // pattern among THIS verb's arguments matching nothing is not, because
-      // "delete what is there" is satisfied by there being nothing.
+      // The other half of the `remove` reading. A NAMED SET expanding to
+      // nothing is an error (sets) because a task given no files checked
+      // nothing; a pattern among THIS verb's arguments matching nothing is not,
+      // because "delete what is there" is satisfied by there being nothing.
       given(['keep.txt']);
       expect(await remove(['*.vsix']), ExitCode.success);
       expect(exists('keep.txt'), isTrue);
@@ -113,9 +148,26 @@ void main() {
       expect(exists('vscode/keep.js'), isTrue);
     });
 
+    test('`**/` reads as none-or-more here too, not one-or-more', () async {
+      // The divergence this closes: `sets:` corrected `package:glob`'s
+      // reading of `**/` and this verb did not, so the same pattern in the
+      // same file matched a different set of paths depending on which key it
+      // was written under. `packages/coverage` is the case that tells them
+      // apart — one-or-more never reaches it.
+      given([
+        'packages/coverage/f',
+        'packages/one/coverage/f',
+        'packages/one/lib/keep.dart',
+      ]);
+      await remove(['packages/**/coverage']);
+      expect(exists('packages/coverage'), isFalse);
+      expect(exists('packages/one/coverage'), isFalse);
+      expect(exists('packages/one/lib/keep.dart'), isTrue);
+    });
+
     test('a star in the middle matches directories', () async {
-      // §12's `packages/*/coverage`, which is the reason this has to reach
-      // directories and not only files.
+      // the README's `packages/*/coverage`, which is the reason this has to
+      // reach directories and not only files.
       given([
         'packages/one/coverage/f',
         'packages/two/coverage/f',
@@ -177,11 +229,10 @@ void main() {
 
   group('it refuses to reach outside the repository', () {
     // The check that matters most in the whole file: this is the verb that
-    // deletes recursively, and §6's "a missing path is not an error" means a
-    // path taken on trust would be followed without a word.
+    // deletes recursively, and `remove`'s "a missing path is not an error"
+    // means a path taken on trust would be followed without a word.
     test('an absolute path', () async {
-      final outside = Directory.systemTemp.createTempSync('xtask_outside_');
-      addTearDown(() => outside.deleteSync(recursive: true));
+      final outside = tempRepo('outside');
       expect(await remove([outside.path]), ExitCode.invalidFile);
       expect(outside.existsSync(), isTrue);
       expect(logged.join('\n'), contains('outside the repository'));
@@ -215,16 +266,257 @@ void main() {
     );
   });
 
-  group('the closed list §6 promises', () {
+  group('the walk is pruned, as `sets:` prunes it', () {
+    test('a subtree no pattern can reach is not read', () {
+      // Not a timing assertion — the point is that the ANSWER is unchanged
+      // while the reading is not. Include patterns were used to match and
+      // never to prune here, so `do: remove build/**` read all of
+      // `node_modules` and all of `.git` on every invocation to find nothing
+      // there by construction: 0.19s against 0.01s on eighteen thousand files.
+      given([
+        'build/out/a.o',
+        'build/keep/b.o',
+        'node_modules/pkg/lib/src/deep.js',
+        '.git/objects/ab/cdef',
+      ]);
+      // The directories themselves, not their contents: a match is about to
+      // be deleted whole, so the walk does not descend into one.
+      expect(pathsMatching('build/**', root: root.path), [
+        'build/keep',
+        'build/out',
+      ]);
+    });
+
+    test('and a pattern that can reach anywhere still does', () {
+      given(['a/b/c/x.tmp', 'y.tmp', 'node_modules/pkg/z.tmp']);
+      expect(pathsMatching('**/*.tmp', root: root.path), [
+        'a/b/c/x.tmp',
+        'node_modules/pkg/z.tmp',
+        'y.tmp',
+      ]);
+    });
+  });
+
+  group('a path named twice is one path', () {
+    test('a literal and a glob that both reach it', () {
+      // `found` was seeded with the literals and then appended to by the walk,
+      // so `--dry-run` printed `del build` twice and the verb issued a second
+      // delete of a path it had just removed.
+      given(['build/out.js']);
+      expect(pathsMatchingAll(['build', 'build*'], root: root.path), ['build']);
+    });
+  });
+
+  group('the answer is sorted, whatever the arguments look like', () {
+    test('literals alone come back in order, not in written order', () {
+      // The invariant is stated where the walk sorts — everything sorts,
+      // literals included — and the early answer for a call with no glob in it
+      // was the one place it did not hold. So `remove` printed one order for
+      // `[coverage, build]` and another for `[coverage, build, '**/*.tmp']`,
+      // and a `--dry-run` of one block could not be compared with another's.
+      expect(pathsMatchingAll(['coverage', 'build'], root: root.path), [
+        'build',
+        'coverage',
+      ]);
+    });
+
+    test('and a glob beside them does not change the order of the rest', () {
+      given(['a.tmp']);
+      expect(
+        pathsMatchingAll(['coverage', 'build', '**/*.tmp'], root: root.path),
+        ['a.tmp', 'build', 'coverage'],
+      );
+    });
+  });
+
+  group('a pattern that will not compile is a sentence, not a stack trace', () {
+    test('the verb says which argument and why', () async {
+      // Uncaught, `[` left the verb as a raw `FormatException` whose "line 1,
+      // column 2" points inside the pattern string rather than at anything in
+      // the file — reported as "task threw FormatException", which sends the
+      // reader to look at this engine.
+      given(['a.txt']);
+      expect(await remove(['a{b']), ExitCode.invalidFile);
+      expect(logged.join('\n'), contains('a{b'));
+      expect(logged.join('\n'), contains('not a valid pattern'));
+      expect(exists('a.txt'), isTrue, reason: 'it deleted something anyway');
+    });
+  });
+
+  group('what a dry run may say it would delete', () {
+    test('is what is on disk, and nothing that is not', () {
+      given(['build/out/a.o', 'keep.txt']);
+      final would = removeWouldDelete(
+        ['build', 'coverage', 'keep.txt'],
+        root: root.path,
+        base: root.path,
+      );
+      expect(
+        would.paths,
+        ['build', 'keep.txt'],
+        reason: '`coverage` is not there, and a missing path is not deleted',
+      );
+      expect(would.refused, isNull);
+    });
+
+    test('and where the run would refuse, it says why in the same words', () {
+      // It used to answer an empty list here, which the caller renders as
+      // "nothing of these is on disk, which is not an error" — a positive
+      // assurance about a recursive delete aimed outside the repository.
+      given(['a.txt']);
+      final outside = removeWouldDelete(
+        ['../etc'],
+        root: root.path,
+        base: root.path,
+      );
+      expect(outside.paths, isEmpty);
+      expect(outside.refused, contains('outside the repository'));
+      expect(outside.refused, contains('../etc'));
+
+      final bad = removeWouldDelete(['a{b'], root: root.path, base: root.path);
+      expect(bad.paths, isEmpty);
+      expect(bad.refused, contains('not a valid pattern'));
+    });
+
+    test('and it deletes nothing itself', () {
+      given(['build/out/a.o']);
+      removeWouldDelete(['build'], root: root.path, base: root.path);
+      expect(exists('build/out/a.o'), isTrue);
+    });
+  });
+
+  group('a delete that could not happen', () {
+    test('is a sentence about the path, not about the verb', () async {
+      // Unguarded, a permission error came out through the general handler as
+      // "the project's own verb threw PathAccessException", which sends the
+      // reader to look at a verb the engine ships.
+      given(['build/inner/f.txt']);
+      final build = Directory(p.join(root.path, 'build'));
+      Process.runSync('chmod', ['500', build.path]);
+      addTearDown(() => Process.runSync('chmod', ['755', build.path]));
+
+      await expectLater(
+        remove(['build']),
+        throwsA(
+          isA<RunFailure>().having(
+            (f) => f.message,
+            'message',
+            allOf(contains('could not delete'), contains('build')),
+          ),
+        ),
+      );
+      expect(
+        logged.join('\n'),
+        isNot(contains('removed')),
+        reason: 'it announced a deletion that did not happen',
+      );
+    }, testOn: '!windows');
+  });
+
+  group('the closed list `remove` promises', () {
     test('is exactly one verb', () {
       expect(builtInVerbNames, {'remove'});
     });
 
     test('and what is bound matches what is named', () {
-      // Two lists of the same thing would be the defect §1 exists to remove,
-      // and this is the pair most likely to drift: a primitive added to the
-      // map and forgotten in the set is one `--validate` would then refuse.
+      // Two lists of the same thing would be the defect this tool exists to
+      // remove, and this is the pair most likely to drift: a primitive added to
+      // the map and forgotten in the set is one `--validate` would then refuse.
       expect(builtInVerbs(root: root.path).keys.toSet(), builtInVerbNames);
     });
+  });
+
+  group('what `remove` is relative to', () {
+    // **The task's `in:`, and it was the repository root.** A task written
+    // `in: sub` had `build` looked for and deleted at the root instead, and
+    // `--dry-run` printed `in …/sub` on the line directly above `del build` —
+    // so the plan promised the one thing the run would not do, in the only
+    // body that deletes.
+    test('is where the task runs, not where the repository starts', () {
+      given(['sub/build/inner.o', 'build/outer.o']);
+      final base = p.join(root.path, 'sub');
+
+      final would = removeWouldDelete(['build'], root: root.path, base: base);
+      expect(would.refused, isNull);
+      expect(would.paths, ['build']);
+
+      expect(
+        pathsMatchingAll(['build'], root: base),
+        ['build'],
+        reason: 'read from `sub`, where the body runs',
+      );
+    });
+
+    test('and the fence is still where the repository ends', () {
+      // The base moves with `in:`; the boundary does not. An argument cannot
+      // climb, so a deeper base only ever reaches deeper — and a link out is
+      // asked about against the root itself.
+      given(['sub/build/inner.o']);
+      final base = p.join(root.path, 'sub');
+      final would = removeWouldDelete(
+        ['../../etc'],
+        root: root.path,
+        base: base,
+      );
+      expect(would.refused, isNotNull);
+      expect(would.paths, isEmpty);
+    });
+  });
+
+  group('what `remove` may not be handed', () {
+    // **The directory it runs in.** `args: ['']` is an ordinary entry for a
+    // program — `dart test --name ''` is why an empty argument is legal at all
+    // — and here every fence passed: the working directory is inside the
+    // repository, nothing climbs, no link is crossed. `in: sub` with an empty
+    // argument deleted `sub` whole and answered 0.
+    test('is the whole of where it stands, however that is written', () {
+      for (final argument in ['', '.', './']) {
+        expect(
+          removeRefuses(
+            root: root.path,
+            base: root.path,
+            written: argument,
+            absolute: underRoot(root.path, argument),
+          ),
+          isNotNull,
+          reason: '`$argument` names the working directory itself',
+        );
+      }
+    });
+
+    test('while something inside it is what the verb is for', () {
+      expect(
+        removeRefuses(
+          root: root.path,
+          base: root.path,
+          written: 'build',
+          absolute: underRoot(root.path, 'build'),
+        ),
+        isNull,
+      );
+    });
+
+    test('and a dry run asks before it asks what is on disk', () {
+      // `--dry-run` filtered the absent paths away and only then asked the
+      // boundary, so a leaf that is missing behind a link out of the
+      // repository was dropped before the fence was reached: the plan said
+      // "nothing of these is on disk" about an argument the run refuses.
+      Directory(p.join(root.parent.path, 'outside-remove')).createSync();
+      addTearDown(
+        () => Directory(
+          p.join(root.parent.path, 'outside-remove'),
+        ).deleteSync(recursive: true),
+      );
+      Link(
+        p.join(root.path, 'build'),
+      ).createSync(p.join(root.parent.path, 'outside-remove'));
+      final would = removeWouldDelete(
+        ['build/x'],
+        root: root.path,
+        base: root.path,
+      );
+      expect(would.refused, contains('through a link'));
+      expect(would.paths, isEmpty);
+    }, testOn: 'posix');
   });
 }

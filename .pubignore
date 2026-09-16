@@ -1,0 +1,12 @@
+# What a consumer gets, and does not.
+#
+# `.gitignore` decides what is committed; this decides what is PUBLISHED, and
+# they are different questions. Everything below is kept in the repository on
+# purpose and has no reader on the other side of `pub add xtask`.
+
+# Working notes, not documentation. `doc/research/ci-drift-prior-art.md` is
+# 46 KB — larger than the README — and it is the reasoning behind one decision
+# rather than anything a consumer of the package reads. The ADRs beside it are
+# published deliberately: each is a page, and each answers "why does it refuse
+# this?", which is the question a consumer actually arrives with.
+doc/research/

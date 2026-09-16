@@ -2,11 +2,9 @@
 ///
 /// **The engine's largest job, and it is not execution.** What a task comes to
 /// — the set expanded, the member `$each` stands for, the directory it lands
-/// in, the environment it sees, the program §5.4 finds on this machine — used
-/// to be a private method inside `Executor`. That forced `--dry-run` to be a
-/// *mode of the executor*: a callback, a process starter whose only job was to
-/// throw, and four branches asking whether this run was pretending. None of
-/// that was about dry runs. It was about the answer living in the wrong place.
+/// in, the environment it sees, the program the resolver finds on this
+/// machine — is decided here and nowhere else, so that `--dry-run` prints the
+/// very answer a run performs rather than a second reading of the file.
 ///
 /// One method in the interface, and every way a task can turn out to be
 /// unrunnable behind it — an unset `env-required`, an unknown verb, a set that
@@ -14,8 +12,7 @@
 /// nothing on `PATH` answers to, an argument `cmd.exe` would reinterpret.
 library;
 
-import 'package:path/path.dart' as p;
-
+import 'boundary.dart';
 import 'context.dart';
 import 'errors.dart';
 import 'executables.dart';
@@ -23,15 +20,16 @@ import 'exit_codes.dart';
 import 'model.dart';
 import 'sets.dart';
 
-/// A body with everything about it decided — §7's *resolved* plan.
+/// A body with everything about it decided — `--dry-run`'s *resolved* plan.
 ///
 /// **What `--dry-run` prints and what a run performs, worked out once.**
 /// Turning a task into a command is most of the engine: the set expanded, the
 /// member `$each` stands for, the directory it lands in, the environment it
-/// sees, and the executable §5.4 finds on this machine. A dry run that worked
-/// that out a second time would be a second answer to "what will happen" — the
-/// two would agree until the day one of them was changed, which is §1's first
-/// defect written by the tool that exists to remove it.
+/// sees, and the executable the resolver finds on this machine. A dry run that
+/// worked that out a second time would be a second answer to "what will happen"
+/// — the two would agree until the day one of them was changed, which is the
+/// first defect this tool is against, written by the tool that exists to remove
+/// it.
 ///
 /// So there is one place that works it out — [BodyResolver] — and a run and
 /// a dry run are two different things done with what it produces.
@@ -41,6 +39,7 @@ sealed class Resolved {
     required this.member,
     required this.workingDirectory,
     required this.environment,
+    required this.declaredEnvironment,
     required this.arguments,
   });
 
@@ -61,8 +60,18 @@ sealed class Resolved {
   /// actually sees, rather than what the file adds.
   final Map<String, String> environment;
 
+  /// Only what the task's own `env:` adds, with markers already standing for
+  /// what they name.
+  ///
+  /// **Computed once, because two things print it.** A report shows what the
+  /// file declared rather than the hundred variables that are part of the
+  /// terminal, and shows it substituted — `FLAVOR=dev`, as the child sees it,
+  /// not `FLAVOR=$each` as the file wrote it.
+  final Map<String, String> declaredEnvironment;
+
   /// Everything after the program name: for a `run:` body the rest of its
-  /// `argv`, then `args:`, then the expanded `argv-from` set.
+  /// `argv`, then `args:`, each with its markers already standing for what
+  /// they name — a set is expanded where it is written, not appended.
   final List<String> arguments;
 }
 
@@ -73,20 +82,22 @@ final class ResolvedProcess extends Resolved {
     required super.member,
     required super.workingDirectory,
     required super.environment,
+    required super.declaredEnvironment,
     required super.arguments,
     required this.executable,
     required this.runInShell,
     this.timeout,
   });
 
-  /// The absolute path §5.4 resolved the written name to, on this machine.
+  /// The absolute path the resolver resolved the written name to, on this
+  /// machine.
   final String executable;
 
   /// Whether starting it means going through `cmd.exe` — true only for a
-  /// Windows shim that `CreateProcess` cannot start (§5.4, rule 3).
+  /// Windows shim that `CreateProcess` cannot start (the batch-shim rule).
   final bool runInShell;
 
-  /// How long it may take, or null for no limit — §4.3's `timeout:`.
+  /// How long it may take, or null for no limit — the task's `timeout:`.
   ///
   /// Under `each:` this is a limit **per member**: six packages with a limit
   /// of five minutes is thirty minutes of patience, not five, because the
@@ -101,6 +112,7 @@ final class ResolvedVerb extends Resolved {
     required super.member,
     required super.workingDirectory,
     required super.environment,
+    required super.declaredEnvironment,
     required super.arguments,
     required this.verb,
     required this.implementation,
@@ -115,6 +127,17 @@ final class ResolvedVerb extends Resolved {
   final Verb implementation;
 }
 
+/// What both kinds of body are resolved against.
+typedef _Shared = ({
+  String? member,
+  String where,
+  List<String> members,
+  List<String> Function(Iterable<String>) substituted,
+  List<String> args,
+  Map<String, String> declared,
+  Map<String, String> environment,
+});
+
 /// What a task comes to on this machine.
 final class BodyResolver {
   BodyResolver({
@@ -124,23 +147,22 @@ final class BodyResolver {
     this.verbs = const {},
     this.environment = const {},
     this.passedThrough,
+    this.cacheSets = false,
   }) : _expander = SetExpander(root: root);
 
   /// The repository root. Every working directory is resolved against it.
   final String root;
 
-  /// How a written program name becomes a path on this machine (§5.4).
+  /// How a written program name becomes a path on this machine (the resolver).
   final ExecutableResolver resolver;
 
   /// The file's `sets:` — only the sets.
   ///
-  /// This used to be the whole [XtaskFile], a required parameter read at
-  /// exactly one line. Handing a resolver the task graph as well hands it
-  /// something it has no business with: what runs in what order is the
-  /// planner's, and by now the planner has decided.
+  /// A resolver has no business with the task graph: what runs in what order
+  /// is the planner's, and by now the planner has decided.
   final Map<String, NamedSet> sets;
 
-  /// What the project registered (§9), plus the primitives of §6.
+  /// What the project registered, plus the built-in verbs.
   final Map<String, Verb> verbs;
 
   /// The ambient environment a task's `env:` is added to, and the one
@@ -155,23 +177,36 @@ final class BodyResolver {
   /// carried with the arguments and compared by name — a task pulled in
   /// through `needs:` gets what the file says it gets and nothing else.
   ///
-  /// They land **after** `args:` and the expanded `argv-from`, where a command
-  /// line belongs: last, and therefore able to add to what the file already
-  /// said rather than being buried in front of it.
+  /// They land **after** `args:` and anything a marker expanded to, where a
+  /// command line belongs: last, and therefore able to add to what the file
+  /// already said rather than being buried in front of it.
   final ({String task, List<String> arguments})? passedThrough;
+
+  /// Whether a set read once may be answered from memory.
+  ///
+  /// **False for a run, and that is the whole of it.** A set is read when the
+  /// task naming it is about to run, because a task between two others may
+  /// have made or removed the files — which is why there is no cache here by
+  /// default. `--dry-run` runs nothing at all, so the second walk of a set two
+  /// tasks share can only find what the first one found: twenty tasks sharing
+  /// one glob set cost twenty identical walks and 553ms, against 36ms for one.
+  final bool cacheSets;
 
   final SetExpander _expander;
 
+  final _expanded = <String, List<String>>{};
+
   /// Everything [task] comes to, in order. Empty for a composite.
   ///
-  /// Throws [RunFailure], carrying the reason and the code §5.3 gives it —
-  /// which is what makes `--dry-run` worth reading: it stops exactly where a
-  /// run would stop, with the same message and the same code, because it is
-  /// the same call.
+  /// Throws [RunFailure], carrying the reason and the code the exit code table
+  /// gives it — which is what makes `--dry-run` worth reading: it stops exactly
+  /// where a run would stop, with the same message and the same code, because
+  /// it is the same call.
   List<Resolved> resolveTask(Task task) {
     // Before the body, and that is the whole value of the key: it turns "a
     // browser test failed somewhere inside" into "task `web-e2e` requires
-    // CHROMEDRIVER, which is not set" (§7.1). The engine installs nothing.
+    // CHROMEDRIVER, which is not set" (one invocation per job). The engine
+    // installs nothing.
     for (final name in task.envRequired) {
       final value = environment[name];
       if (value == null || value.isEmpty) {
@@ -207,145 +242,211 @@ final class BodyResolver {
   /// exactly where the run would, with the same message and the same exit
   /// code.
   Resolved _resolve(Task task, Body body, String? member) {
-    final where = _workingDirectory(task, member);
-    final passed = passedThrough;
-    final args = List<String>.unmodifiable([
-      ...task.args,
-      if (task.argvFrom != null) ..._expand(task, task.argvFrom!),
-      if (passed != null && passed.task == task.name) ...passed.arguments,
-    ]);
-    final env = Map<String, String>.unmodifiable({
-      ...environment,
-      ...task.env,
-    });
-
-    switch (body) {
-      case DoBody(:final verb):
-        final implementation = verbs[verb];
-        if (implementation == null) {
-          throw RunFailure(
-            ExitCode.invalidFile,
-            'task `${task.name}` names the verb `$verb`, which this project '
-            'has not registered. The engine ships no project verbs: a '
-            'verb is a Dart function the project hands to `runXtask`',
-          );
-        }
-        return ResolvedVerb(
-          task: task,
-          member: member,
-          workingDirectory: where,
-          environment: env,
-          arguments: args,
-          verb: verb,
-          implementation: implementation,
-        );
-
-      case RunBody(:final argv):
-        final executable = resolver.resolve(argv.first);
-        if (executable == null) {
-          throw RunFailure(
-            ExitCode.missingTool,
-            'task `${task.name}`: ${resolver.missingToolMessage(argv.first)}',
-          );
-        }
-        final arguments = List<String>.unmodifiable([...argv.skip(1), ...args]);
-        final runInShell = resolver.needsShell(executable);
-        if (runInShell) {
-          _refuseShellMetacharacters(task, executable, arguments);
-        }
-        return ResolvedProcess(
-          task: task,
-          member: member,
-          workingDirectory: where,
-          environment: env,
-          arguments: arguments,
-          executable: executable,
-          runInShell: runInShell,
-          timeout: task.timeout == null
-              ? null
-              : Duration(seconds: task.timeout!),
-        );
-    }
+    final common = _shared(task, member);
+    return switch (body) {
+      DoBody(:final verb) => _resolveVerb(task, verb, common),
+      RunBody(:final argv) => _resolveProcess(task, argv, common),
+    };
   }
 
-  /// Characters `cmd.exe` acts on rather than passes along.
-  static const _cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"'};
+  /// Everything a body of either kind is resolved against: where it runs, what
+  /// it was given, and what its environment is.
+  _Shared _shared(Task task, String? member) {
+    final where = _workingDirectory(task, member);
+    // `$all` is replaced by every member of the set, in place, so the argument
+    // list a task writes is the argument list it gets.
+    final members = task.all == null
+        ? const <String>[]
+        : _expand(task, task.all!);
+    // The one substitution rule, asked with the one member this body is for.
+    List<String> substitute(Iterable<String> written) =>
+        substituted(written, all: members, each: [?member]);
+    final passed = passedThrough;
+    // A value goes where a value goes, and an environment value is one:
+    // `env: {FLAVOR: $each}` would otherwise reach the child as literal text.
+    final declared = Map<String, String>.unmodifiable({
+      for (final entry in task.env.entries)
+        entry.key: member == null
+            ? entry.value
+            : withMember(entry.value, member),
+    });
+    return (
+      member: member,
+      where: where,
+      members: members,
+      substituted: substitute,
+      args: List<String>.unmodifiable([
+        ...substitute(task.args),
+        if (passed != null && passed.task == task.name) ...passed.arguments,
+      ]),
+      declared: declared,
+      environment: Map<String, String>.unmodifiable({
+        ...environment,
+        ...declared,
+      }),
+    );
+  }
 
-  /// Refuses an argument the shell would reinterpret, when the shell is
-  /// unavoidable — §5.4, rule 3.
-  ///
-  /// A batch shim cannot be started by `CreateProcess`, so its arguments are
-  /// parsed by `cmd.exe` whatever the caller intended, and Dart's own
-  /// documentation says so. That leaves two ways to be wrong and one to be
-  /// honest:
-  ///
-  /// - quote for `cmd.exe` here **and** let `Process.start` quote for
-  ///   `CreateProcess` as well, which is two layers of quoting nobody can
-  ///   verify from a machine that is not Windows;
-  /// - pass them through and let `&` end the command and start another one,
-  ///   silently, which is the worst outcome available;
-  /// - refuse, name the character, and say what it would have done.
-  ///
-  /// This takes the third. It costs a task that genuinely wants `&` in an
-  /// argument to a `.bat` — which it can have by pointing at a `.exe`, or by
-  /// making the job a verb, where R1 says logic belongs anyway. It is a
-  /// **stated** limit rather than an untested claim of correctness, and it
-  /// stops being needed the day this runs on a Windows CI machine that can
-  /// prove an escaping pass right.
-  void _refuseShellMetacharacters(
+  ResolvedVerb _resolveVerb(Task task, String verb, _Shared common) {
+    final implementation = verbs[verb];
+    if (implementation == null) {
+      throw RunFailure(
+        ExitCode.invalidFile,
+        unknownVerb(task: task.name, verb: verb, known: verbs.keys.toSet()),
+      );
+    }
+    return ResolvedVerb(
+      task: task,
+      member: common.member,
+      workingDirectory: common.where,
+      environment: common.environment,
+      declaredEnvironment: common.declared,
+      arguments: common.args,
+      verb: verb,
+      implementation: implementation,
+    );
+  }
+
+  ResolvedProcess _resolveProcess(
     Task task,
-    String executable,
-    List<String> arguments,
+    List<String> argv,
+    _Shared common,
   ) {
-    for (final argument in arguments) {
-      for (final character in _cmdMetacharacters) {
-        if (!argument.contains(character)) {
-          continue;
-        }
-        throw RunFailure(
-          ExitCode.invalidFile,
-          'task `${task.name}` passes `$argument` to `$executable`, which is '
-          'a batch file. Windows starts one through the shell whatever the '
-          'caller asks for, so `$character` in that argument would be read as '
-          'a shell operator rather than as text. Point the task at a real '
-          'executable, or make it a verb — a Dart function is where logic '
-          'belongs anyway',
-        );
-      }
+    final executable = resolver.resolve(argv.first, from: common.where);
+    if (executable == null) {
+      throw RunFailure(
+        ExitCode.missingTool,
+        'task `${task.name}`: '
+        '${resolver.missingToolMessage(argv.first, from: common.where)}',
+      );
+    }
+    _refuseFoundMemberReadAsOption(
+      task,
+      argv.first,
+      [...argv.skip(1), ...task.args],
+      [...common.members, ?common.member],
+    );
+    final arguments = List<String>.unmodifiable([
+      ...common.substituted(argv.skip(1)),
+      ...common.args,
+    ]);
+    final runInShell = resolver.needsShell(executable);
+    if (runInShell) {
+      refuseShellMetacharacters(task.name, executable, arguments);
+    }
+    return ResolvedProcess(
+      task: task,
+      member: common.member,
+      workingDirectory: common.where,
+      environment: common.environment,
+      declaredEnvironment: common.declared,
+      arguments: arguments,
+      executable: executable,
+      runInShell: runInShell,
+      timeout: task.timeout == null ? null : Duration(seconds: task.timeout!),
+    );
+  }
+
+  /// Refuses a member the engine FOUND that the program would read as an
+  /// option.
+  ///
+  /// The rule itself is `model.dart`'s, so that `--validate` — which expands
+  /// every set already — asks the same question and gets the same sentence.
+  void _refuseFoundMemberReadAsOption(
+    Task task,
+    String program,
+    List<String> written,
+    List<String> members,
+  ) {
+    final refusal = foundMemberReadAsOption(
+      task: task,
+      program: program,
+      written: written,
+      members: members,
+      from: sets[task.all ?? task.each],
+    );
+    if (refusal != null) {
+      throw RunFailure(ExitCode.invalidFile, refusal);
     }
   }
 
   /// Where a body runs. `$each` is the member; anything else is relative to
-  /// the repository root (§4.3).
+  /// the repository root.
+  ///
+  /// Asked the boundary twice: of what the file wrote, composed around the
+  /// member, and of what this machine has there — a directory inside the
+  /// root that is a link to one outside it passes the first and not the
+  /// second.
   String _workingDirectory(Task task, String? member) {
     final written = task.workingDirectory;
     if (written == null) {
       return root;
     }
-    if (written == r'$each') {
-      if (member == null) {
-        throw RunFailure(
-          ExitCode.invalidFile,
-          'task `${task.name}` uses `in: \$each` without an `each:` set, so '
-          'there is no member for it to stand for',
-        );
-      }
-      return p.join(root, member);
+    if (member == null && written.endsWith(eachMarker)) {
+      // The parser refuses this shape; the resolver is a public seam and must
+      // not read a member that is not there.
+      throw RunFailure(
+        ExitCode.invalidFile,
+        'task `${task.name}` uses `in: $written` without an `each:` set, so '
+        'there is no member for it to stand for',
+      );
     }
-    return p.join(root, written);
+    final composed = member == null ? written : withMember(written, member);
+    if (leavesRoot(composed)) {
+      throw RunFailure(
+        ExitCode.invalidFile,
+        workingDirectoryLeavesRoot(task: task.name, written: composed),
+      );
+    }
+    final where = underRoot(root, composed);
+    if (!staysUnder(root, where)) {
+      throw RunFailure(
+        ExitCode.invalidFile,
+        workingDirectoryLeavesRoot(
+          task: task.name,
+          written: composed,
+          throughALink: true,
+        ),
+      );
+    }
+    return where;
   }
 
   /// The members of set [name], as a failure of [task] when there are none.
   ///
   /// **Rewrapped rather than let through.** A set that expands to nothing is
-  /// an [XtaskFormatException] — the right type for `--validate`, which is
-  /// where §4.2 expects it to be caught. Reaching a RUN, it used to escape the
-  /// walk altogether: past the exit code, and past the section markers, so a
-  /// group opened for the task was never closed and everything after it on
-  /// GitHub was folded into a task that had already stopped.
+  /// an [XtaskFormatException] — the right type for `--validate`. Reaching a
+  /// RUN it has to be a [RunFailure], so that it ends with a code the table
+  /// has and with the task's section closed rather than folding everything
+  /// after it into a task that had already stopped.
   List<String> _expand(Task task, String name) {
+    final remembered = cacheSets ? _expanded[name] : null;
+    if (remembered != null) {
+      return remembered;
+    }
+    final set = _set(task, name);
     try {
-      return _expander.expand(name, _set(task, name));
+      final members = _expander.expand(name, set);
+      if (cacheSets) {
+        _expanded[name] = members;
+      }
+      return members;
+    } on EmptySetException catch (problem) {
+      // Distinguished by type, so `--dry-run` can tell "not yet" from "wrong"
+      // instead of guessing from the exit code — which called a boundary
+      // violation and an unknown verb premature, and answered 0.
+      //
+      // Whether it is only-yet is the refusal's to say, not this module's:
+      // asking the set again here was the same rule written a second time, in
+      // a file that has no business knowing what `produced:` means.
+      final message = [
+        'task `${task.name}` cannot run:',
+        '$problem',
+        ?_shapeOfASetFedToRemove(task),
+      ].join('\n');
+      throw problem.onlyYet
+          ? NotYetFailure(ExitCode.invalidFile, message)
+          : RunFailure(ExitCode.invalidFile, message);
     } on XtaskFormatException catch (problem) {
       throw RunFailure(
         ExitCode.invalidFile,
@@ -354,12 +455,36 @@ final class BodyResolver {
     }
   }
 
+  /// The advice a `do: remove` task needs when its set came back empty.
+  ///
+  /// **The one shape that is green once and red afterwards.** A glob set
+  /// matches the build output on the first run and nothing on the second, so a
+  /// `clean` written that way refuses on a tree it has itself just cleaned —
+  /// and the refusal, which is about sets in general, says nothing about the
+  /// one thing that would fix it. A list of literal patterns is never empty,
+  /// because it is written out, and the globs inside it are this verb's to
+  /// expand under the rule that a missing path is not an error.
+  static String? _shapeOfASetFedToRemove(Task task) {
+    final body = task.body;
+    if (body is! DoBody || body.verb != removeVerbName) {
+      return null;
+    }
+    return 'A set fed to `remove` is written as a list of literal patterns — '
+        "`[build, coverage, '**/*.tmp']` — so that it is never empty. Written "
+        'as a glob it matches the output on the first run and nothing on the '
+        'second, which is why this is green once and red afterwards.';
+  }
+
   NamedSet _set(Task task, String name) {
     final set = sets[name];
     if (set == null) {
       throw RunFailure(
         ExitCode.invalidFile,
-        'task `${task.name}` names the set `$name`, which does not exist',
+        noSuchSet(
+          task: task.name,
+          key: task.each == name ? 'each' : 'all',
+          name: name,
+        ),
       );
     }
     return set;

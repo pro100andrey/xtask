@@ -1,13 +1,14 @@
 /// Resolving what runs, and in what order.
 ///
-/// **Planning is separate from running.** This answers "what would happen",
-/// which is the same question `--dry-run` asks (§7) and the same one an
-/// execution needs answered before it starts. Keeping them apart is what stops
-/// `--dry-run` from being a second implementation of the order — a second list,
-/// which is the defect §1 exists to remove.
+/// Planning is separate from running: this answers "what would happen", which
+/// is what `--dry-run` asks  and what an execution needs before it starts.
+/// One implementation of the order, asked by both.
 library;
 
+import 'package:source_span/source_span.dart';
+
 import 'errors.dart';
+import 'gates.dart';
 import 'model.dart';
 
 /// One task, in the position the run reaches it.
@@ -19,16 +20,13 @@ final class PlanStep {
   /// The task whose `then:` began the continuation this step is inside, or
   /// null when the run reached it directly.
   ///
-  /// **The origin, not the immediate parent.** `b then c`, `c needs d` puts d
-  /// before c, so asking "did c fail" when d is reached answers about a task
-  /// that has not run yet. What decides whether this step should happen is
-  /// whether the task whose `then:` opened the whole subtree succeeded, and
-  /// that is what is carried down.
+  /// The origin, not the immediate parent: `b then c`, `c needs d` puts d
+  /// before c, so asking about c when d is reached asks about a task that has
+  /// not run. What decides whether this step happens is whether the task whose
+  /// `then:` opened the subtree succeeded.
   ///
-  /// It exists for two things. §5.3 gives a continuation its own exit code —
-  /// a body that succeeded and a continuation that failed is a third outcome,
-  /// not a failure of the body — and `--keep-going` needs to know that a
-  /// publish which failed must not be announced anyway.
+  /// Two things need it: a continuation has an exit code of its own, and
+  /// `--keep-going` must not announce a publish that failed.
   final String? continuationOf;
 
   /// Whether the run arrived here through a `then:`, at any depth.
@@ -68,9 +66,9 @@ final class PlanEdge {
 
 /// The tasks nothing else names — the ones somebody types.
 ///
-/// Ask it of a file whose `collects:` has already been rewritten, or every
-/// member of a gate looks like an entry point: it is the composite naming them
-/// that makes them not one.
+/// A gate set's members are among them: typing `xtask format` is as real an
+/// entry as typing `xtask check`, and both are things a person does.
+/// What a gate set adds is a second way in, which `--why` reports separately.
 List<String> entryPoints(XtaskFile file) {
   final named = <String>{};
   for (final task in file.tasks.values) {
@@ -86,46 +84,138 @@ List<String> entryPoints(XtaskFile file) {
 
 /// One route from [from] to [to] through `needs:` and `then:`, or null.
 ///
-/// **The route the planner would take, not the shortest.** Where several
-/// reach the same task, declaration order decides — which is the order
-/// `planRun` walks, so the answer to "why is this here" describes the run
-/// rather than an equally true alternative the run does not take.
+/// The route the planner would take, not the shortest: where several reach the
+/// same task, declaration order decides, so the answer describes the run rather
+/// than an equally true alternative.
 ///
-/// An empty list means [from] and [to] are the same task: it is reached by
-/// being asked for.
+/// An empty list means [from] and [to] are the same task, reached by being
+/// asked for.
 List<PlanEdge>? routeTo(
   XtaskFile file, {
   required String from,
   required String to,
+  Set<String>? hopeless,
 }) {
+  // The path being walked, so a cycle does not hang it. A path rather than a
+  // visited set: kept across branches, a dead branch would mark everything it
+  // touched unreachable and answer a later edge with "nothing reaches it".
   final seen = <String>{};
+  // What has been proven not to reach [to]. Reachability does not depend on
+  // where the walk started, so a no is worth remembering for the whole of
+  // `--why`, which asks this once per gate member with the same target.
+  final unreachable = hopeless ?? <String>{};
+  // Nothing is remembered once a branch has been cut short: a no that came
+  // from the path guard rather than from looking says nothing about that task
+  // in general, since entered from elsewhere the edge would be walked.
+  var cutShort = false;
 
-  List<PlanEdge>? walk(String at) {
-    if (at == to) {
-      return const [];
-    }
-    // A cycle is `--validate`'s to report; here it must only not hang.
-    if (!seen.add(at)) {
-      return null;
-    }
+  // Read off the path rather than accumulated, which would copy the remaining
+  // route at every hop. The path holds the edge that led to each hop, so the
+  // route is that path in order, taken when the target is reached.
+  final route = <PlanEdge>[];
+
+  /// The edges leading out of [at], `needs:` first, in declaration order.
+  ///
+  /// A name with no task has none: a dangling `needs:` is `--validate`'s to
+  /// report, and this walk answers about routes.
+  List<(String, String)> edgesOf(String at) {
     final task = file.tasks[at];
     if (task == null) {
-      return null;
+      return const [];
     }
-    for (final (kind, next) in [
+    return [
       for (final need in task.needs) ('needs', need),
       for (final next in task.then) ('then', next),
-    ]) {
-      final rest = walk(next);
-      if (rest != null) {
-        return [PlanEdge(at, kind, next), ...rest];
-      }
-    }
-    return null;
+    ];
   }
 
-  return walk(from);
+  bool walk(String start) {
+    if (start == to) {
+      return true;
+    }
+    if (unreachable.contains(start) || file.tasks[start] == null) {
+      return false;
+    }
+    seen.add(start);
+    final path = <_Hop>[_Hop(start, edgesOf(start))];
+
+    while (path.isNotEmpty) {
+      final hop = path.last;
+      if (hop.cursor == hop.edges.length) {
+        // **Taken off the path on the way out.** Kept, it marked every task a
+        // dead branch had touched as unreachable for the rest of the search,
+        // so a route that existed down a later edge was answered "nothing
+        // reaches it" — the one answer this question exists to
+        // prevent. `seen` is the path, not the visited set.
+        seen.remove(hop.at);
+        if (!cutShort) {
+          unreachable.add(hop.at);
+        }
+        path.removeLast();
+        continue;
+      }
+
+      final (kind, next) = hop.edges[hop.cursor++];
+      if (next == to) {
+        route
+          ..clear()
+          ..addAll([
+            for (final entered in path.skip(1)) entered.enteredBy!,
+            PlanEdge(hop.at, kind, next),
+          ]);
+        for (final on in path) {
+          seen.remove(on.at);
+        }
+        return true;
+      }
+      if (unreachable.contains(next)) {
+        continue;
+      }
+      // A cycle is `--validate`'s to report; here it must only not hang.
+      if (!seen.add(next)) {
+        cutShort = true;
+        continue;
+      }
+      if (file.tasks[next] == null) {
+        // Taken off the path like every other end. Left on it, a second branch
+        // reaching the same dangling name read it as a ring and switched the
+        // memo off for the rest of the question.
+        seen.remove(next);
+        continue;
+      }
+      path.add(_Hop(next, edgesOf(next), PlanEdge(hop.at, kind, next)));
+    }
+    return false;
+  }
+
+  return walk(from) ? List.of(route) : null;
 }
+
+/// One task on the path a route walk is holding, and its unexplored edges.
+final class _Hop {
+  _Hop(this.at, this.edges, [this.enteredBy]);
+
+  final String at;
+  final List<(String, String)> edges;
+
+  /// The edge that led here, for the route to be read off the path.
+  final PlanEdge? enteredBy;
+
+  /// How many of [edges] have been taken.
+  var cursor = 0;
+}
+
+/// How deep a chain of `needs:` or `then:` this engine walks.
+///
+/// A bound on the planner, which is one stack frame per edge: without it a
+/// long enough chain ends `--validate` on a stack overflow and exit 255, which
+/// the table does not define.
+///
+/// It does not bound [routeTo], which holds its own stack: a bound there has
+/// no honest answer, since a branch given up on is neither a route nor a proof
+/// there is none. Far past anything a person writes either way — a real
+/// graph's depth is its longest dependency chain, which is tens.
+const mostDepth = 1000;
 
 /// The order [taskName] resolves to in [file].
 ///
@@ -136,22 +226,300 @@ List<PlanEdge>? routeTo(
 /// Throws [XtaskFormatException] — exit code 2 — for a name that does not
 /// exist and for a cycle, which is reported with the cycle spelled out.
 Plan planRun(XtaskFile file, String taskName) {
-  final planner = _Planner(file)..resolve(taskName, from: null);
+  final planner = _Planner(file, directly: {taskName})
+    ..resolve(taskName, from: null);
   return Plan(List.unmodifiable(planner.steps));
 }
 
+/// The order the tasks in gate set [gate] resolve to.
+///
+/// One planner seeded with each member in turn, so this file knows only
+/// `needs:` and `then:` and a gate set is not a third kind of edge. Same
+/// order, same run-once rule and same cycle report as [planRun].
+Plan planGate(XtaskFile file, String gate) {
+  final members = tasksInGate(file, gate);
+  final planner = _Planner(
+    file,
+    directly: {for (final task in members) task.name},
+  );
+  for (final task in _seedOrder(file, members)) {
+    planner.resolve(task.name, from: null);
+  }
+  return Plan(List.unmodifiable(planner.steps));
+}
+
+/// [members], reordered so that seeding them in turn answers correctly.
+///
+/// Declaration order is what a member is seeded by, and the graph does not
+/// always allow it: a member another member continues into must be reached
+/// through that `then:`, or it comes out ahead of the task it continues and
+/// without a [PlanStep.continuationOf].
+///
+/// `needs:` and `then:` are one relation read from two ends — `x needs y` puts
+/// y before x, `x then y` puts x before y — so the members go in an order that
+/// relation allows, and among those it does not separate the file's own order
+/// stands. the file's order is meaningful: cheap gates before slow ones.
+List<Task> _seedOrder(XtaskFile file, List<Task> members) {
+  if (members.length < 2) {
+    return members;
+  }
+  final names = {for (final member in members) member.name};
+  final after = _runsAfter(file);
+  // Which other members each member has to be seeded ahead of, as edges and
+  // not as their closure: the pick below walks them down one at a time.
+  final ahead = {
+    for (final member in members)
+      member.name: _membersAfter(after, member.name, names),
+  };
+  // How many members are still waiting to go in front of this one.
+  final waiting = {for (final member in members) member.name: 0};
+  for (final MapEntry(key: before, value: after) in ahead.entries) {
+    for (final name in after) {
+      if (name != before) {
+        waiting[name] = waiting[name]! + 1;
+      }
+    }
+  }
+
+  final remaining = [...members];
+  final order = <Task>[];
+  while (remaining.isNotEmpty) {
+    // The earliest-written member nothing is still waiting to precede — and
+    // where every one of them is waiting on another, the earliest written of
+    // those. A ring of `then:` has no first task, and refusing the gate over
+    // one would refuse a file `xtask <member>` runs without complaint.
+    final at = remaining.indexWhere((task) => waiting[task.name]! <= 0);
+    final task = remaining.removeAt(at == -1 ? 0 : at);
+    order.add(task);
+    for (final name in ahead[task.name]!) {
+      if (name != task.name) {
+        waiting[name] = waiting[name]! - 1;
+      }
+    }
+  }
+  return order;
+}
+
+/// The members [from] reaches without passing through another one.
+///
+/// The walk is over [after], so it answers about order and nothing else. A
+/// member it does not reach is one the graph says nothing about, and the
+/// file's own order decides.
+///
+/// It stops at a member rather than walking past one: an order needs the edges
+/// and not their closure, since `p` before `m1` and `m1` before `m2` already
+/// puts `p` before `m2`. The closure is N² of them for a list the caller
+/// reduces to a count.
+Set<String> _membersAfter(
+  Map<String, List<String>> after,
+  String from,
+  Set<String> members,
+) {
+  final seen = <String>{};
+  final found = <String>{};
+  final pending = <String>[from];
+  while (pending.isNotEmpty) {
+    for (final next in after[pending.removeLast()] ?? const <String>[]) {
+      if (!seen.add(next)) {
+        continue;
+      }
+      if (members.contains(next)) {
+        found.add(next);
+        continue;
+      }
+      pending.add(next);
+    }
+  }
+  return found;
+}
+
+/// Every task the file says runs after each task: `then:` as written, and
+/// `needs:` read from the other end.
+///
+/// Built once, because the reverse of `needs:` is not a field and asking per
+/// task is a scan of the whole file, once per member per hop.
+///
+/// A dangling name gets an empty entry: `--validate` reports it, and a name
+/// with no task is not in anybody's way here.
+Map<String, List<String>> _runsAfter(XtaskFile file) {
+  final after = <String, List<String>>{};
+  for (final task in file.tasks.values) {
+    (after[task.name] ??= []).addAll(task.then);
+    for (final need in task.needs) {
+      (after[need] ??= []).add(task.name);
+    }
+  }
+  return after;
+}
+
+/// The plan for [name], whether it is a gate set or a task.
+///
+/// One name space, asked in one place: a person types what they want
+/// to happen, and a gate set is as much that as a task. `_checkNoNameCollision`
+/// in the validator is what keeps the question answerable.
+///
+/// Here rather than at the command line, because it is a question about the
+/// graph — [planRun] and [planGate] are the halves, and no caller wants either
+/// on its own.
+Plan planFor(XtaskFile file, String name) {
+  if (!file.gates.containsKey(name)) {
+    return planRun(file, name);
+  }
+  if (file.tasks.containsKey(name)) {
+    // `--validate` reports this too, but a run must not quietly pick one of
+    // them: the composite this replaced could not be ambiguous, and silently
+    // preferring the gate set would run a plan the reader did not ask for.
+    throw bothAGateSetAndATask(name, file.gates[name]);
+  }
+  final plan = planGate(file, name);
+  if (plan.steps.isEmpty) {
+    // **Silence would be a green gate that ran nothing.** An empty plan
+    // printed nothing and answered 0, so a CI job whose only step is `xtask
+    // check` passed in complete silence when every member's `gate:` was
+    // misspelled — the exact failure this tool is against, reached by the one
+    // path that does not validate first.
+    throw XtaskFormatException(
+      'gate set `$name` has no tasks in it, so running it would check '
+      'nothing and answer 0. Put a task in it, or stop declaring it',
+      file.gates[name],
+    );
+  }
+  return plan;
+}
+
+/// Every way a run reaches [task]: the gate sets that run it, and the tasks
+/// somebody types that lead to it — the whole of what `--why` prints.
+///
+/// A declared gate set is not an edge, so the gate sets are found separately
+/// from the routes; without them `--why format` answers "nothing reaches it"
+/// about a task every `check` runs.
+///
+/// [routeTo] and [entryPoints] are the pieces; this is the question, and it is
+/// about the graph whichever mode asks it.
+Map<String, List<PlanEdge>> routesTo(XtaskFile file, String task) {
+  final routes = <String, List<PlanEdge>>{};
+  // One memo for the whole question: every call below asks about the same
+  // target, and what cannot reach it cannot reach it from anywhere.
+  final hopeless = <String>{};
+
+  for (final gate in file.gates.keys) {
+    for (final member in tasksInGate(file, gate)) {
+      final route = routeTo(
+        file,
+        from: member.name,
+        to: task,
+        hopeless: hopeless,
+      );
+      if (route == null) {
+        continue;
+      }
+      // The first member that reaches it, which is the one the run reaches it
+      // through: members are planned in declared order.
+      // The edge is written even when the member IS the task, because an
+      // empty route means "you typed it" — true of a task, and never of a
+      // gate set, which reaches it by running it.
+      routes.putIfAbsent(
+        'gate $gate',
+        () => [PlanEdge('gate $gate', 'runs', member.name), ...route],
+      );
+    }
+  }
+  for (final entry in entryPoints(file)) {
+    final route = routeTo(file, from: entry, to: task, hopeless: hopeless);
+    if (route != null) {
+      routes[entry] = route;
+    }
+  }
+  return routes;
+}
+
+/// The refusal for a name the file gives to a gate set and to a task.
+///
+/// **One sentence, because a person types one name.** The planner, the
+/// validator and the command line all refuse this, and three wordings of one
+/// fact is how one of them comes to be wrong — "`check` is a gate set, not a
+/// task" is false about a file that declares both.
+XtaskFormatException bothAGateSetAndATask(String name, SourceSpan? span) =>
+    XtaskFormatException(
+      '`$name` is both a gate set and a task, and a person types one name. '
+      'Rename one of them: a gate set is run by being named, so there is '
+      'nothing left for a task of the same name to be',
+      span,
+    );
+
+/// Refuses [name] unless it is a task `--why` can answer about.
+///
+/// **The same table the planner walks, asked from the other side.** The
+/// command line asked `gates.containsKey` first and had no arm for a name that
+/// is both, so a colliding name was reported as a gate set and not a task —
+/// about a file where it is also a task, and where every other mode says so.
+void refuseUnlessATask(XtaskFile file, String name) {
+  final isGate = file.gates.containsKey(name);
+  final isTask = file.tasks.containsKey(name);
+  if (isGate && isTask) {
+    throw bothAGateSetAndATask(name, file.gates[name]);
+  }
+  if (isGate) {
+    // Answerable, but not this question. What puts a gate set in a plan is
+    // that somebody typed it; what is IN it is `--gate-members`.
+    throw XtaskFormatException(
+      '`$name` is a gate set, not a task — a run reaches it because somebody '
+      'typed it. For what it runs, `--gate-members $name`',
+      file.gates[name],
+    );
+  }
+  if (!isTask) {
+    throw XtaskFormatException('there is no task called `$name`');
+  }
+}
+
 final class _Planner {
-  _Planner(this.file);
+  _Planner(this.file, {this.directly = const {}});
 
   final XtaskFile file;
+
+  /// The names this plan reaches because somebody asked for them: the task on
+  /// the command line, or the members of the gate set being run.
+  ///
+  /// **A member the plan asks for is not made a continuation by INHERITING
+  /// one.** A continuation carries `then:`'s outcome — exit 4, and the
+  /// sentence saying the publish happened and the red result below it does
+  /// not undo that — and it is skipped when what it follows fails. Both are
+  /// right for the task a `then:` names, whether or not the gate also lists
+  /// it. Neither is right for a member that a continuation's `needs:`
+  /// happened to reach on the way: a plain build failure answered 4 and
+  /// printed the notice, and which of the two happened turned on which member
+  /// was declared first.
+  final Set<String> directly;
+
   final steps = <PlanStep>[];
 
   /// Tasks already emitted — the run-once rule.
   final _done = <String>{};
 
   /// Tasks whose resolution has begun and not finished, innermost last. This
-  /// is both the cycle detector and the thing that can print the cycle.
+  /// is the thing that can print the cycle; [_opened] is the thing that
+  /// detects one.
   final _open = <String>[];
+
+  /// Continuations that cannot be emitted yet, oldest first.
+  ///
+  /// **A `then:` target is reached from inside whatever is still open above
+  /// it, and those are tasks it must come AFTER.** `x needs y`, `y then z`,
+  /// `z needs x` is satisfiable — y, x, z — and was refused as the cycle
+  /// `x → z → x`, because z's `needs:` found x on the stack and the stack
+  /// cannot tell "must precede" from "is still being resolved". Held here
+  /// instead and let out when the frame that was in the way ends, which is
+  /// exactly where the task it waits for has been emitted.
+  final _deferred = <({String name, Task from, String continuationOf})>[];
+
+  /// The same names, as a set.
+  ///
+  /// **Because `contains` on the list is a scan, and it runs per edge.** One
+  /// plan of depth d cost O(d²), and `--validate` plans every task — so a
+  /// two-thousand task chain spent seven seconds inside `contains`. The list
+  /// stays because a ring has to be printed in the order it was entered.
+  final _opened = <String>{};
 
   /// The ring [name] closes, written from a fixed point.
   ///
@@ -174,24 +542,56 @@ final class _Planner {
     String name, {
     required Task? from,
     String? continuationOf,
+    bool named = false,
+    int depth = 0,
   }) {
     if (_done.contains(name)) {
       return;
     }
-
     final task = file.tasks[name];
-    if (task == null) {
+    // **After the name is looked up, not before.** Asked first, a `needs:`
+    // naming a task that does not exist was reported as a chain too deep —
+    // with no line under it, because there is no such task to have a span —
+    // instead of as the missing name it is. Depth is about how far this walk
+    // has come; whether the next name exists is about the file.
+    if (task != null && depth > mostDepth) {
+      // **A number the table has, rather than a stack overflow.** This walk
+      // is one frame per edge, so a `needs:` chain long enough overflowed the
+      // stack and ended the process at 255 — from `--validate`, whose whole
+      // job is to answer about a file rather than fall over on one.
       throw XtaskFormatException(
-        from == null
-            ? 'there is no task called `$name`'
-            : 'task `${from.name}` names `$name`, and there is no such task',
+        'the chain reaching `$name` is more than $mostDepth tasks deep. That '
+        'is deeper than a file anybody writes and deeper than this engine '
+        'walks, so it is refused rather than run partway',
+        task.span,
+      );
+    }
+
+    if (task == null) {
+      // **A declared gate set is not "no such task".** Said that way it was
+      // false — the file declares the name — and `--validate` printed it
+      // ahead of the accurate sentence, so the first diagnostic a reader met
+      // was the wrong one. An edge runs between tasks; a gate set is a list.
+      final isGate = file.gates.containsKey(name);
+      throw XtaskFormatException(
+        switch ((from, isGate)) {
+          (null, true) =>
+            '`$name` is a gate set, not a task — run it by naming it',
+          (null, false) => 'there is no task called `$name`',
+          (final from?, true) =>
+            'task `${from.name}` names the gate set `$name` in `needs:` or '
+                '`then:`, and those are edges between tasks. A gate set is a '
+                'list, not a step: name the tasks, or put this one in the set',
+          (final from?, false) =>
+            'task `${from.name}` names `$name`, and there is no such task',
+        },
         from?.span,
       );
     }
 
-    if (_open.contains(name)) {
+    if (_opened.contains(name)) {
       // Reached only through `needs`; a `then:` re-entry is handled where it
-      // is issued, below. §5.1 makes this a validation error and asks for the
+      // is issued, below. This is a validation error and asks for the
       // cycle itself, because "there is a cycle" leaves the reader to find it
       // in a file that just proved it is hard to read.
       throw XtaskFormatException(
@@ -202,21 +602,37 @@ final class _Planner {
     }
 
     _open.add(name);
+    _opened.add(name);
     for (final need in task.needs) {
       // Inside the same continuation as whatever needed it: a task pulled in
       // by a continuation's own `needs:` is part of that continuation.
-      resolve(need, from: task, continuationOf: continuationOf);
+      resolve(
+        need,
+        from: task,
+        continuationOf: continuationOf,
+        depth: depth + 1,
+      );
     }
-    _open.removeLast();
+    _opened.remove(_open.removeLast());
 
     // Emitted before the continuations, which is what makes `then:` a
     // continuation rather than a dependency: the body has happened by the time
     // anything in `then:` is reached.
     _done.add(name);
-    steps.add(PlanStep(task, continuationOf: continuationOf));
+    steps.add(
+      PlanStep(
+        task,
+        // [named] is a `then:` naming this task; anything else is inheritance
+        // down a `needs:` chain, which a task the plan already asks for does
+        // not take.
+        continuationOf: named || !directly.contains(name)
+            ? continuationOf
+            : null,
+      ),
+    );
 
     for (final next in task.then) {
-      if (_open.contains(next)) {
+      if (_opened.contains(next)) {
         // A task still being resolved further up will emit itself when its own
         // frame finishes. Skipping here keeps the run-once rule without
         // calling this a cycle: `a needs b`, `b then a` is an ordering both
@@ -224,7 +640,72 @@ final class _Planner {
         // says nothing contradictory.
         continue;
       }
-      resolve(next, from: task, continuationOf: name);
+      if (_waitsOnSomethingOpen(next)) {
+        _deferred.add((name: next, from: task, continuationOf: name));
+        continue;
+      }
+      resolve(
+        next,
+        from: task,
+        continuationOf: name,
+        named: true,
+        depth: depth + 1,
+      );
+    }
+
+    _letOutWhatThisFrameUnblocked(depth);
+  }
+
+  /// Whether [name] needs, directly or through its own `needs:`, a task whose
+  /// frame is still open.
+  ///
+  /// Asked only of a `then:` target, which is the one edge that reaches
+  /// forwards: everything else on the stack is something the walk is on its
+  /// way into, and needing one of those really is a ring.
+  bool _waitsOnSomethingOpen(String name, [Set<String>? walked]) {
+    final seen = walked ?? <String>{};
+    if (!seen.add(name)) {
+      return false;
+    }
+    if (_opened.contains(name)) {
+      return true;
+    }
+    final task = file.tasks[name];
+    if (task == null) {
+      // A name that is not a task is the resolver's to refuse, with the
+      // sentence it has for it. Answering here would refuse it as an ordering.
+      return false;
+    }
+    return task.needs.any((need) => _waitsOnSomethingOpen(need, seen));
+  }
+
+  /// Resolves whatever the ending of this frame has made possible.
+  ///
+  /// Run after the continuations, so a deferred one lands behind the task it
+  /// was waiting for and behind that task's own `then:`. At the outermost
+  /// frame nothing is open, so nothing can still be waiting.
+  void _letOutWhatThisFrameUnblocked(int depth) {
+    var at = 0;
+    while (at < _deferred.length) {
+      final held = _deferred[at];
+      if (_done.contains(held.name)) {
+        _deferred.removeAt(at);
+        continue;
+      }
+      if (_waitsOnSomethingOpen(held.name)) {
+        at++;
+        continue;
+      }
+      _deferred.removeAt(at);
+      resolve(
+        held.name,
+        from: held.from,
+        continuationOf: held.continuationOf,
+        named: true,
+        depth: depth + 1,
+      );
+      // One let out can be what another was waiting for.
+      at = 0;
     }
   }
 }

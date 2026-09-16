@@ -1,0 +1,234 @@
+/// Where the repository ends.
+library;
+
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+
+/// A bare drive letter — `C:x`, which is relative to that drive's own
+/// current directory. `p.windows.isAbsolute` says false about it, correctly,
+/// and it still is not this repository's to name.
+///
+/// One letter and a colon, so `web:build` is not this and `a:b` is. A set that
+/// holds paths is checked as one; a `values:` set is not asked this at all,
+/// which is what the key is for — the question means nothing about `dev`, and
+/// asking it refused `a:b` for looking like a drive.
+final _drive = RegExp('^[A-Za-z]:');
+
+/// Whether [path] names anything the repository root does not own.
+///
+/// `root` is a boundary, not a default, and a boundary needs one guard: every
+/// place that turns a written string into a path calls this.
+///
+/// Nothing absolute, no segment that is `..`, asked in **both** notations. A
+/// caller joins the answer with the platform's own `p.join`, and on Windows
+/// `..\..` is one POSIX segment that climbs two directories, `\foo` is
+/// absolute, and `\\server\share` is absolute enough that `p.join` discards
+/// the root entirely.
+bool leavesRoot(String path) =>
+    p.posix.isAbsolute(path) ||
+    p.windows.isAbsolute(path) ||
+    _drive.hasMatch(path) ||
+    p.posix.split(path).contains('..') ||
+    p.windows.split(path).contains('..');
+
+/// Whether [path] is under [root] on this machine, with every link followed.
+///
+/// [leavesRoot] is asked of what the file WROTE, on every machine alike. This
+/// is asked of what the machine HAS: a directory inside the root that is a
+/// link to one outside it passes the written check, and a body — or a delete
+/// — would then happen wherever the link points. A path that is not there
+/// cannot lead anywhere, and is not refused for it.
+bool staysUnder(String root, String path) {
+  final realRoot = _real(root);
+  final real = _real(path);
+  if (realRoot == null || real == null) {
+    return true;
+  }
+  return p.equals(realRoot, real) || p.isWithin(realRoot, real);
+}
+
+String? _real(String path) {
+  try {
+    return File(path).resolveSymbolicLinksSync();
+  } on FileSystemException {
+    return null;
+  }
+}
+
+/// Why `in: [written]` on task [task] is refused.
+///
+/// [throughALink] says the file was fine and the machine was not: the
+/// directory is a link that leads outside the repository.
+///
+/// Here rather than at either caller: the resolver refuses this when a run
+/// reaches the task, `--validate` refuses it when the file is read, and one
+/// boundary says one sentence.
+String workingDirectoryLeavesRoot({
+  required String task,
+  required String written,
+  bool throughALink = false,
+}) =>
+    'task `$task` says `in: $written`, which reaches outside the repository'
+    '${throughALink ? ' on this machine: it is a link to a directory the '
+              'repository does not own' : ''}. '
+    'A working directory is relative to the root and stays there — a task '
+    'that runs somewhere the repository does not own is not something this '
+    'file can vouch for';
+
+/// [written] resolved under [root], or null when the root does not own it.
+///
+/// **The verb's question, and it is not the file's.** `in:` is text somebody
+/// committed, so [leavesRoot] refuses an absolute path outright: a committed
+/// file that names `/home/someone/src` is wrong on every other machine. A verb
+/// is Dart, and the absolute path it most often holds is the one this engine
+/// handed it — `context.workingDirectory` — so asking the file's question of a
+/// verb refused the obvious way to be explicit, and said of the repository
+/// root itself that it reaches outside the repository.
+///
+/// So an absolute path is allowed exactly where it lands inside the root, and
+/// a relative one is still the file's rule: nothing that climbs, in either
+/// platform's notation, because it is about to be joined with the platform's
+/// own `p.join`.
+String? verbDirectoryUnderRoot(String root, String written) {
+  final String resolved;
+  if (p.isAbsolute(written)) {
+    resolved = p.normalize(written);
+    if (!p.equals(root, resolved) && !p.isWithin(root, resolved)) {
+      return null;
+    }
+  } else {
+    if (leavesRoot(written)) {
+      return null;
+    }
+    resolved = underRoot(root, written);
+  }
+  // **And the machine's half, which `in:` was already asked and this was
+  // not.** The two say the same sentence about the same fence, so a directory
+  // inside the root that links outside it was refused for `in: linked` and
+  // handed to `context.run(workingDirectory: 'linked')` — the seam whose whole
+  // promise is that a verb starts a program the way a `run:` body does.
+  return staysUnder(root, resolved) ? resolved : null;
+}
+
+/// Why a verb's own working directory is refused on task [task].
+///
+/// Said of what [verbDirectoryUnderRoot] turned down, so it is said of a path
+/// that really is outside the root rather than of every absolute one.
+///
+/// A verb is Dart rather than YAML, so this names the task and quotes what the
+/// verb asked for: the reader has to find a call, not a key.
+String verbDirectoryLeavesRoot({
+  required String task,
+  required String written,
+}) =>
+    'task `$task` runs a verb that asked to start a program in `$written`, '
+    'which reaches outside the repository. A working directory is relative to '
+    'the root and stays there, whether the file wrote it or a verb did';
+
+/// The name `remove` is written under in `do:`.
+///
+/// Spelled once, because four things name it: the closed list of built-in
+/// verbs, the binding beside it, the diagnostics that say what a set fed to it
+/// should look like, and `--validate`.
+///
+/// **Here and not beside the implementation.** `validate.dart` needs the name
+/// and nothing else, and reaching for it through `primitives.dart` gave that
+/// module the verb it is checking — one import away from calling it. It is a
+/// smaller distance than it looks and not an airtight one: `sets.dart` brings
+/// `dart:io` there anyway, so this removes a reason to reach rather than the
+/// ability to.
+const removeVerbName = 'remove';
+
+/// Why `remove` refuses the argument [written].
+///
+/// Beside [workingDirectoryLeavesRoot] and for the same reason, which now has
+/// three callers rather than two: the verb refuses this when a run reaches it,
+/// `--dry-run` has to say the same thing rather than print a plan the run will
+/// not carry out, and `--validate` answers the question without a filesystem
+/// at all. This is the verb that deletes recursively; three sentences drifting
+/// apart is the last place to allow it.
+String removeLeavesRoot({required String written, bool throughALink = false}) =>
+    '`remove` refuses `$written`: it names a path outside the repository'
+    '${throughALink ? ' on this machine, through a link' : ''}. '
+    'A verb that deletes recursively and treats a missing path '
+    'as ordinary is the last place to take a path on trust';
+
+/// Why `remove` refuses [written], which names the directory it would run in.
+///
+/// **The verb deletes things INSIDE where it runs, never that directory.**
+/// `args: ['']` is an ordinary entry for a program — `dart test --name ''` is
+/// why an empty argument is legal at all — and here it resolves to the working
+/// directory itself: every fence passed, because the directory is inside the
+/// repository, and `in: sub` with an empty argument deleted `sub` whole and
+/// answered 0. `.` and `./` say the same thing, and so does any pattern that
+/// expands to it.
+String removeNamesItsOwnDirectory({required String written}) =>
+    '`remove` refuses ${written.isEmpty ? 'an empty argument' : '`$written`'}: '
+    'it names the directory the task runs in, not something inside it. This '
+    'verb deletes recursively and treats a missing path as ordinary, so the '
+    'one thing it must not be handed is the whole of where it stands';
+
+/// Why `remove` may not touch [absolute], or null if it may.
+///
+/// **One function, because four readers ask it and they had drifted.** The
+/// verb refuses when a run reaches it, `--dry-run` has to print the same
+/// refusal rather than a plan the run will not carry out, and `--validate`
+/// answers it when the file is read. Written out per caller, they disagreed in
+/// both directions: `--validate` fenced against the task's directory where the
+/// verb fences against the repository, and `--dry-run` dropped a path that was
+/// not on disk BEFORE asking about it, so it promised a delete the run
+/// refused.
+///
+/// [root] is where the repository ends and does not move. [base] is where the
+/// task runs, which is what the arguments are relative to. [written] is what
+/// the refusal quotes back.
+String? removeRefuses({
+  required String root,
+  required String base,
+  required String written,
+  required String absolute,
+}) {
+  if (p.equals(absolute, base)) {
+    return removeNamesItsOwnDirectory(written: written);
+  }
+  // The path's own last component is removed and never followed; what LEADS to
+  // it may be a link, and one leading out would take a recursive delete with
+  // it. A path that is not there cannot lead anywhere, so it is asked all the
+  // same and answered by `staysUnder` without being refused for absence.
+  if (!staysUnder(root, p.dirname(absolute))) {
+    return removeLeavesRoot(written: written, throughALink: true);
+  }
+  return null;
+}
+
+/// [posixPath], written the way this machine writes paths, under [root].
+///
+/// **The file speaks POSIX and the machine may not.** Every path in
+/// `xtask.yaml` is written with `/`, because the file is committed and read on
+/// three platforms. Joining one onto a native root without re-splitting leaves
+/// a mixed separator — `C:\repo\packages/a` — which Windows accepts and
+/// `--dry-run` then prints back at a reader as the plan.
+///
+/// `remove` and `--check-ci` re-split; `in:` and a verb's own working
+/// directory did not, for no reason anybody wrote down. One function, so the
+/// platform question stops being restated.
+String underRoot(String root, String posixPath) => posixPath.isEmpty
+    ? root
+    : p.join(root, p.joinAll(p.posix.split(posixPath)));
+
+/// [path] relative to [root], written with `/` on every platform.
+///
+/// The other direction, and normalised for the same reason: this string
+/// becomes a process argument and a set member, and an argument list that
+/// differs between platforms is a portability claim with a hole in it.
+String relativePosix(String path, {required String root}) {
+  final relative = p.relative(path, from: root);
+  // **Split and rejoined only where that changes something.** On a POSIX host
+  // `p.relative` has already produced the answer, and reproducing its input
+  // exactly costs a list, a substring per segment and a second string — once
+  // per entry of every walk, which is tens of thousands on a real repository.
+  return p.style == p.Style.posix
+      ? relative
+      : p.posix.joinAll(p.split(relative));
+}

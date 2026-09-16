@@ -1,6 +1,8 @@
 /// `--validate` — the first gate any project should adopt.
 library;
 
+import 'boundary.dart';
+import 'context.dart';
 import 'errors.dart';
 import 'gates.dart';
 import 'graph.dart';
@@ -13,7 +15,7 @@ import 'sets.dart';
 /// `parseXtaskFile` throws at the first violation, which is right for it —
 /// without a document there is nothing to keep checking. After parsing there
 /// is, and a gate that reports one problem per run makes somebody fix, rerun,
-/// fix, rerun. §8 calls this the first gate a project adopts; a gate that
+/// fix, rerun. This is the first gate a project adopts; a gate that
 /// takes five runs to list five problems is one people stop running.
 final class ValidationReport {
   const ValidationReport(this.problems);
@@ -29,13 +31,13 @@ final class ValidationReport {
   String toString() => problems.join('\n\n');
 }
 
-/// Checks everything §8 lists that survives parsing.
+/// Checks everything a refusal can find that survives parsing.
 ///
-/// [knownVerbs] is the built-in primitives (§6) plus whatever the project
-/// registered (§9) — passed in rather than listed here, because a second list
-/// of verb names is the defect §1 exists to remove.
+/// [knownVerbs] is the built-in verbs plus whatever the project
+/// registered — passed in rather than listed here, because a second list
+/// of verb names is the defect this tool exists to remove.
 ///
-/// [sets] expands globs so that a set matching nothing is caught. §8 puts it
+/// [sets] expands globs so that a set matching nothing is caught. It is
 /// here deliberately: it is checkable without running any task, and the
 /// failure it prevents is a green gate that examined no files. Omit it only
 /// where the filesystem is genuinely unavailable, and know that the check is
@@ -47,14 +49,27 @@ ValidationReport validateFile(
 }) {
   final problems = <XtaskFormatException>[];
 
+  // **The machine half of the boundary, asked exactly when the machine is
+  // available.** `sets` is already the one thing here that reads the disk, and
+  // its root is the fence every path is measured against — so a link out of
+  // the repository is answered in the same run as the written form, rather
+  // than left for `--dry-run` to find. Where the filesystem was withheld it
+  // is not asked, which is what the parameter has always meant.
+  final root = sets?.root;
+
   for (final task in file.tasks.values) {
     _checkDoesSomething(task, problems);
     _checkVerb(task, knownVerbs, problems);
     _checkSetReferences(task, file, problems);
+    _checkWorkingDirectory(task, file, problems, root);
+    _checkRemoveArguments(task, file, problems, root);
   }
 
   _checkGraph(file, problems);
-  _checkGates(file, problems);
+  _checkProducers(file, problems);
+  _checkDeclaredGates(file, problems);
+  _checkNoNameCollision(file, problems);
+  _checkExclusive(file, problems);
   if (sets != null) {
     _checkSetsExpand(file, sets, problems);
   }
@@ -62,20 +77,199 @@ ValidationReport validateFile(
   return ValidationReport(List.unmodifiable(problems));
 }
 
-/// A task with no body, nothing to depend on and no gate set to gather is a
-/// task that does nothing (§8).
+/// A task with no body, nothing to depend on and nothing to continue into is a
+/// task that does nothing.
+///
+/// **`then:` counts.** A task whose whole content is a continuation is
+/// reached, runs nothing of its own, and then runs what follows it — which is
+/// something: `publish then verify`, `verify then notify` runs all three, and
+/// the gate the README tells every project to adopt must accept what the run
+/// accepts.
 void _checkDoesSomething(Task task, List<XtaskFormatException> problems) {
-  if (task.body != null || task.needs.isNotEmpty || task.collects != null) {
+  if (task.body != null || task.needs.isNotEmpty || task.then.isNotEmpty) {
     return;
   }
   problems.add(
     XtaskFormatException(
-      'task `${task.name}` has no body, no `needs:` and no `collects:`, so '
-      'running it does nothing. A composite gathers something; a task that '
-      'gathers nothing is a name with a description attached',
+      'task `${task.name}` has no body, no `needs:` and no `then:`, so running '
+      'it does nothing. A gate set gathers tasks; a task that gathers nothing '
+      'is a name with a description attached',
       task.span,
     ),
   );
+}
+
+/// An `in:` that leaves the repository.
+///
+/// The other half of this fence — a set's members and patterns — is reached
+/// from here through `_checkSetsExpand`, so leaving `in:` to be caught at
+/// resolve time made one boundary answer at two different moments: a file
+/// `--validate` called clean was refused by `--dry-run`. The claim is that
+/// this class is found without running anything, and `in:` is a written
+/// string, checkable the moment the file is read.
+void _checkWorkingDirectory(
+  Task task,
+  XtaskFile file,
+  List<XtaskFormatException> problems,
+  String? root,
+) {
+  final written = task.workingDirectory;
+  if (written == null) {
+    return;
+  }
+
+  // The composed form too, where the members are known here: a `values:` set
+  // is not asked the boundary — its members are not paths — and `in:
+  // sub/$each` builds one out of them. The members are literal and in the
+  // file, so the resolver's own substitution can be asked without a
+  // filesystem.
+  final set = file.sets[task.each];
+  final composed = [
+    written,
+    ...substituted(
+      [written],
+      all: const [],
+      each: set is ValueSet ? set.values : const [],
+    ),
+  ];
+
+  for (final path in composed) {
+    if (!leavesRoot(path)) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        workingDirectoryLeavesRoot(task: task.name, written: path),
+        task.span,
+      ),
+    );
+    return;
+  }
+
+  if (root == null) {
+    return;
+  }
+  // Nothing above climbs, so what is left can only leave through a link — the
+  // half `staysUnder` answers and the written form cannot. The run asks it
+  // when it reaches the task, and asking it only there is the split this
+  // function was written to close.
+  for (final path in composed) {
+    if (staysUnder(root, underRoot(root, path))) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        workingDirectoryLeavesRoot(
+          task: task.name,
+          written: path,
+          throughALink: true,
+        ),
+        task.span,
+      ),
+    );
+    return;
+  }
+}
+
+/// The repository boundary, asked of the arguments `do: remove` will delete.
+///
+/// **The one body that deletes, and the one place the fence was missing.**
+/// `boundary.dart` says every place that turns a written string into a path
+/// calls it, and `in:` and the sets do. These arguments did not: a task with
+/// `do: remove` and `args: ['/etc']` was answered "nothing wrong" here and
+/// refused by the run, so the mode whose whole promise is finding this class
+/// without running anything did not find it for the verb that most needs it.
+///
+/// Literal arguments only, which is all this can see without a filesystem —
+/// a member a glob finds is the resolver's to check, and it does.
+void _checkRemoveArguments(
+  Task task,
+  XtaskFile file,
+  List<XtaskFormatException> problems,
+  String? root,
+) {
+  final body = task.body;
+  if (body is! DoBody || body.verb != removeVerbName) {
+    return;
+  }
+
+  // The set's members too, where they are known here. `$all` and `$each`
+  // stand for what a set holds, and a `values:` set is not asked the boundary
+  // anywhere else — its members are not paths. Fed to this verb they are, so
+  // every argument is asked as the resolver's own substitution would write
+  // it. A glob set's members are the resolver's to check, and it does.
+  final set = file.sets[task.all ?? task.each];
+  final values = set is ValueSet ? set.values : const <String>[];
+  final written = [
+    ...task.args,
+    ...substituted(task.args, all: values, each: values),
+  ];
+
+  // Distinct, because the span is the task's: `args: ['/etc', 'x', '/etc']`
+  // printed the same sentence twice under the same underlined line, which
+  // reads as the validator repeating itself rather than as two facts.
+  for (final argument in written.toSet()) {
+    if (!leavesRoot(argument)) {
+      continue;
+    }
+    // Every one of them. This module opens by saying everything wrong with a
+    // file rather than the first thing, and three bad paths answered one at a
+    // time is three round trips.
+    problems.add(
+      XtaskFormatException(removeLeavesRoot(written: argument), task.span),
+    );
+  }
+
+  // Both or neither: `_removeBase` answers null without a root, and naming
+  // the fence separately is what lets the rule below be the verb's own.
+  final fence = root;
+  final base = _removeBase(task, fence);
+  if (fence == null || base == null) {
+    return;
+  }
+  // **The verb's own rule, called rather than restated.** Written out here it
+  // fenced against the task's directory where the verb fences against the
+  // repository, so a link that stays inside the repository was refused by
+  // `--validate` and deleted by the run — the split this function exists to
+  // close, running the other way.
+  for (final argument in written.toSet()) {
+    if (leavesRoot(argument)) {
+      continue;
+    }
+    final refusal = removeRefuses(
+      root: fence,
+      base: base,
+      written: argument,
+      absolute: underRoot(base, argument),
+    );
+    if (refusal == null) {
+      continue;
+    }
+    problems.add(XtaskFormatException(refusal, task.span));
+  }
+}
+
+/// Where `do: remove`'s arguments are read from, or null when this cannot say.
+///
+/// The verb expands them from the directory the task runs in, so this has to
+/// as well or the two answer different questions about the same file. An `in:`
+/// carrying a marker stands for one directory per member and is not one path
+/// here; the run asks the machine about each of them as it reaches it, and
+/// answering for the wrong one would be worse than not answering.
+String? _removeBase(Task task, String? root) {
+  if (root == null) {
+    return null;
+  }
+  final written = task.workingDirectory;
+  if (written == null) {
+    return root;
+  }
+  if (written.contains(allMarker) ||
+      written.contains(eachMarker) ||
+      leavesRoot(written)) {
+    return null;
+  }
+  return underRoot(root, written);
 }
 
 void _checkVerb(
@@ -89,10 +283,7 @@ void _checkVerb(
   }
   problems.add(
     XtaskFormatException(
-      'task `${task.name}` names the verb `${body.verb}`, which is neither '
-      'built in nor registered by this project. The engine ships no project '
-      'verbs${knownVerbs.isEmpty ? '' : ' — known: '
-                '${(knownVerbs.toList()..sort()).join(', ')}'}',
+      unknownVerb(task: task.name, verb: body.verb, known: knownVerbs),
       task.span,
     ),
   );
@@ -105,15 +296,14 @@ void _checkSetReferences(
 ) {
   for (final (key, name) in [
     ('each', task.each),
-    ('argv-from', task.argvFrom),
+    ('all', task.all),
   ]) {
     if (name == null || file.sets.containsKey(name)) {
       continue;
     }
     problems.add(
       XtaskFormatException(
-        'task `${task.name}` has `$key: $name`, and there is no set called '
-        '`$name`',
+        noSuchSet(task: task.name, key: key, name: name),
         task.span,
       ),
     );
@@ -129,9 +319,22 @@ void _checkSetReferences(
 /// one entry point never would.
 void _checkGraph(XtaskFile file, List<XtaskFormatException> problems) {
   final seen = <String>{};
+  // **What a plan that succeeded has already walked.** Planning a task a
+  // successful plan reached walks a subgraph of what was just walked, so it
+  // can only succeed too — nothing is lost by skipping it, and the walk of an
+  // n-task chain stops being n walks of it. A four-thousand task file spent
+  // fifty-five seconds here.
+  //
+  // Still in declaration order, because [ValidationReport] promises problems
+  // in the order they were found and seeding from the entry points instead
+  // would report the same ones in a different one.
+  final covered = <String>{};
   for (final name in file.tasks.keys) {
+    if (covered.contains(name)) {
+      continue;
+    }
     try {
-      planRun(file, name);
+      covered.addAll(planRun(file, name).names);
     } on XtaskFormatException catch (problem) {
       // The same ring is reachable from every task on it, so it would
       // otherwise be reported once per member.
@@ -142,22 +345,114 @@ void _checkGraph(XtaskFile file, List<XtaskFormatException> problems) {
   }
 }
 
-/// An orphan gate: a task that believes it is checked and is not (§8).
-void _checkGates(XtaskFile file, List<XtaskFormatException> problems) {
-  final collected = collectedGates(file);
+/// Every gate set a task names is one the file declares, and every declared
+/// one has members.
+///
+/// **A gate set that existed by being mentioned could not be misspelled**, so
+/// `gate: [chekc]` was simply a different gate set — one nothing ran, and one
+/// nothing could name as missing. the green result nobody checked, from one
+/// transposed letter.
+void _checkDeclaredGates(XtaskFile file, List<XtaskFormatException> problems) {
+  final declared = file.gates.keys.toSet();
+  final used = <String>{for (final task in file.tasks.values) ...task.gate};
+
+  if (declared.isEmpty) {
+    if (used.isNotEmpty) {
+      problems.add(
+        XtaskFormatException(
+          'this file uses gate sets — ${_quoted(used)} — and declares none. '
+          'Write `gates: [${(used.toList()..sort()).join(', ')}]` at the top: '
+          'a name that is only ever mentioned cannot be misspelled, because '
+          'the misspelling is a new gate set',
+        ),
+      );
+    }
+    return;
+  }
 
   for (final task in file.tasks.values) {
     for (final gate in task.gate) {
-      if (collected.contains(gate)) {
+      if (declared.contains(gate)) {
         continue;
       }
       problems.add(
         XtaskFormatException(
-          'task `${task.name}` is in the gate set `$gate`, and no task '
-          'collects it — so nothing ever runs it. That is worse than being in '
-          'no gate at all: the task looks checked and is not'
-          '${collected.isEmpty ? '' : '. Collected: '
-                    '${(collected.toList()..sort()).join(', ')}'}',
+          'task `${task.name}` names the gate set `$gate`, which `gates:` does '
+          'not declare. Declared: ${_quoted(declared)}',
+          task.span,
+        ),
+      );
+    }
+  }
+
+  for (final entry in file.gates.entries) {
+    if (tasksInGate(file, entry.key).isNotEmpty) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        'gate set `${entry.key}` is declared and no task is in it, so running '
+        'it checks nothing. A gate that examined nothing is worse than no '
+        'gate at all: it reports the same green as one that passed',
+        entry.value,
+      ),
+    );
+  }
+}
+
+/// A set a task produces is read only by tasks that run after it.
+///
+/// `produced-by:` names the task, and the name is what makes the edge
+/// checkable: a reader that does not reach its producer through `needs:`
+/// runs first sometimes — always under `-j`, whenever the file's order puts
+/// it first — and reads a set that is not there yet.
+void _checkProducers(XtaskFile file, List<XtaskFormatException> problems) {
+  for (final MapEntry(key: name, value: set) in file.sets.entries) {
+    if (set is! GlobSet || set.producedBy == null) {
+      continue;
+    }
+    final producer = set.producedBy!;
+    if (!file.tasks.containsKey(producer)) {
+      problems.add(
+        XtaskFormatException(
+          'set `$name` says `produced-by: $producer`, and there is no such '
+          'task',
+          set.span,
+        ),
+      );
+      continue;
+    }
+    for (final task in file.tasks.values) {
+      if (task.each != name && task.all != name) {
+        continue;
+      }
+      if (task.name == producer) {
+        problems.add(
+          XtaskFormatException(
+            'task `${task.name}` reads set `$name` and is the task that '
+            'produces it. A task cannot be given what it has not made yet',
+            task.span,
+          ),
+        );
+        continue;
+      }
+      final List<String> plan;
+      try {
+        plan = planRun(file, task.name).names;
+      } on XtaskFormatException {
+        // A cycle or a dangling name, which `_checkGraph` has reported.
+        continue;
+      }
+      if (plan.indexOf(producer) < plan.indexOf(task.name) &&
+          plan.contains(producer)) {
+        continue;
+      }
+      problems.add(
+        XtaskFormatException(
+          'task `${task.name}` reads set `$name`, which task `$producer` '
+          'produces, and nothing makes `$producer` run first. Name it in '
+          '`needs:`, so that the order holds under `-j` as it does in the '
+          'file',
           task.span,
         ),
       );
@@ -165,15 +460,141 @@ void _checkGates(XtaskFile file, List<XtaskFormatException> problems) {
   }
 }
 
-/// A set that expands to nothing (§4.2), found without running anything.
+/// A gate set and a task may not share a name.
+///
+/// **Because a person types one name.** A gate set and a task are different
+/// kinds of thing reached by one word, and a file where `check` is both leaves
+/// the command line with a question nothing in the file answers.
+///
+/// An edge naming a gate set is the same problem from the other side, and the
+/// planner says so where it walks the edges — one sentence, from the place
+/// that has the route.
+void _checkNoNameCollision(
+  XtaskFile file,
+  List<XtaskFormatException> problems,
+) {
+  for (final gate in file.gates.keys) {
+    if (!file.tasks.containsKey(gate)) {
+      continue;
+    }
+    // The planner's sentence, not a third wording of it.
+    problems.add(bothAGateSetAndATask(gate, file.tasks[gate]!.span));
+  }
+}
+
+/// A token only one task holds, and a `serial:` with nothing to serialise.
+///
+/// **Both are a key that does nothing, said out loud.** `exclusive:` keeps two
+/// tasks apart; a name only one task writes, on a task with no `each:`, keeps
+/// it apart from nobody and reads in the file as a guarantee that is being
+/// made. `serial:` orders the members of an `each:`, and on a task with no
+/// `each:` there is one body and nothing to order.
+///
+/// The `each:` clause is not symmetry for its own sake: a token on a fanned-out
+/// task is how its own members are made serial, so the one-holder case there
+/// is the key doing its job rather than nothing.
+void _checkExclusive(XtaskFile file, List<XtaskFormatException> problems) {
+  // Distinct TASKS, not occurrences: `exclusive: [db, db]` on one task counted
+  // as two holders and slipped past the very check below.
+  final holders = <String, Set<String>>{};
+  for (final task in file.tasks.values) {
+    for (final token in task.exclusive) {
+      holders.putIfAbsent(token, () => {}).add(task.name);
+    }
+    if (task.serial && task.each == null) {
+      problems.add(
+        XtaskFormatException(
+          'task `${task.name}` is `serial:` and has no `each:`, so there is '
+          'one body and nothing for it to be in order with',
+          task.span,
+        ),
+      );
+    }
+  }
+
+  for (final entry in holders.entries) {
+    if (entry.value.length > 1) {
+      continue;
+    }
+    final only = file.tasks[entry.value.single]!;
+    // **Unless it is keeping that task apart from ITSELF.** A token on a
+    // fanned-out task makes its own members run one at a time — the engine
+    // asks `exclusive.isNotEmpty` before it fans out, and the README and the
+    // changelog both say so — which is a guarantee, not a no-op. Refused, the
+    // advice was to drop the key or name it elsewhere, and following it takes
+    // the guarantee away.
+    if (only.each != null) {
+      continue;
+    }
+    problems.add(
+      XtaskFormatException(
+        'task `${only.name}` holds `${entry.key}` exclusively, has no `each:` '
+        'whose members it could keep apart, and no other task asks for it — '
+        'so nothing is being kept apart. Name it in the other task too, or '
+        'drop it',
+        only.span,
+      ),
+    );
+  }
+}
+
+String _quoted(Iterable<String> names) =>
+    (names.toList()..sort()).map((name) => '`$name`').join(', ');
+
+/// A set that expands to nothing (sets), found without running anything.
 void _checkSetsExpand(
   XtaskFile file,
   SetExpander sets,
   List<XtaskFormatException> problems,
 ) {
+  // **The members are here, so the question a run asks about them is here.**
+  // A file holding `-n.dart` with `include: ['*.dart']` and `args: [\$all]`
+  // was called clean and then refused at exit 2 by `--dry-run` and by the run
+  // — code 2 being, by its own classification, the file being wrong, which is
+  // this mode's whole remit.
+  for (final task in file.tasks.values) {
+    final body = task.body;
+    final named = task.all ?? task.each;
+    final from = named == null ? null : file.sets[named];
+    if (body is! RunBody || from is! GlobSet) {
+      continue;
+    }
+    final List<String> members;
+    try {
+      members = sets.expand(named!, from);
+    } on XtaskFormatException {
+      // Its own refusal is reported below; asking this of a set that would
+      // not expand would answer about nothing.
+      continue;
+    }
+    final refusal = foundMemberReadAsOption(
+      task: task,
+      program: body.argv.first,
+      written: [...body.argv.skip(1), ...task.args],
+      members: members,
+      from: from,
+    );
+    if (refusal != null) {
+      problems.add(XtaskFormatException(refusal, task.span));
+    }
+  }
+
   file.sets.forEach((name, set) {
     try {
       sets.expand(name, set);
+    } on EmptySetException catch (problem) {
+      // **Only the emptiness is passed over, and only where the set said its
+      // members are made by the run.** Skipping the whole expansion took the
+      // repository boundary and the pattern syntax with it: `include:
+      // ['/etc/host*']` validated clean, and the fence it dropped is the one
+      // whose reason is that a set is fed to verbs that delete.
+      //
+      // Read off the refusal rather than worked out from the set again: the
+      // rule is `sets.dart`'s, and a copy here is a copy that can disagree.
+      if (problem.onlyYet) {
+        return;
+      }
+      problems.add(problem);
     } on XtaskFormatException catch (problem) {
       problems.add(problem);
     }

@@ -2,10 +2,10 @@
 ///
 /// Both are true today and neither is enforced by anything else: the analyzer
 /// cannot express "only this file may print", and the type system cannot say
-/// "this integer came from §5.3". They are asserted by reading the source
-/// because that is the only place they are visible — which makes this the
-/// cheap half of what a custom analyzer plugin would cost, and the half that
-/// runs in the gate that already exists.
+/// "this integer came from the exit code table". They are asserted by reading
+/// the source because that is the only place they are visible — which makes
+/// this the cheap half of what a custom analyzer plugin would cost, and the
+/// half that runs in the gate that already exists.
 ///
 /// Each is written as an EQUALITY against a declared exception, the same shape
 /// `dogfood_test.dart` uses: a new offender fails, and so does an exception
@@ -49,15 +49,22 @@ void main() {
     // `stdout` directly is the day its output stops being observable, and it
     // will look like a one-line convenience when it happens.
     //
-    // `exec.dart` is here for a `stdout.flush()` and nothing else: Dart's
-    // stdout is asynchronous when it is a pipe, so a run that ends without
-    // flushing loses its last lines in CI and not on a terminal. That is a
-    // fact about the process ending, not a second place that decides what to
-    // say.
-    const allowed = {'lib/xtask.dart', 'lib/src/exec.dart'};
+    // `process.dart` is here for a `stdout.flush()` and nothing else: Dart's
+    // stdout is asynchronous when it is a pipe, so an inheriting child can
+    // write before the `::group::` line that is supposed to be folding it.
+    // That is a fact about handing the descriptor to somebody else, not a
+    // second place that decides what to say — and it is why the flush sits
+    // with the starter that hands it over rather than with the walk that
+    // asked for a process.
+    const allowed = {'lib/xtask.dart', 'lib/src/process.dart'};
     final writers = {
       for (final MapEntry(key: file, value: source) in sources.entries)
-        if (RegExp(r'\b(stdout|stderr)\.|(?<![.\w])print\(').hasMatch(source))
+        // Handed over as well as called on: `_writing(stdout)` reaches for
+        // the terminal exactly as much as `stdout.writeln` does, and the rule
+        // stopped seeing the entry point the day it started wrapping it.
+        if (RegExp(
+          r'\b(stdout|stderr)[.,)]|(?<![.\w])print\(',
+        ).hasMatch(source))
           file,
     };
     expect(
@@ -70,7 +77,7 @@ void main() {
   });
 
   test('and no message sends a reader to a document they do not have', () {
-    // Eleven messages used to end in `(§9)`, `(§4.1)` or a bare `R1` — a
+    // Eleven messages used to end in ``, `(the top level)` or a bare `R1` — a
     // citation of the design document this was written against. It was never
     // in the clone and is now not anywhere: the numbering survives only in
     // the comments, as the coordinates of the reasoning they were written
@@ -116,13 +123,13 @@ void main() {
   });
 
   test('an exit code is never a number written at the place it is used', () {
-    // §5.3 gives five codes and a paragraph each. A bare `return 2;` is the
-    // same value with the paragraph deleted, and the deletion is invisible:
-    // it reads like arithmetic and reviews like nothing at all.
-    // Line by line, and comment lines dropped — the first version read the
-    // whole file and reported `lib/xtask.dart` for a comment that QUOTED
-    // `return 0;` while explaining why not to write it. A guard that cannot
-    // tell code from prose about code is a guard nobody keeps.
+    // the exit code table gives five codes and a paragraph each. A bare `return
+    // 2;` is the same value with the paragraph deleted, and the deletion is
+    // invisible: it reads like arithmetic and reviews like nothing at all. Line
+    // by line, and comment lines dropped — the first version read the whole
+    // file and reported `lib/xtask.dart` for a comment that QUOTED `return 0;`
+    // while explaining why not to write it. A guard that cannot tell code from
+    // prose about code is a guard nobody keeps.
     final literal = RegExp(r'\breturn -?\d+;|\bexit\(-?\d+\)');
     final offenders = {
       for (final MapEntry(key: file, value: source) in sources.entries)
@@ -136,7 +143,7 @@ void main() {
       isEmpty,
       reason:
           'name the code from `ExitCode` — the constant carries the reason '
-          '§5.3 gives it, and the number does not',
+          'the exit code table gives it, and the number does not',
     );
   });
 }

@@ -1,8 +1,10 @@
 import 'package:source_span/source_span.dart';
 import 'package:yaml/yaml.dart';
 
+import 'coherence.dart';
 import 'errors.dart';
 import 'model.dart';
+import 'readable.dart';
 
 /// Reads `xtask.yaml` into the types of [XtaskFile].
 ///
@@ -12,16 +14,21 @@ import 'model.dart';
 /// `graph` and `sets`, and keeping them out of here is what stops this
 /// function from quietly becoming the whole engine.
 XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
+  // Ahead of both readers, so that the scan and the parser are looking at the
+  // same string — a mark left in for one of them is a span the other cannot
+  // place.
+  final text = withoutByteOrderMark(source);
+
   // Before the parser, because afterwards there is nothing left to see: by the
   // time an [XtaskFile] exists, `package:yaml` has already expanded every
-  // alias into a copy and the evidence is gone. §8 specifies this as a scan of
+  // alias into a copy and the evidence is gone. This is a scan of
   // the raw text for exactly that reason, and this is the only function that
   // ever holds the raw text.
-  _refuseUnreadableSyntax(source, sourceUrl);
+  refuseUnreadableSyntax(text, sourceUrl);
 
   final YamlNode document;
   try {
-    document = loadYamlNode(source, sourceUrl: sourceUrl);
+    document = loadYamlNode(text, sourceUrl: sourceUrl);
   } on YamlException catch (e) {
     // The underlying parser's own complaint, kept with its span rather than
     // re-worded: it knows better than this layer what it could not read.
@@ -32,22 +39,30 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
     throw XtaskFormatException('the file is empty');
   }
 
+  // **After the parser, because this is what the parser can show and the text
+  // cannot.** An alias arrives as the same node reached twice; a merge key
+  // arrives as a key called `<<`; a scalar arrives knowing whether it was
+  // written in quotes. Derived from the raw text instead, each of those was a
+  // rule about YAML's grammar re-stated beside a parser that already had it.
+  refuseUnreadableDocument(document);
+
   final root = _asMap(document, 'the file');
 
   // Version first, and the order is not cosmetic. A key this engine does not
   // know may be a perfectly ordinary key of the version the file declares, so
   // refusing it before reading the version would answer the wrong question —
   // and would answer it in the terms of a dialect nobody claimed to be
-  // writing. §4.1 makes an unknown version a hard refusal; it therefore has to
+  // writing. An unknown version is a hard refusal; it therefore has to
   // be the first refusal.
   final version = _version(root);
   _refuseUnknownKeys(root, topLevelKeys, 'top-level key');
 
   return XtaskFile(
     version: version,
-    // Unmodifiable, and §4.3 is why for `tasks`: its ORDER is load-bearing —
-    // a `collects:` composite runs its members in the order they appear — and
-    // a map anybody downstream can reorder is an order nobody can rely on.
+    gates: Map.unmodifiable(_gates(root)),
+    // Unmodifiable, and the order of `tasks` is why: its ORDER is load-bearing
+    // — a gate set runs its tasks in the order they appear — and a map anybody
+    // downstream can reorder is an order nobody can rely on.
     sets: Map.unmodifiable(_sets(root)),
     tasks: Map.unmodifiable(_tasks(root)),
   );
@@ -63,7 +78,8 @@ int _version(YamlMap root) {
       'reading is one that reads the next dialect wrong',
       // A point at the top of the file, not the file. `SourceSpan.message`
       // reprints everything its span covers, so handing it the root mapping
-      // answers "which line?" with all of them — on §12's example, ninety.
+      // answers "which line?" with all of them — on the README's example,
+      // ninety.
       root.span.start.pointSpan(),
     );
   }
@@ -80,6 +96,48 @@ int _version(YamlMap root) {
     );
   }
   return value;
+}
+
+/// The declared gate sets, in the order written, each with its own line.
+///
+/// **A list of names and nothing else.** A gate set is not a task: it has no
+/// description, no body and nothing to run of its own — it is the name of who
+/// runs a list, and the list is whichever tasks say they are in it. Giving it a
+/// description here would invite a second one on the composite that gathers it,
+/// and two descriptions of one thing is the defect this tool exists to remove.
+Map<String, SourceSpan?> _gates(YamlMap root) {
+  final node = root.nodes['gates'];
+  if (node == null) {
+    return const {};
+  }
+  if (node is! YamlList) {
+    throw XtaskFormatException(
+      '`gates:` is a list of names — `gates: [check, release]`. Names only: '
+      'a gate set is not a task and has nothing to describe',
+      node.span,
+    );
+  }
+  if (node.nodes.isEmpty) {
+    throw XtaskFormatException(
+      '`gates:` is written with no names. Leave it out rather than declare '
+      'nothing: an empty list says a file has gate sets and then names none',
+      node.span,
+    );
+  }
+
+  final gates = <String, SourceSpan?>{};
+  for (final item in node.nodes) {
+    final name = _name(item, 'a gate name');
+    if (gates.containsKey(name)) {
+      throw XtaskFormatException(
+        'gate set `$name` is declared twice. The order of this list is the '
+        'order a report groups by, and a name in it twice has two places',
+        item.span,
+      );
+    }
+    gates[name] = item.span;
+  }
+  return gates;
 }
 
 Map<String, NamedSet> _sets(YamlMap root) {
@@ -99,9 +157,16 @@ Map<String, NamedSet> _sets(YamlMap root) {
 
 NamedSet _namedSet(YamlNode node, String name, SourceSpan keySpan) {
   if (node is YamlList) {
-    return ListSet(_stringList(node, 'set `$name`'), span: keySpan);
+    return ListSet(_members(node, 'set `$name`'), span: keySpan);
   }
   if (node is YamlMap) {
+    if (node.nodes.containsKey('values')) {
+      _refuseUnknownKeys(node, valueSetKeys, 'key in value set `$name`');
+      return ValueSet(
+        _members(node.nodes['values']!, '`values:` of set `$name`'),
+        span: keySpan,
+      );
+    }
     _refuseUnknownKeys(node, globSetKeys, 'key in glob set `$name`');
     final include = node.nodes['include'];
     if (include == null) {
@@ -111,17 +176,26 @@ NamedSet _namedSet(YamlNode node, String name, SourceSpan keySpan) {
       );
     }
     final exclude = node.nodes['exclude'];
+    final producer = node.nodes['produced-by'];
     return GlobSet(
-      include: _stringList(include, '`include:` of set `$name`'),
+      include: _members(include, '`include:` of set `$name`'),
       exclude: exclude == null
           ? const []
           : _stringList(exclude, '`exclude:` of set `$name`'),
+      producedBy: producer == null
+          ? null
+          : _nonEmpty(
+              _string(producer, '`produced-by:` of set `$name`'),
+              producer,
+              '`produced-by:` of set `$name`',
+            ),
       span: keySpan,
     );
   }
   throw XtaskFormatException(
-    'set `$name` must be a list of members, or a mapping with `include:` and '
-    'optionally `exclude:`',
+    'set `$name` must be a list of paths, a mapping with `include:` and '
+    'optionally `exclude:`, or a mapping with `values:` for members that are '
+    'not paths at all',
     keySpan,
   );
 }
@@ -133,10 +207,10 @@ Map<String, Task> _tasks(YamlMap root) {
   }
 
   final map = _asMap(node, '`tasks:`');
-  // Insertion order is document order, and §4.3 leans on it: a `collects:`
-  // composite runs its members in the order they appear, so that cheap gates
-  // come before slow ones. A test pins this rather than trusting it — the
-  // YAML specification does not promise a mapping keeps its order, every
+  // Insertion order is document order, and the gate order leans on it: a gate
+  // set runs its tasks in the order they appear, so that cheap gates come
+  // before slow ones. A test pins this rather than trusting it — the YAML
+  // specification does not promise a mapping keeps its order, every
   // implementation does, and the gap between those two sentences is exactly
   // where a gate would silently reorder.
   final tasks = <String, Task>{};
@@ -166,14 +240,14 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
 
   final body = _body(map, name);
 
-  return Task(
+  final task = Task(
     name: name,
     span: keySpan,
     desc: _description(desc, name),
     body: body,
-    timeout: _timeout(map, name, body),
+    timeout: _timeout(map, name),
     args: List.unmodifiable(_optionalStringList(map, 'args', name)),
-    argvFrom: _optionalString(map, 'argv-from', name),
+    all: _optionalString(map, 'all', name),
     each: _optionalString(map, 'each', name),
     workingDirectory: _optionalString(map, 'in', name),
     env: Map.unmodifiable(_env(map, name)),
@@ -183,18 +257,72 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     needs: _names(map, 'needs', name),
     then: _names(map, 'then', name),
     gate: _names(map, 'gate', name),
-    collects: _optionalString(map, 'collects', name),
+    serial: _flag(map, 'serial', 'task `$name`'),
+    interruptible: _flag(map, 'interruptible', 'task `$name`'),
+    exclusive: _names(map, 'exclusive', name),
+  );
+  // The document is here and nowhere else, so this is where a rule whose
+  // subject is a key can be told where that key is written.
+  _refuseIncoherent(task, (key) => map.nodes[key]?.span);
+  return task;
+}
+
+/// Refuses a task whose keys contradict each other — **all of them at once**.
+///
+/// The rules are `coherence.dart`'s, and they answer with a list; the policy is
+/// this module's, and it is to refuse. A file with three marker mistakes used
+/// to cost three rounds of fix-and-rerun, because the first `throw` hid the
+/// other two — the very loop `validate.dart` argues against.
+///
+/// This stays the only gate. A run does not validate first, and
+/// `BodyResolver._withMember` throws a `StateError` on a member that is not
+/// there, on the strength of the file having been refused here.
+void _refuseIncoherent(Task task, SourceSpan? Function(String key) keySpan) {
+  final wrong = incoherences(task, keySpan: keySpan);
+  if (wrong.isEmpty) {
+    return;
+  }
+  if (wrong.length == 1) {
+    throw wrong.single;
+  }
+  // One caret, because every one of these is about the same task, and a span
+  // per paragraph would reprint the block once per mistake.
+  throw XtaskFormatException(
+    wrong.map((problem) => problem.message).join('\n\n'),
+    task.span,
   );
 }
 
-/// `timeout:` in seconds, refused where it cannot be honoured.
+/// A boolean key, refused rather than coerced.
 ///
-/// **A `run:` body only, and refused rather than half-applied on a verb.** A
-/// verb is a Dart function, and Dart cannot stop one from outside: a deadline
-/// would report a timeout while the verb carried on writing to the disk. A
-/// verb that wants a deadline is the place to implement one — R1 put the logic
-/// there deliberately.
-int? _timeout(YamlMap map, String taskName, Body? body) {
+/// `serial: yes` is a string in YAML 1.2 and would be truthy in a language
+/// that guessed. This file does not guess.
+///
+/// It knows nothing about which key it is reading. Whether a body can honour
+/// an `interruptible:` is `coherence.dart`'s question, because it is this key
+/// read against another one.
+bool _flag(YamlMap map, String key, String owner) {
+  final node = map.nodes[key];
+  if (node == null) {
+    return false;
+  }
+  final value = node.value;
+  if (value is bool) {
+    return value;
+  }
+  throw XtaskFormatException(
+    '`$key:` of $owner is `$value`, and it is a yes or no — write `true` or '
+    '`false`',
+    node.span,
+  );
+}
+
+/// `timeout:` in seconds — the number itself.
+///
+/// Which body may carry one is `coherence.dart`'s question, asked with the
+/// rest of them: it reads `timeout:` against `do:`, which is a key against a
+/// key, and this module answers about types.
+int? _timeout(YamlMap map, String taskName) {
   final node = map.nodes['timeout'];
   if (node == null) {
     return null;
@@ -212,22 +340,6 @@ int? _timeout(YamlMap map, String taskName, Body? body) {
     throw XtaskFormatException(
       '`timeout:` of task `$taskName` is $value, which is not a length of '
       'time. Leave it out to run without a limit',
-      node.span,
-    );
-  }
-  if (body is DoBody) {
-    throw XtaskFormatException(
-      'task `$taskName` puts a `timeout:` on a `do:`, and the engine cannot '
-      'honour it: a verb is a Dart function and nothing outside it can stop '
-      'one, so the limit would pass while the verb kept running. Put the '
-      'deadline inside the verb, which is where logic belongs',
-      node.span,
-    );
-  }
-  if (body == null) {
-    throw XtaskFormatException(
-      'task `$taskName` has a `timeout:` and no body to spend it, so there is '
-      'nothing for the limit to be a limit on',
       node.span,
     );
   }
@@ -281,7 +393,7 @@ Body? _body(YamlMap map, String taskName) {
   return RunBody(List.unmodifiable(argv));
 }
 
-/// `desc:` — required, and one line (§4.3).
+/// `desc:` — required, and one line (a task's keys).
 String _description(YamlNode node, String taskName) {
   final desc = _nonEmpty(
     _string(node, '`desc:` of task `$taskName`'),
@@ -314,10 +426,10 @@ List<String> _names(YamlMap map, String key, String taskName) {
 
 /// [value], or a refusal naming [what].
 ///
-/// An empty string parses fine and means nothing, so without this a file
-/// defect travels on as a runtime one: an empty verb name reaches the registry
-/// as "no such verb", an empty executable reaches §5.4 as a missing tool
-/// (code 3) when the file was wrong (code 2).
+/// An empty string parses fine and means nothing, so without this a file defect
+/// travels on as a runtime one: an empty verb name reaches the registry as "no
+/// such verb", an empty executable reaches the resolver as a missing tool (code
+/// 3) when the file was wrong (code 2).
 String _nonEmpty(String value, YamlNode node, String what) {
   if (value.trim().isNotEmpty) {
     return value;
@@ -335,6 +447,16 @@ Map<String, String> _env(YamlMap map, String taskName) {
   final env = <String, String>{};
   for (final key in _keyNodes(envMap)) {
     final name = _name(key, 'an environment variable name');
+    if (name.contains('=')) {
+      // `=` is what separates a name from its value in the environment the
+      // child is handed, so a name holding one reaches it as `A=B=x`.
+      throw XtaskFormatException(
+        '`$name` in `env:` of task `$taskName` has an `=` in it, and an '
+        'environment variable name cannot: it is what separates the name '
+        'from the value',
+        key.span,
+      );
+    }
     final valueNode = envMap.nodes[name]!;
     final value = valueNode.value;
     if (value is! String) {
@@ -381,12 +503,45 @@ List<String> _stringList(YamlNode node, String what) {
   ];
 }
 
+/// [key] read as a name, refusing anything that is not one.
+///
+/// **Including the empty one, and here rather than at one caller.** The gate
+/// list refused `"":` with a sentence about `--list` printing a heading with
+/// nothing after it; tasks, sets and environment variables took the same key
+/// and kept it. A file with an empty task name validated clean and printed a
+/// blank name column, and nothing could name it in a `needs:` — the argument
+/// the gate refusal makes, applying verbatim to three keys that did not make
+/// it.
 String _name(YamlNode key, String what) {
   final value = key.value;
-  if (value is String) {
-    return value;
+  if (value is! String) {
+    throw XtaskFormatException('$what must be a string', key.span);
   }
-  throw XtaskFormatException('$what must be a string', key.span);
+  if (value.isEmpty) {
+    throw XtaskFormatException(
+      'the file has $what that is empty. A name is what a report prints and '
+      'what something else writes to reach it, and neither works with nothing '
+      'there',
+      key.span,
+    );
+  }
+  if (value.contains('\n') || value.contains('\r')) {
+    // **The same rule `desc:` is held to, on the other half of the same
+    // line.** A description is refused for running past one line because
+    // `--list` prints it beside the name; the name was not, so
+    // `"a\nb": {…}` parsed. `--gate-members` writes one name per line and
+    // `--list` pads a column with it, and a `::group::` is a workflow command
+    // GitHub reads to the end of ITS line — so the fold opened on `a` and
+    // the runner printed `b` as a stray line of output.
+    throw XtaskFormatException(
+      'the file has $what that runs to more than one line. A name is printed '
+      'on one and typed on one — `--list` pads a column with it and a CI host '
+      'reads a section marker to the end of the line — so it is one line by '
+      'contract, exactly as the `desc:` beside it is',
+      key.span,
+    );
+  }
+  return value;
 }
 
 String? _optionalString(YamlMap map, String key, String taskName) {
@@ -394,7 +549,25 @@ String? _optionalString(YamlMap map, String key, String taskName) {
   if (node == null) {
     return null;
   }
-  return _string(node, '`$key:` of task `$taskName`');
+  final what = '`$key:` of task `$taskName`';
+  return _nonEmpty(_string(node, what), node, what);
+}
+
+/// [node] as the members of a set, of which there has to be at least one.
+///
+/// An empty set is refused wherever it is read, and a list written with no
+/// members can be refused here, at its own line, before anything runs.
+List<String> _members(YamlNode node, String what) {
+  final members = _stringList(node, what);
+  if (members.isEmpty) {
+    throw XtaskFormatException(
+      '$what is written with no members. Leave it out rather than declare '
+      'nothing: an empty set is refused wherever it is read, because a task '
+      'given nothing checks nothing',
+      node.span,
+    );
+  }
+  return members;
 }
 
 List<String> _optionalStringList(YamlMap map, String key, String taskName) {
@@ -426,144 +599,5 @@ void _refuseUnknownKeys(YamlMap map, Set<String> known, String what) {
       'unknown $what: `$name`. Known: ${(known.toList()..sort()).join(', ')}',
       key.span,
     );
-  }
-}
-
-// ── the scan §8 asks for, before the parser ─────────────────────────────────
-
-/// Characters that look like a space and are not one.
-///
-/// The motivating case is a non-breaking space pasted from a document, used as
-/// indentation. YAML's own answer to it is a parse error about structure,
-/// several lines away from the invisible character that caused it, which is
-/// the "useless message" §8's last bullet is written against.
-const _invisibleSpace = {
-  0x00A0, // no-break space
-  0x1680, // ogham space mark
-  0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, // en/em quad and friends
-  0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x200B, // thin, hair, zero-width
-  0x2028, 0x2029, // line and paragraph separator
-  0x202F, // narrow no-break space
-  0x205F, // medium mathematical space
-  0x3000, // ideographic space
-  0xFEFF, // zero-width no-break space, i.e. a stray byte-order mark
-};
-
-/// Where a YAML node begins, and therefore where `&` and `*` are indicators
-/// rather than ordinary characters.
-// \n : - [ { ,
-const _nodeStart = <int?>{null, 0x0A, 0x3A, 0x2D, 0x5B, 0x7B, 0x2C};
-
-/// Refuses the syntax §8 names, reading [source] as text.
-///
-/// Two rules, and both are about a reader being able to trust a task:
-///
-/// **No anchors, aliases or merge keys.** `sets:` already exists to say a thing
-/// once, so an anchor is a second mechanism for the same purpose — and in this
-/// design two ways to say one thing have drifted everywhere they were allowed.
-/// It also defeats R2 in practice if not in letter: the reader of a task that
-/// says `*base` has to leave it and go find the declaration, which is the
-/// property R2 was written to protect.
-///
-/// **No invisible whitespace.** See [_invisibleSpace].
-///
-/// The scan is exact rather than approximate. YAML treats `&` and `*` as
-/// indicators only where a node begins, so `packages/*/coverage` is an
-/// ordinary scalar and passes untouched — while `include: [**/x]` does not,
-/// and should not: YAML would read that as an alias too, which is why the
-/// examples in §12 quote their patterns.
-void _refuseUnreadableSyntax(String source, Uri? sourceUrl) {
-  final file = SourceFile.fromString(source, url: sourceUrl);
-  Never refuse(int offset, String message) =>
-      throw XtaskFormatException(message, file.location(offset).pointSpan());
-
-  var inSingle = false;
-  var inDouble = false;
-  var inComment = false;
-  int? previous; // last significant character outside quotes and comments
-
-  for (var i = 0; i < source.length; i++) {
-    final c = source.codeUnitAt(i);
-
-    if (_invisibleSpace.contains(c) && !inSingle && !inDouble) {
-      refuse(
-        i,
-        'this is U+${c.toRadixString(16).toUpperCase().padLeft(4, '0')}, not a '
-        'space — it was almost certainly pasted from a document. YAML would '
-        'have complained about the structure several lines from here instead',
-      );
-    }
-    if (c < 0x20 && c != 0x09 && c != 0x0A && c != 0x0D) {
-      refuse(i, 'a non-printable character has no meaning in this file');
-    }
-
-    if (inComment) {
-      if (c == 0x0A) {
-        inComment = false;
-        previous = 0x0A;
-      }
-      continue;
-    }
-    if (inSingle) {
-      if (c == 0x27) {
-        inSingle = false;
-      }
-      continue;
-    }
-    if (inDouble) {
-      if (c == 0x5C) {
-        i++;
-      } else if (c == 0x22) {
-        inDouble = false;
-      }
-      continue;
-    }
-
-    switch (c) {
-      case 0x23: // #
-        inComment = true;
-        continue;
-      case 0x27: // '
-        inSingle = true;
-        previous = c;
-        continue;
-      case 0x22: // "
-        inDouble = true;
-        previous = c;
-        continue;
-      case 0x20:
-      case 0x09:
-      case 0x0D:
-        continue;
-      case 0x0A:
-        previous = 0x0A;
-        continue;
-    }
-
-    if ((c == 0x26 || c == 0x2A) && _nodeStart.contains(previous)) {
-      final anchor = c == 0x26;
-      refuse(
-        i,
-        anchor
-            ? 'a YAML anchor (`&`) is refused. `sets:` already exists to say a '
-                  'thing once, and a task has to be readable without leaving '
-                  'it: what it does is read from its own keys, and an anchor '
-                  'makes that untrue'
-            : 'a YAML alias (`*`) is refused, for the reason an anchor is. If '
-                  'this was meant as a glob, quote it: YAML reads a value '
-                  'beginning with `*` as an alias, whatever you meant',
-      );
-    }
-    final mergeKey =
-        c == 0x3C && i + 1 < source.length && source.codeUnitAt(i + 1) == 0x3C;
-    if (mergeKey) {
-      refuse(
-        i,
-        'the YAML merge key `<<` is refused. It is inheritance with precedence '
-        'rules, and a task is meant to be read completely from its own keys',
-      );
-    }
-
-    previous = c;
   }
 }

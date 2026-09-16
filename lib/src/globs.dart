@@ -1,0 +1,441 @@
+/// How a pattern in `xtask.yaml` is read, wherever it is read.
+///
+/// **Two readers, and they have already drifted once.** The set expander and
+/// the `remove` verb each compile patterns and each walk the repository for
+/// them, so anything either of them decides about what a pattern MEANS has to
+/// be decided here or it will be decided twice. It was: `**/` meant "one
+/// directory or more" on one side and "none or more" on the other, in the same
+/// file, with nothing to say so.
+library;
+
+import 'package:glob/glob.dart';
+import 'package:path/path.dart' as p;
+
+/// [pattern], and the same pattern with each `**/` standing for no directory
+/// at all.
+///
+/// `package:glob` reads `**/` as one directory or more, so
+/// `packages/**/*.lake` finds `packages/a/b.lake` and not `packages/b.lake`.
+/// Bash's `globstar`, git's ignore rules and every glob a person has met read
+/// it as none or more — and the difference is not an error but a gate that
+/// examined fewer files than it was written to and went green.
+///
+/// Here rather than inside `sets`, because `sets:` and `do: remove` both
+/// compile patterns and a file format with two dialects is the defect the
+/// duplicate list exists to remove.
+///
+/// **What is shared is how a pattern is READ, and the two readers still do
+/// different things with what it matches** — written here so the difference is
+/// on the record rather than found by surprise. Neither ever descends into a
+/// symlink, so neither can loop. A set does not take one as a MEMBER, because
+/// its members are handed on as paths and a link to a matching file would
+/// arrive twice; `do: remove` deletes one it matches, because the verb's whole
+/// statement about links is that it removes them and never follows them. So
+/// `**/*.tmp` names one file to a set and two to `remove` where one of them is
+/// a link, and that is the verbs differing, not the pattern.
+Set<String> zeroOrMoreDirectories(String pattern) => _readings(pattern);
+
+/// How many readings of one pattern the engine will compile.
+///
+/// Generous: the shapes a person writes have one or two `**/`, and a monorepo
+/// pattern like `packages/**/lib/**/src/**/*.dart` has eight.
+const mostReadings = 32;
+
+/// How many `**/` segments one pattern may have.
+///
+/// **A second bound, and not a restatement of the first.** [mostReadings] is
+/// about what a match costs: every reading is a compiled glob run against
+/// every entry of the walk. This is about what READING costs, and the two come
+/// apart in one shape — a pattern whose readings collapse. `{a,**/}` repeated
+/// keeps the set at one member however many times it appears, so the readings
+/// bound never fires while the loop still runs once per segment: sixteen
+/// thousand of them was a second and a half, and a megabyte of them is
+/// minutes, all to answer with one string.
+///
+/// Far past any pattern a person writes, because it is not the limit anybody
+/// should meet — [mostReadings] is.
+const mostGlobstarSegments = 64;
+
+/// [pattern]'s readings: it with each `**/` kept, and with each dropped.
+///
+/// Accumulated left to right and refused the moment there are too many, so a
+/// pathological pattern is turned down before its readings are built rather
+/// than after.
+///
+/// Counting the globstars and calling it `2^n` is wrong in the refusing
+/// direction: readings collapse, and `a/**/**/b` has three rather than four.
+/// The set says exactly how many there are at every step.
+///
+/// The brace depth is carried across the loop, because a tail beginning inside
+/// `{…}` has no `{` of its own to count.
+Set<String> _readings(String pattern) {
+  // **Every occurrence, not every accepted one.** Counting inside the loop
+  // counted only the globstars that stand as a whole segment, and the ones the
+  // skip loop steps past cost the same walk: `,**/` repeated is rejected at
+  // every occurrence and was never refused — thirty-two thousand of them was
+  // a second and a half, and a megabyte was minutes. One pass over the text
+  // answers for all of them, before any of them is looked at.
+  final segments = '**/'.allMatches(pattern).length;
+  if (segments > mostGlobstarSegments) {
+    throw FormatException(
+      '`${_short(pattern)}` has $segments `**/` in it, which is more than the '
+      '$mostGlobstarSegments this engine will read. Each one is another pass '
+      'over the pattern, and a pattern this shape is not saying what its '
+      'author thinks it says. Name fewer of them, or split the set',
+    );
+  }
+
+  if (hasEmptyAlternative(pattern)) {
+    // **Refused here, because `package:glob` refuses it nowhere.** `{lib,}`
+    // reads as "lib or nothing"; the library builds the node without
+    // complaint and throws `Bad state: No element` from it at MATCH time,
+    // past the `FormatException` guard every caller wraps compilation in.
+    // That ended `--validate` at 255 on a pattern the file wrote.
+    //
+    // The rule is the whole shape rather than the shapes that happen to
+    // crash: whether one does depends on which segment the empty alternative
+    // is in, which is the library's internals and not something a file's
+    // author can be asked to know. `_emptiesAnAlternative` already keeps this
+    // shape out of the readings this file INVENTS, on the stated ground that
+    // it is one the file could not have written — this is the other half of
+    // that sentence.
+    throw FormatException(
+      '`${_short(pattern)}` has a brace alternative with nothing in it. '
+      '`{lib,}` means "lib, or nothing at all", which is not a path and not '
+      'something this engine will match against a file. Write the '
+      'alternative out, or drop the braces',
+    );
+  }
+
+  if (pattern.isEmpty) {
+    // **Answered before anything is invented, because the exit drops what
+    // this function invents.** `**/` alone reads as the empty pattern, which
+    // `Glob` refuses, so the empty variants are removed on the way out — and
+    // that removal took the caller's own empty pattern with it. `include:
+    // ['']` then contributed no glob at all and surfaced as "the set expands
+    // to nothing", about a cause the reader cannot see from that sentence.
+    // Handed back as written, it reaches `Glob` and gets the sentence naming
+    // the line it is on.
+    return {pattern};
+  }
+
+  var readings = {''};
+  var rest = pattern;
+  var depth = 0;
+
+  while (true) {
+    // Find the first `**` that stands as a WHOLE segment, skipping past any
+    // that do not. Stopping at the first occurrence and giving up if it was
+    // part of a larger token abandons the zero-directory reading of every
+    // later, legitimate one: `a**/b/**/c` was left untouched entirely that way.
+    var index = rest.indexOf('**/');
+    while (index > 0 && !_startsSegment(rest, index, depth)) {
+      index = rest.indexOf('**/', index + 1);
+    }
+    if (index == -1) {
+      return {
+        for (final reading in readings) reading + rest,
+        // `**/` on its own yields the empty pattern, which `Glob` refuses. It
+        // is the engine's own by-product, so it is dropped here rather than
+        // surfacing as a crash on a pattern the library accepts.
+      }..removeWhere((variant) => variant.isEmpty);
+    }
+    final withStar = rest.substring(0, index + 3);
+    final withoutStar = rest.substring(0, index);
+    final tail = rest.substring(index + 3);
+
+    readings = {
+      for (final reading in readings) reading + withStar,
+      for (final reading in readings)
+        // **Unless dropping it would empty a brace alternative.** `{**/,b}`
+        // has an alternative that is nothing BUT the globstar, so the
+        // zero-directory reading of it is `{,b}` — which `package:glob` builds
+        // without complaint and then throws `Bad state: No element` from, at
+        // match time, past the `FormatException` guard that catches a
+        // malformed pattern. A variant this function invented must not be one
+        // the file could not have written.
+        //
+        // Asked of the reading and not of `withoutStar`, because after the
+        // first segment the `{` is behind us: `{**/**/,b}` reached here with
+        // an empty `withoutStar`, saw no brace, and built `{,b}` anyway.
+        if (!_emptiesAnAlternative(reading + withoutStar, tail))
+          reading + withoutStar,
+    };
+    if (readings.length > mostReadings) {
+      // **Refused, because nothing else bounds it.** Every reading becomes its
+      // own compiled glob, matched against every entry of the walk, so the
+      // cost of one line of `xtask.yaml` doubles per `**/` in it: eight
+      // globstars is 256 globs per entry, and ten is over a thousand. A
+      // pattern needing more than this is not saying what its author thinks it
+      // says.
+      throw FormatException(
+        '`${_short(pattern)}` has ${readings.length} readings, which is more '
+        'than the $mostReadings this engine will match against every file it '
+        'walks. Each `**/` can double them, because it means none OR more '
+        'directories. Name fewer of them, or split the set',
+      );
+    }
+
+    depth += _depthOf(rest, index + 3);
+    rest = tail;
+  }
+}
+
+/// Whether dropping a globstar from [reading] leaves an empty alternative.
+bool _emptiesAnAlternative(String reading, String tail) =>
+    (reading.endsWith('{') || reading.endsWith(',')) &&
+    (tail.isEmpty || tail.startsWith(',') || tail.startsWith('}'));
+
+/// Whether [pattern] has a brace alternative with nothing in it.
+///
+/// Reads the pattern the way `package:glob` reads it, which is why the escape
+/// and the character class are here: `\{a,\}` writes two literal braces and
+/// `[{,}]` writes a class holding three characters, and neither is an
+/// alternative at all.
+bool hasEmptyAlternative(String pattern) {
+  // One entry per open `{`: whether the alternative being read has anything
+  // in it yet. A nested group counts as content for the group holding it.
+  final filled = <bool>[];
+  var inClass = false;
+
+  void fill() {
+    if (filled.isNotEmpty) {
+      filled[filled.length - 1] = true;
+    }
+  }
+
+  for (var at = 0; at < pattern.length; at++) {
+    final character = pattern[at];
+    if (character == r'\') {
+      // Whatever follows is a literal, and a literal is content.
+      at++;
+      fill();
+      continue;
+    }
+    if (inClass) {
+      inClass = character != ']';
+      fill();
+      continue;
+    }
+    switch (character) {
+      case '[':
+        inClass = true;
+        fill();
+      case '{':
+        fill();
+        filled.add(false);
+      case ',':
+        // Outside braces a comma is an ordinary character in a file name.
+        if (filled.isEmpty) {
+          continue;
+        }
+        if (!filled.last) {
+          return true;
+        }
+        filled[filled.length - 1] = false;
+      case '}':
+        // A stray `}` is `Glob`'s to refuse, and it does.
+        if (filled.isEmpty) {
+          continue;
+        }
+        if (!filled.last) {
+          return true;
+        }
+        filled.removeLast();
+      default:
+        fill();
+    }
+  }
+  return false;
+}
+
+/// [pattern], short enough to read in a refusal.
+///
+/// The pattern is quoted so a reader can see which line of the file this is
+/// about, and a pathological one is exactly the pattern that reaches here: a
+/// thousand globstars printed whole is a refusal nobody can read.
+String _short(String pattern) {
+  if (pattern.length <= 120) {
+    return pattern;
+  }
+  // **Backed off a code unit where the cut lands inside a character.** Dart
+  // counts UTF-16 units, so a pattern holding an emoji or a CJK extension at
+  // the cut was truncated between its two halves and the refusal carried a
+  // lone surrogate — a replacement character on the reader's terminal, or an
+  // encoding error in anything that re-encodes the diagnostic, in the one
+  // sentence whose job is to show which line of the file is wrong.
+  final at = _isHighSurrogate(pattern.codeUnitAt(116)) ? 116 : 117;
+  return '${pattern.substring(0, at)}...';
+}
+
+/// Whether [unit] is the first half of a surrogate pair.
+bool _isHighSurrogate(int unit) => unit >= 0xD800 && unit <= 0xDBFF;
+
+/// How many brace groups the first [upTo] characters of [pattern] open.
+int _depthOf(String pattern, int upTo) {
+  var depth = 0;
+  for (var at = 0; at < upTo; at++) {
+    if (pattern[at] == '{') {
+      depth++;
+    } else if (pattern[at] == '}') {
+      depth--;
+    }
+  }
+  return depth;
+}
+
+/// Whether the `**/` at [index] begins a segment of [pattern], given [open]
+/// brace groups already open where the pattern begins.
+///
+/// After a `/` always. After `{` or `,` only **inside** a brace group, where
+/// each alternative is a pattern in its own right — outside one a comma is an
+/// ordinary character, and treating it as a segment start invented the variant
+/// `data/a,b` for `data/a,**/b`. That variant is OR'd into the match and feeds
+/// `do: remove`, so the cost of being generous here is deleting a path the
+/// pattern did not name.
+bool _startsSegment(String pattern, int index, int open) {
+  final before = pattern[index - 1];
+  if (before == '/') {
+    return true;
+  }
+  if (before != '{' && before != ',') {
+    return false;
+  }
+  return open + _depthOf(pattern, index) > 0;
+}
+
+/// What a set of include patterns can still reach, compiled once.
+///
+/// **Once per walk, not once per directory.** Re-deriving a pattern's shape
+/// at every directory — split it into segments, slice, join, **compile a
+/// fresh `Glob`** — costs more than matching with one, and a pattern with no
+/// `**` would compile at every directory at every depth. Held as a value,
+/// each pattern's shape is worked out when the walk starts and the prefix
+/// globs are kept per depth.
+final class Reach {
+  Reach(List<String> patterns)
+    : _shapes = [for (final pattern in patterns) _Shape(pattern)];
+
+  final List<_Shape> _shapes;
+
+  /// Whether anything under [directory] could match one of the patterns.
+  ///
+  /// Answered from a pattern's own shape, at the depth reached so far, so that
+  /// a walk can stop descending instead of reading a subtree that cannot
+  /// contain a match by construction.
+  ///
+  /// **Both walkers need this.** Include patterns prune as well as match:
+  /// without it `include: ['src/**/*.ts']` reads all of `node_modules` and
+  /// all of `.git` — once per set, per task, per run — to find nothing there.
+  bool into(String directory) {
+    final depth = _depthOfPath(directory);
+    for (final shape in _shapes) {
+      if (shape.reaches(directory, depth)) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
+/// How many segments [path] has, without splitting it into a list.
+///
+/// A relative path out of `p.relative` is normalised, so counting separators
+/// is what splitting would have counted.
+int _depthOfPath(String path) {
+  var depth = 1;
+  for (var at = 0; at < path.length; at++) {
+    if (path.codeUnitAt(at) == 0x2F) {
+      depth++;
+    }
+  }
+  return depth;
+}
+
+/// Whether a brace group in [pattern] spans a `/`.
+///
+/// **Only that shape defeats pruning.** The prune decision slices the pattern
+/// by path segment; a brace whose alternatives sit inside one segment —
+/// `packages/{a,b}/**` — splits and rejoins exactly, so the arithmetic holds.
+/// One that spans a separator — `{a,b/c}/**` — makes the segment COUNT depend
+/// on which alternative is taken, and a pattern with four apparent segments
+/// may still reach five deep.
+///
+/// Reading every brace as unprunable would turn pruning off for an ordinary
+/// monorepo shape: `packages/{pkg000,pkg001}/**/*.dart` would read all of
+/// `node_modules`, `.git` and `build` — 250ms against 10ms for the same set
+/// written without the brace.
+///
+/// An unbalanced brace is answered yes: it tells us nothing, and a prefix that
+/// will not compile is already handled one level down.
+bool _braceSpansASlash(String pattern) {
+  var depth = 0;
+  for (var at = 0; at < pattern.length; at++) {
+    switch (pattern.codeUnitAt(at)) {
+      case 0x5C: // \ — escapes whatever follows, including a brace
+        at++;
+      case 0x7B: // {
+        depth++;
+      case 0x7D: // }
+        depth--;
+      case 0x2F: // /
+        if (depth > 0) {
+          return true;
+        }
+    }
+    if (depth < 0) {
+      return true;
+    }
+  }
+  return depth != 0;
+}
+
+/// One include pattern, with everything a prune decision needs worked out.
+final class _Shape {
+  _Shape(String pattern)
+    : _anywhere = _braceSpansASlash(pattern),
+      _segments = p.posix.split(pattern);
+
+  /// Whether this pattern reaches into every directory at every depth.
+  final bool _anywhere;
+  final List<String> _segments;
+
+  /// Prefix globs by depth. A null value is a prefix that would not compile on
+  /// its own — an escape split across the slice — which tells us nothing and
+  /// so must not be read as "no".
+  final _prefixes = <int, Glob?>{};
+
+  /// The first segment carrying a `**`, or -1.
+  ///
+  /// **`**` is not a whole segment.** `package:glob` lets it cross `/`
+  /// wherever it appears, and `lib/**.dart` — the shape this repository's own
+  /// example ships — is exactly that. Asking whether a segment IS `**` pruned
+  /// `lib/src` out of it and lost every nested match, silently: the set stays
+  /// non-empty, nothing is refused, and the gate checks fewer files and goes
+  /// green.
+  late final int _globstarAt = _segments.indexWhere((s) => s.contains('**'));
+
+  bool reaches(String directory, int depth) {
+    if (_anywhere) {
+      return true;
+    }
+    // A `**` at or before this depth can match any number of directories
+    // below, so everything under here is still in reach.
+    if (_globstarAt >= 0 && _globstarAt < depth) {
+      return true;
+    }
+    if (_segments.length <= depth) {
+      // The pattern names fewer segments than this directory has, so nothing
+      // inside it can match — the pattern ran out above here.
+      return false;
+    }
+    final compiled = _prefixes.putIfAbsent(depth, () {
+      try {
+        return Glob(_segments.take(depth).join('/'), context: p.posix);
+      } on FormatException {
+        return null;
+      }
+    });
+    return compiled == null || compiled.matches(directory);
+  }
+}

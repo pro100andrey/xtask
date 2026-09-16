@@ -1,27 +1,42 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/xtask.dart';
 
+import 'helpers.dart';
+
+/// The gate the pipe tests run: four tasks, each touching a marker, so that a
+/// failure can say how far the run got instead of only that it did not finish.
+const _marks = ['one', 'two', 'three', 'four'];
+
+/// One of them, as the file writes it.
+String _aTask(String name) =>
+    '  $name: {desc: $name, gate: [check], '
+    'run: [sh, -c, "sleep 0.3; touch ran-$name"]}\n';
+
 void main() {
   group('dart run :xtask', () {
     // The claim this proves, and the reason it is a subprocess rather than a
-    // direct call: §7 says the command is `dart run :xtask`, and that resolves
-    // through `bin/xtask.dart` by file name alone. Calling `runXtask`
-    // in-process would pass even if bin/ were empty or misnamed — which is
-    // precisely the failure the sentence in §7 would then be hiding.
+    // direct call: the command line says the command is `dart run :xtask`, and
+    // that resolves through `bin/xtask.dart` by file name alone. Calling
+    // `runXtask` in-process would pass even if bin/ were empty or misnamed —
+    // which is precisely the failure the sentence in the command line would
+    // then be hiding.
     //
     // `Platform.resolvedExecutable` is the Dart running this test, so the test
     // does not itself depend on `dart` being resolvable on PATH. That question
-    // is §5.4's, and it belongs to the `resolve` slice, not to this one.
+    // is the resolver's, and it belongs to the `resolve` slice, not to this
+    // one.
     Future<ProcessResult> xtask(List<String> args) => Process.run(
       Platform.resolvedExecutable,
       ['run', ':xtask', ...args],
       workingDirectory: Directory.current.path,
     );
 
-    test("reaches this package, and its usage is §7's", () async {
+    test("reaches this package, and its usage is the command line's", () async {
       final run = await xtask(['--help']);
       expect(run.exitCode, 0);
       expect(run.stdout, contains('xtask --validate'));
@@ -30,12 +45,13 @@ void main() {
 
     test('and carries the answer out to the process exit code', () async {
       // The entry point has to USE the answer. `bin/xtask.dart` assigns it to
-      // `exitCode`; a consumer that writes `=> runXtask(args)` — as §9's own
-      // snippet used to — discards it and exits 0 for every outcome.
+      // `exitCode`; a consumer that writes `=> runXtask(args)` — as the
+      // project's own Dart's own snippet used to — discards it and exits 0 for
+      // every outcome.
       //
       // An invocation asking for nothing is the cheapest refusal there is, and
-      // §5.3 gives it 2 rather than 1: a 1 would send somebody looking for the
-      // task that failed.
+      // the exit code table gives it 2 rather than 1: a 1 would send somebody
+      // looking for the task that failed.
       final run = await xtask([]);
       expect(run.exitCode, 2);
       expect(run.stderr, contains('usage:'));
@@ -43,11 +59,11 @@ void main() {
   });
 
   group('a task is a section in the shipped binary, not only in a test', () {
-    // The one claim that cannot be made in-process. §7.1 says a CI job is one
-    // invocation and each task folds — which needs the `::group::` line to
+    // The one claim that cannot be made in-process. the README says a CI job is
+    // one invocation and each task folds — which needs the `::group::` line to
     // reach the stream BEFORE the body's own output. The engine writes through
-    // Dart's `stdout`, which is asynchronous when it is a pipe (what it is on
-    // a runner), while the body inherits the descriptor and writes to it
+    // Dart's `stdout`, which is asynchronous when it is a pipe (what it is on a
+    // runner), while the body inherits the descriptor and writes to it
     // directly. Nothing in-process can tell those two apart; a real subprocess
     // with a real pipe can.
     late Directory root;
@@ -115,6 +131,7 @@ void main() {
       final dart = Platform.resolvedExecutable;
       File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
         'version: 1\n'
+        'gates: [both]\n'
         'tasks:\n'
         '  one:\n'
         '    desc: first\n'
@@ -123,10 +140,7 @@ void main() {
         '  two:\n'
         '    desc: second\n'
         '    gate: [both]\n'
-        "    run: ['$dart', --version]\n"
-        '  both:\n'
-        '    desc: everything\n'
-        '    collects: both\n',
+        "    run: ['$dart', --version]\n",
       );
       run = await Process.run(
         dart,
@@ -134,7 +148,8 @@ void main() {
           'run',
           p.join(Directory.current.path, 'bin', 'xtask.dart'),
           'both',
-          '--parallel',
+          '-j',
+          'auto',
         ],
         workingDirectory: root.path,
         // **Named, not inherited.** Which markers a run prints is read off the
@@ -170,7 +185,7 @@ void main() {
     });
   });
 
-  group('runXtask is the whole public surface (§9)', () {
+  group('runXtask is the whole public surface ', () {
     // In-process, because what is being asserted is the function a consumer
     // calls rather than the file it is called from.
     //
@@ -187,8 +202,7 @@ void main() {
     // own, as a separate process, and it finds the file there.
     late Directory root;
 
-    setUp(() => root = Directory.systemTemp.createTempSync('xtask_public_'));
-    tearDown(() => root.deleteSync(recursive: true));
+    setUp(() => root = tempRepo('public'));
 
     test(
       'a project with no verbs still gets the built-ins and the file',
@@ -206,10 +220,187 @@ void main() {
     test(
       'and a directory with no file is refused, not assumed empty',
       () async {
-        // The outcome §7.1 makes dangerous: a CI job is one invocation, so a 0
-        // from an xtask that found nothing to do is a permanently green job.
+        // The outcome one invocation per job makes dangerous: a CI job is one
+        // invocation, so a 0 from an xtask that found nothing to do is a
+        // permanently green job.
         expect(await runXtask(['a'], workingDirectory: root.path), 2);
       },
     );
+  });
+
+  group('a reader that goes away is an ordinary end', () {
+    // `xtask check | head -1` ran no tasks at all and exited non-zero without
+    // a word: the flush that orders this process's output against an inherited
+    // child threw `EPIPE` before the first child was started, the fan-out
+    // caught it as the body having thrown, and the failure went down the
+    // stdout that had just closed. `xtask check | head` is an ordinary thing
+    // to type.
+    late Directory root;
+
+    setUp(() {
+      root = tempRepo('epipe');
+      // **Four, not two.** With two, a failure says only "it stopped" — and
+      // whether the run stops at the same task every time or at whichever one
+      // the pipe happened to close under is the difference between a decision
+      // and a race, which is the first thing worth knowing about it.
+      File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
+        'version: 1\ngates: [check]\ntasks:\n${_marks.map(_aTask).join()}',
+      );
+    });
+
+    /// **Its stderr is kept, not drained.** Drained, this test could say only
+    /// that the run stopped at the pipe — which is the one thing already
+    /// obvious from the assertion, while the sentence the run printed about
+    /// WHY is exactly what a reader needs and is the thing being thrown away.
+    /// It failed on two CI runners and passed everywhere else, and there was
+    /// nothing in the report to work from.
+    Future<({int code, String errors, Duration took})> piped(
+      List<String> args,
+    ) async {
+      final began = DateTime.now();
+      final xtask = await Process.start(
+        Platform.resolvedExecutable,
+        ['run', p.join(Directory.current.path, 'bin', 'xtask.dart'), ...args],
+        workingDirectory: root.path,
+      );
+      final head = await Process.start('head', const ['-1']);
+      final errors = xtask.stderr.transform(utf8.decoder).join();
+      unawaited(xtask.stdout.pipe(head.stdin).catchError((Object _) {}));
+      unawaited(head.stdout.drain<void>());
+      await head.exitCode;
+      final code = await xtask.exitCode;
+      // **How long it took, which is the one thing still observable.** What
+      // the run writes after the reader goes is lost by construction — that
+      // is the scenario — so its side effects are all there is, and its
+      // duration is one of them. Each task sleeps; four of them take four
+      // times as long as one. A run that stops after the first is short, and
+      // a run that finishes with its markers missing is not.
+      return (
+        code: code,
+        errors: await errors,
+        took: DateTime.now().difference(began),
+      );
+    }
+
+    /// The same run with nobody closing the pipe: the control this test had
+    /// no way to state, and without which a failure cannot say whether the
+    /// pipe is implicated at all.
+    Future<({int code, String out})> whole(List<String> args) async {
+      final log = File(p.join(root.path, 'out.log'));
+      final xtask = await Process.start(
+        Platform.resolvedExecutable,
+        ['run', p.join(Directory.current.path, 'bin', 'xtask.dart'), ...args],
+        workingDirectory: root.path,
+      );
+      final written = xtask.stdout.pipe(log.openWrite());
+      unawaited(xtask.stderr.drain<void>().catchError((Object _) {}));
+      final code = await xtask.exitCode;
+      await written;
+      return (code: code, out: log.readAsStringSync());
+    }
+
+    bool ran(String marker) => File(p.join(root.path, marker)).existsSync();
+
+    /// Which of the four touched their marker, in order.
+    String reached() => [
+      for (final n in _marks)
+        if (ran('ran-$n')) n,
+    ].join(', ');
+
+    test('and the same run with nobody closing the pipe does too', () async {
+      // The control. If this fails as well, the pipe is not what stopped the
+      // run and the sentence the other test prints is about the wrong thing.
+      final run = await whole(['check']);
+      expect(reached(), _marks.join(', '), reason: run.out);
+      expect(run.code, 0, reason: run.out);
+    }, testOn: '!windows');
+
+    test('every task still runs, and the run still answers 0', () async {
+      final run = await piped(['check']);
+      final said =
+          'reached: <<${reached()}>>, exit ${run.code}, '
+          'took ${run.took.inMilliseconds}ms for ${_marks.length} tasks '
+          'sleeping 300ms each, stderr: <<${run.errors.trim()}>>';
+      expect(reached(), _marks.join(', '), reason: said);
+      expect(run.code, 0, reason: said);
+    }, testOn: '!windows');
+  });
+
+  group('a body that cannot be resolved is answered, not crashed into', () {
+    // **A subprocess, because a fake starter cannot show this.** Every
+    // executor test injects one, so the ordering flush that `stdout` really
+    // performs — and the window during which that sink is bound — never
+    // happens there. The defect lived in exactly that gap: the walk released
+    // the failing task's place before its failure was recorded, admitted the
+    // next task, and the next task's flush turned the first one's own error
+    // line into `StreamSink is bound to a stream` and exit 255.
+    late Directory root;
+
+    setUp(() {
+      root = tempRepo('unresolvable');
+      File(p.join(root.path, 'xtask.yaml')).writeAsStringSync(
+        'version: 1\n'
+        'gates: [check]\n'
+        'tasks:\n'
+        '  gone:\n'
+        '    desc: names a program that is not installed\n'
+        '    gate: [check]\n'
+        '    run: [no-such-program-4f3a9]\n'
+        '  after:\n'
+        '    desc: a program that is\n'
+        '    gate: [check]\n'
+        '    run: [sh, -c, "touch ran-after"]\n',
+      );
+    });
+
+    Future<({int code, String out})> run(List<String> args) async {
+      final result = await Process.run(
+        Platform.resolvedExecutable,
+        ['run', p.join(Directory.current.path, 'bin', 'xtask.dart'), ...args],
+        workingDirectory: root.path,
+      );
+      return (code: result.exitCode, out: '${result.stdout}${result.stderr}');
+    }
+
+    bool ranAfter() => File(p.join(root.path, 'ran-after')).existsSync();
+
+    test('it says which program is missing, and stops the run', () async {
+      final it = await run(['check']);
+      expect(
+        it.code,
+        3,
+        reason: 'a missing tool is 3, and 255 is not in the table: ${it.out}',
+      );
+      expect(
+        it.out,
+        contains('no-such-program-4f3a9'),
+        reason: 'the diagnostic was the thing being lost: ${it.out}',
+      );
+      expect(
+        ranAfter(),
+        isFalse,
+        reason: 'a failure stops what has not started: ${it.out}',
+      );
+      expect(it.out, contains('skipped'), reason: it.out);
+    }, testOn: '!windows');
+
+    test('and with --keep-going it says so and carries on', () async {
+      // The other half, and the one the first fix alone does not cover: here
+      // the next task IS admitted, on purpose, so the failing task's error
+      // line really is written while a real process is starting.
+      final it = await run(['check', '--keep-going']);
+      expect(it.code, 3, reason: it.out);
+      expect(it.out, contains('no-such-program-4f3a9'), reason: it.out);
+      expect(
+        it.out,
+        isNot(contains('StreamSink is bound')),
+        reason: 'a diagnostic must never end the run at 255: ${it.out}',
+      );
+      expect(
+        ranAfter(),
+        isTrue,
+        reason: '--keep-going means the rest still runs: ${it.out}',
+      );
+    }, testOn: '!windows');
   });
 }
