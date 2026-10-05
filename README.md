@@ -213,6 +213,7 @@ xtask --validate             parse and check the file; run nothing
 xtask --check-ci             does the CI file still run the gate sets?
 xtask --dry-run <task>       print the resolved plan; run nothing
 xtask --emit-schema          print the JSON Schema for this file format
+xtask --check-schema <path>  does that file match --emit-schema?
 xtask --version              print which engine this is
 ```
 
@@ -740,7 +741,19 @@ is what `--validate` answers. A schema catches a mistyped **key**; `--validate` 
 a mistyped **name**.
 
 The schema describes one version of the engine, which is why it is generated
-into your repository rather than fetched from a URL.
+into your repository rather than fetched from a URL — and why a committed copy
+falls behind the day the engine is upgraded. Writing it stays a person's act,
+because a redirect is shell; checking it is a gate's:
+
+```yaml
+  schema-check:
+    desc: fail if xtask.schema.json is not the schema this engine emits
+    gate: [check]
+    run: [dart, run, ':xtask', --check-schema, xtask.schema.json]
+```
+
+The path is read from where the command runs — the root, for a task without
+`in:`. Line endings and a trailing newline are not differences.
 
 ## Three rules
 

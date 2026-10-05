@@ -107,10 +107,12 @@ void main() {
 
   group('the schema beside it is the one this engine emits', () {
     // The committed file is generated, and generated files rot the moment
-    // nothing compares them. There is no `--check-schema` mode for this: a task
-    // cannot write the file either, because `>` is shell and the run says a
-    // task's description has none — so writing stays a person's deliberate act
-    // and checking is the gate's, which is the right way round.
+    // nothing compares them. A task cannot write the file, because `>` is
+    // shell and a task's description has none — so writing stays a person's
+    // deliberate act and checking is the gate's, which is the right way round.
+    // Here the check is this test, calling the function directly; a project
+    // that cannot reach the function runs `--check-schema`, which compares the
+    // same way.
     late File schema;
 
     setUpAll(() => schema = File(p.join(root, 'xtask.schema.json')));

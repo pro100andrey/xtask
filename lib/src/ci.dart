@@ -738,6 +738,7 @@ _Reading _readWords(List<String> arguments) {
     CheckCi() => const _Question('--check-ci'),
     ShowVersion() => const _Question('--version'),
     EmitSchema() => const _Question('--emit-schema'),
+    CheckSchema() => const _Question('--check-schema'),
   };
 }
 

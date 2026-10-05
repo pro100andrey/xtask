@@ -113,6 +113,21 @@ final class EmitSchema extends Request {
   const EmitSchema();
 }
 
+/// `xtask --check-schema <path>` — is the file at [path] the schema this
+/// engine emits?
+///
+/// **Checking, and only checking.** Writing the file stays a person's act —
+/// `--emit-schema > xtask.schema.json` — but a project that commits the copy
+/// its editor reads had nothing to notice it falling behind after an engine
+/// upgrade: this repository compares its own in a test, through a function no
+/// other project can reach. A task can run this; it cannot run a redirect.
+final class CheckSchema extends Request {
+  const CheckSchema(this.path);
+
+  /// The committed copy, relative to where the command was run.
+  final String path;
+}
+
 /// The usage text, printed on request and as the error message.
 final class ShowUsage extends Request {
   const ShowUsage([this.problem]);
@@ -135,6 +150,7 @@ const modes = {
   '--validate',
   '--dry-run',
   '--emit-schema',
+  '--check-schema',
   '--version',
 };
 
@@ -377,6 +393,18 @@ Request parseArguments(
           );
   }
 
+  if (mode == '--check-schema') {
+    return operands.length == 1
+        ? CheckSchema(operands.single)
+        : ShowUsage(
+            operands.isEmpty
+                ? '`--check-schema` compares one file with the schema this '
+                      'engine emits — write its path after it'
+                : '`--check-schema` compares one file, and it was given '
+                      '${operands.length}',
+          );
+  }
+
   if (mode == '--check-ci') {
     return operands.isEmpty
         ? const CheckCi()
@@ -464,6 +492,7 @@ const usage = [
   '  xtask --check-ci             does the CI file still run the gate sets?',
   '  xtask --dry-run <task>       print the resolved plan; run nothing',
   '  xtask --emit-schema          print the JSON Schema for this file format',
+  '  xtask --check-schema <path>  does that file match --emit-schema?',
   '  xtask --version              print which engine this is',
   '',
   'the file is `$xtaskFileName`, at the repository root.',

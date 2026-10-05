@@ -94,6 +94,34 @@ Future<int> runCli(
     return ExitCode.success;
   }
 
+  if (request is CheckSchema) {
+    // Also before the file: it is a question about the engine and one file.
+    // Line endings and a trailing newline are not differences — a checkout
+    // with `autocrlf`, or a redirect that adds one, has the same schema.
+    final path = request.path;
+    final committed = File(p.join(workingDirectory, path));
+    String normalised(String text) => text.replaceAll('\r\n', '\n').trimRight();
+    if (!committed.existsSync()) {
+      err(
+        'xtask: there is no `$path` to compare. Write one with:\n'
+        '  xtask --emit-schema > $path',
+      );
+      return ExitCode.invalidFile;
+    }
+    if (normalised(committed.readAsStringSync()) !=
+        normalised(xtaskJsonSchema())) {
+      err(
+        'xtask: `$path` is not the schema this engine ($packageVersion) '
+        'emits, so an editor reading it completes keys and refusals that '
+        'are not these. Regenerate it:\n'
+        '  xtask --emit-schema > $path',
+      );
+      return ExitCode.invalidFile;
+    }
+    out('`$path` is the schema this engine emits');
+    return ExitCode.success;
+  }
+
   if (request is ShowVersion) {
     out('xtask $packageVersion');
     return ExitCode.success;
@@ -171,7 +199,7 @@ Future<int> runCli(
 
   try {
     switch (request) {
-      case ShowUsage() || EmitSchema() || ShowVersion():
+      case ShowUsage() || EmitSchema() || CheckSchema() || ShowVersion():
         throw StateError('answered above');
 
       case Validate():

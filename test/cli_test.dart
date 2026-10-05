@@ -354,6 +354,15 @@ void main() {
       expect(parseArguments(['--version', 'a']), isA<ShowUsage>());
     });
 
+    test('--check-schema is a mode, and takes one path', () {
+      expect(
+        parseArguments(['--check-schema', 'xtask.schema.json']),
+        isA<CheckSchema>().having((r) => r.path, 'path', 'xtask.schema.json'),
+      );
+      expect(parseArguments(['--check-schema']), isA<ShowUsage>());
+      expect(parseArguments(['--check-schema', 'a', 'b']), isA<ShowUsage>());
+    });
+
     test('--emit-schema is a mode, and takes nothing else', () {
       expect(parseArguments(['--emit-schema']), isA<EmitSchema>());
       expect(parseArguments(['--emit-schema', 'a']), isA<ShowUsage>());
@@ -1166,6 +1175,66 @@ jobs:
         // ends without one, or with two, is a diff every editor argues with.
         await run(['--emit-schema']);
         expect('${printed()}\n', xtaskJsonSchema());
+      });
+    });
+
+    group('--check-schema', () {
+      // The comparison this repository makes in a test, for a project that
+      // can only run a command.
+      File committed(String text) =>
+          File(p.join(root.path, 'xtask.schema.json'))..writeAsStringSync(text);
+
+      test('the schema this engine emits is answered 0', () async {
+        committed(xtaskJsonSchema());
+        expect(
+          await run(['--check-schema', 'xtask.schema.json']),
+          ExitCode.success,
+        );
+      });
+
+      test('and so is it with CRLF, or without the last newline', () async {
+        committed(xtaskJsonSchema().replaceAll('\n', '\r\n').trimRight());
+        expect(
+          await run(['--check-schema', 'xtask.schema.json']),
+          ExitCode.success,
+        );
+      });
+
+      test(
+        'one that has fallen behind is a 2 that says how to fix it',
+        () async {
+          committed('{}\n');
+          expect(
+            await run(['--check-schema', 'xtask.schema.json']),
+            ExitCode.invalidFile,
+          );
+          expect(
+            err.join('\n'),
+            contains('xtask --emit-schema > xtask.schema.json'),
+          );
+        },
+      );
+
+      test('and none at all is a 2 too, not a pass', () async {
+        expect(
+          await run(['--check-schema', 'xtask.schema.json']),
+          ExitCode.invalidFile,
+        );
+        expect(err.join('\n'), contains('there is no `xtask.schema.json`'));
+      });
+
+      test('a path is read from where the command runs', () async {
+        Directory(p.join(root.path, 'sub')).createSync();
+        File(
+          p.join(root.path, 'sub', 'schema.json'),
+        ).writeAsStringSync(xtaskJsonSchema());
+        expect(
+          await run([
+            '--check-schema',
+            'schema.json',
+          ], from: p.join(root.path, 'sub')),
+          ExitCode.success,
+        );
       });
     });
 

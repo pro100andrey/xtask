@@ -22,6 +22,13 @@ verb's job it had to rebuild beside `context.run`.
 
 ### Fixed
 
+- A blank name — `"  ":` for a task, a set or an environment variable — is
+  refused as an empty one. The schema already refused it; the parser
+  accepted it.
+- The schema refuses what the parser refuses between keys: `all:` with
+  `each:`, `timeout:` or `interruptible: true` without a `run:` body, a blank
+  entry in `needs:`, `then:`, `gate:` or `exclusive:`, and a blank `do:`.
+
 - `--check-ci` reads `defaults: run: working-directory:` on a job and on the
   workflow, as GitHub applies them. Only the step's own key was read, so a
   job-level default could move every step into a package with its own
@@ -29,6 +36,9 @@ verb's job it had to rebuild beside `context.run`.
 
 ### Added
 
+- `--check-schema <path>`: whether a committed schema is the one this engine
+  emits, answering 2 with the command that regenerates it. A task can run
+  it; it could not run the redirect that writes the file.
 - `--check-ci` names the tasks that are in a gate set and that no job's run
   reaches, grouped by their gate sets. Reported, like a gate set no job runs,
   and never refused.
