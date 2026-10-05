@@ -567,6 +567,49 @@ jobs:
       expect(found.problems.single, isA<RunsSomewhereElse>());
     });
 
+    test('and a default the job or the workflow sets moves it too', () {
+      // GitHub applies `defaults: run: working-directory:` to every `run:`
+      // step without its own key. Read from the step alone, a job-level
+      // default carried every step into a package with its own file unseen.
+      File(p.join(root.path, 'packages', 'a', 'xtask.yaml'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync(
+          'version: 1\ngates: [ci-analyze]\n'
+          'tasks:\n  x: {desc: x, gate: [ci-analyze], run: [dart]}\n',
+        );
+      const onTheJob =
+          'jobs:\n  a:\n    defaults:\n      run:\n'
+          '        working-directory: packages/a\n    steps:\n';
+      const onTheWorkflow =
+          'defaults:\n  run:\n    working-directory: packages/a\n'
+          'jobs:\n  a:\n    steps:\n';
+      for (final placed in [onTheJob, onTheWorkflow]) {
+        workflow('ci.yml', '$placed      - run: dart run :xtask ci-analyze\n');
+        final found = check();
+        expect(found.invocations, isEmpty, reason: placed);
+        expect(found.problems.single, isA<RunsSomewhereElse>(), reason: placed);
+      }
+    });
+
+    test("and the step's own key still wins over a default", () {
+      File(p.join(root.path, 'packages', 'a', 'xtask.yaml'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync(
+          'version: 1\ntasks:\n  x: {desc: x, run: [dart]}\n',
+        );
+      workflow('ci.yml', '''
+jobs:
+  a:
+    defaults:
+      run:
+        working-directory: packages/a
+    steps:
+      - run: dart run :xtask ci-analyze
+        working-directory: .
+''');
+      expect(check().invocations.single.gate, 'ci-analyze');
+    });
+
     test(
       'while a directory with no file of its own still reaches this one',
       () {

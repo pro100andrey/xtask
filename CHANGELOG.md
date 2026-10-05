@@ -20,6 +20,13 @@ verb's job it had to rebuild beside `context.run`.
   after it. It used to print "the upload took place" whatever the two tasks
   were.
 
+### Fixed
+
+- `--check-ci` reads `defaults: run: working-directory:` on a job and on the
+  workflow, as GitHub applies them. Only the step's own key was read, so a
+  job-level default could move every step into a package with its own
+  `xtask.yaml` and still be counted as running this file's gate set.
+
 ### Added
 
 - `context.capture(argv)`: runs a program the way `context.run` does — the

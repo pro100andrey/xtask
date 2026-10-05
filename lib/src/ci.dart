@@ -728,7 +728,13 @@ Iterable<CiStep> _steps(File workflow, String name, String root) sync* {
         continue;
       }
       final condition = step.nodes['if'];
-      final where = step.nodes['working-directory'];
+      // GitHub's order: the step's own key, else the job's default, else the
+      // workflow's. Reading only the step's let a job-level default move
+      // every step into a package with its own file, unseen.
+      final where =
+          step.nodes['working-directory'] ??
+          _runDefault(job) ??
+          _runDefault(document);
       yield CiStep(
         name,
         '${entry.key}',
@@ -744,6 +750,16 @@ Iterable<CiStep> _steps(File workflow, String name, String root) sync* {
       );
     }
   }
+}
+
+/// `defaults: run: working-directory:` on a job or a workflow, or null.
+YamlNode? _runDefault(YamlMap owner) {
+  final defaults = owner['defaults'];
+  if (defaults is! YamlMap) {
+    return null;
+  }
+  final run = defaults['run'];
+  return run is YamlMap ? run.nodes['working-directory'] : null;
 }
 
 /// [where], when a `working-directory:` of that name holds its own task file.
