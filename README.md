@@ -349,7 +349,11 @@ one invocation of one gate set is refused, because that is exactly how the
 duplicate list grows back — somebody writes `- run: dart analyze` instead of
 adding a task. A gate set no job runs is reported rather than refused: gate
 sets are named after who runs them, and that is the jobs *plus the people*,
-which nothing in the file distinguishes. A step that asks xtask a question —
+which nothing in the file distinguishes. The same goes one level down: a task
+that is in some gate set and that no job's run reaches — through `needs:` and
+`then:` included — is named too, grouped by the gate sets it is in, because a
+people's set is always on the first list and the task added to it without a
+job's label would otherwise be on none. A step that asks xtask a question —
 `--validate`, `--check-ci` itself — is reported the same way: it names no
 command that could drift, so there is nothing to move into the file.
 

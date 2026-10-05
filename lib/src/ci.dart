@@ -21,6 +21,7 @@ import 'package:yaml/yaml.dart';
 import 'boundary.dart';
 import 'errors.dart';
 import 'gates.dart';
+import 'graph.dart';
 import 'model.dart';
 import 'request.dart';
 
@@ -250,6 +251,7 @@ final class CiReport {
     required this.unrun,
     required this.questions,
     required this.exempted,
+    this.unreached = const [],
   });
 
   /// Every step that is a well-formed invocation, by gate set.
@@ -278,6 +280,18 @@ final class CiReport {
   /// key that claimed to would be a second place saying what the workflow
   /// already says.
   final List<String> unrun;
+
+  /// Tasks in some gate set that no job's run reaches, in file order, each
+  /// with the gate sets it is in.
+  ///
+  /// **What [unrun] cannot show.** A file with a gate set for people and
+  /// gate sets for jobs asks every task in the first to carry one of the
+  /// second as well, and the people's set is always on [unrun] — so the task
+  /// added to it next week without a job's label is on no list, and CI never
+  /// runs it. Reached means anywhere in the plan of a gate set a job runs,
+  /// `needs:` and `then:` included. Reported and not judged, for [unrun]'s
+  /// reason.
+  final List<({String task, List<String> gates})> unreached;
 
   bool get ok => problems.isEmpty;
 }
@@ -508,7 +522,16 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   }
 
   final run = {for (final invocation in invocations) invocation.gate};
+  final reached = {
+    for (final gate in run)
+      for (final step in _planOrNothing(file, gate)) step.task.name,
+  };
   return CiReport(
+    unreached: List.unmodifiable([
+      for (final task in file.tasks.values)
+        if (task.gate.isNotEmpty && !reached.contains(task.name))
+          (task: task.name, gates: task.gate),
+    ]),
     invocations: List.unmodifiable(invocations),
     questions: List.unmodifiable(questions),
     exempted: List.unmodifiable(exempted),
@@ -518,6 +541,19 @@ CiReport checkCi(XtaskFile file, {required String root}) {
         if (!run.contains(gate) && tasksInGate(file, gate).isNotEmpty) gate,
     ]),
   );
+}
+
+/// The steps a run of [gate] would take, or none when the file refuses it.
+///
+/// A gate set that cannot be planned — empty, or in a cycle — is `--validate`'s
+/// to report, and a run of it reaches nothing; this question is only about
+/// what IS reached.
+List<PlanStep> _planOrNothing(XtaskFile file, String gate) {
+  try {
+    return planFor(file, gate).steps;
+  } on XtaskFormatException {
+    return const [];
+  }
 }
 
 // ── reading one step ────────────────────────────────────────────────────────

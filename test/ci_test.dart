@@ -547,6 +547,32 @@ jobs:
       ]);
     });
   });
+  group('a task no job reaches is named, though nothing refuses it', () {
+    // The case `unrun` cannot show: `check` is always on it, so a task added
+    // to `check` without a job's gate set is on no list and CI never runs it.
+    const split = '''
+version: 1
+gates: [check, ci]
+tasks:
+  lint: {desc: a, gate: [check, ci], needs: [codegen], run: [lint]}
+  codegen: {desc: b, gate: [check], run: [gen]}
+  forgotten: {desc: c, gate: [check], run: [new]}
+  helper: {desc: d, run: [h]}
+''';
+
+    test('reached through a run, or through its `needs:`, is not', () {
+      steps('      - run: dart run :xtask ci\n');
+      final found = check(split);
+      expect(found.ok, isTrue);
+      expect(
+        [for (final (:task, :gates) in found.unreached) '$task in $gates'],
+        ['forgotten in [check]'],
+        reason: '`codegen` is needed by `lint`; `helper` is in no gate set',
+      );
+      expect(found.unrun, ['check']);
+    });
+  });
+
   group('a step that names the gate and does not enforce it', () {
     // **Three ways a job looked like the one running a gate set and was
     // not**, all of them green before: the mode written to stop a silent

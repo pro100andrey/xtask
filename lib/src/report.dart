@@ -319,6 +319,37 @@ List<String> workflow(CiReport report) {
     // should say so in the same breath as it passes.
     for (final step in report.exempted) _exempted(step),
     if (report.ok && report.unrun.isNotEmpty) ...['', nobody],
+    if (report.ok && report.unreached.isNotEmpty) ...[
+      '',
+      ..._unreached(report.unreached),
+    ],
+  ];
+}
+
+/// The tasks no job reaches, grouped by the gate sets they are in.
+///
+/// **Grouped, because the grouping is the signal.** A file with a people's
+/// gate set beside the jobs' has whole families no job is meant to reach —
+/// an editor extension's checks, say — and those come back every run. The
+/// task somebody forgot to give a job's label arrives as a group of its own,
+/// in the people's set alone, which is the line worth reading.
+List<String> _unreached(
+  List<({String task, List<String> gates})> unreached,
+) {
+  final bySets = <String, List<String>>{};
+  for (final (:task, :gates) in unreached) {
+    bySets
+        .putIfAbsent(gates.map((g) => '`$g`').join(', '), () => [])
+        .add('`$task`');
+  }
+  const heading =
+      'no job reaches these tasks, though each is in a gate set — right if '
+      "somebody runs those by hand, wrong if a task was given a person's "
+      "gate set and not a job's:";
+  return [
+    heading,
+    for (final MapEntry(key: sets, value: tasks) in bySets.entries)
+      '  ${tasks.join(', ')} — in $sets',
   ];
 }
 

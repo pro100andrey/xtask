@@ -245,6 +245,27 @@ tasks:
       expect(lines.last, contains('cannot tell those apart'));
     });
 
+    test('a task no job reaches is named, grouped by its gate sets', () {
+      final lines = workflow(
+        const CiReport(
+          invocations: [],
+          questions: [],
+          exempted: [],
+          problems: [],
+          unrun: [],
+          unreached: [
+            (task: 'ext-lint', gates: ['ext-check', 'check-all']),
+            (task: 'ext-test', gates: ['ext-check', 'check-all']),
+            (task: 'new-check', gates: ['check']),
+          ],
+        ),
+      );
+      expect(lines.skip(2), [
+        '  `ext-lint`, `ext-test` — in `ext-check`, `check-all`',
+        '  `new-check` — in `check`',
+      ]);
+    });
+
     test('and nothing is said about it when something is broken', () {
       // The problems are the answer then; a note about who runs what would
       // bury them.

@@ -29,6 +29,9 @@ verb's job it had to rebuild beside `context.run`.
 
 ### Added
 
+- `--check-ci` names the tasks that are in a gate set and that no job's run
+  reaches, grouped by their gate sets. Reported, like a gate set no job runs,
+  and never refused.
 - `context.capture(argv)`: runs a program the way `context.run` does — the
   same lookup, the same `3` for a missing tool, the same batch-shim refusal —
   and answers with its exit code and both streams whole, with its input
