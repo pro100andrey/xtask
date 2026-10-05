@@ -41,6 +41,22 @@ final class FakeStarter implements ProcessStarter {
     started.add(Started(executable, arguments, workingDirectory));
     return codes[p.basename(executable)] ?? ExitCode.success;
   }
+
+  @override
+  Future<Captured> capture(
+    String executable,
+    List<String> arguments, {
+    required String workingDirectory,
+    required Map<String, String> environment,
+    required bool runInShell,
+  }) async {
+    started.add(Started(executable, arguments, workingDirectory));
+    return (
+      exitCode: codes[p.basename(executable)] ?? ExitCode.success,
+      stdout: '',
+      stderr: '',
+    );
+  }
 }
 
 void main() {

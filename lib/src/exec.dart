@@ -738,21 +738,7 @@ final class Executor {
   Future<int> _start(Resolved body, _Lines lines) {
     switch (body) {
       case ResolvedVerb(:final implementation):
-        return implementation(
-          VerbContext(
-            args: body.arguments,
-            env: body.environment,
-            root: bodies.root,
-            workingDirectory: body.workingDirectory,
-            log: lines.call,
-            member: body.member,
-            // The same resolution and the same starter a `run:` body gets, so
-            // a verb that runs a program keeps the resolver's answers rather
-            // than reaching for `Process.start` and losing them.
-            start: (argv, {workingDirectory}) =>
-                _startForVerb(body, argv, workingDirectory, lines),
-          ),
-        );
+        return _runVerb(body, implementation, lines);
 
       case ResolvedProcess(
         :final executable,
@@ -781,36 +767,82 @@ final class Executor {
     }
   }
 
-  /// A program started on a verb's behalf, resolved the way a `run:` body is.
+  /// A verb, handed the context the engine owes it, with its [VerbContext.out]
+  /// flushed however it ends.
+  Future<int> _runVerb(ResolvedVerb body, Verb implementation, _Lines lines) {
+    final out = LogSink(lines.call);
+    // `Future.sync`, so a verb that throws before it returns a future is
+    // flushed too.
+    return Future.sync(
+      () => implementation(
+        VerbContext(
+          args: body.arguments,
+          env: body.environment,
+          root: bodies.root,
+          workingDirectory: body.workingDirectory,
+          log: lines.call,
+          out: out,
+          member: body.member,
+          // The same resolution and the same starter a `run:` body gets, so
+          // a verb that runs a program keeps the resolver's answers rather
+          // than reaching for `Process.start` and losing them.
+          start: (argv, {workingDirectory}) {
+            final (:executable, :arguments, :directory, :runInShell) =
+                _prepareForVerb(body, argv, workingDirectory);
+            return starter.start(
+              executable,
+              arguments,
+              workingDirectory: directory,
+              environment: body.environment,
+              runInShell: runInShell,
+              output: lines.live ? null : lines.call,
+            );
+          },
+          collect: (argv, {workingDirectory}) {
+            final (:executable, :arguments, :directory, :runInShell) =
+                _prepareForVerb(body, argv, workingDirectory);
+            return starter.capture(
+              executable,
+              arguments,
+              workingDirectory: directory,
+              environment: body.environment,
+              runInShell: runInShell,
+            );
+          },
+          locate: (name) =>
+              bodies.resolver.resolve(name, from: body.workingDirectory),
+        ),
+      ),
+    ).whenComplete(out.flush);
+  }
+
+  /// A program a verb asked for, resolved the way a `run:` body is.
   ///
   /// Refused in the same words a `run:` body is refused with — a name nothing
   /// on `PATH` answers to is still code 3, because "the toolchain is not
-  /// installed" and "the code is broken" still reach different people.
-  Future<int> _startForVerb(
-    Resolved body,
-    List<String> argv,
-    String? written,
-    _Lines lines,
-  ) {
+  /// installed" and "the code is broken" still reach different people. One
+  /// place for [VerbContext.run] and [VerbContext.capture] both, so the two
+  /// cannot come to disagree about what may start.
+  ({
+    String executable,
+    List<String> arguments,
+    String directory,
+    bool runInShell,
+  })
+  _prepareForVerb(Resolved body, List<String> argv, String? written) {
     if (argv.isEmpty) {
       throw RunFailure(
         ExitCode.invalidFile,
         'verb of task `${body.task.name}` asked to run nothing',
       );
     }
-    final workingDirectory = _verbDirectory(body, written);
-    final executable = bodies.resolver.resolve(
-      argv.first,
-      from: workingDirectory,
-    );
+    final directory = _verbDirectory(body, written);
+    final executable = bodies.resolver.resolve(argv.first, from: directory);
     if (executable == null) {
       throw RunFailure(
         ExitCode.missingTool,
         'task `${body.task.name}`: '
-        '${bodies.resolver.missingToolMessage(
-          argv.first,
-          from: workingDirectory,
-        )}',
+        '${bodies.resolver.missingToolMessage(argv.first, from: directory)}',
       );
     }
     final arguments = argv.skip(1).toList();
@@ -818,13 +850,11 @@ final class Executor {
     if (runInShell) {
       refuseShellMetacharacters(body.task.name, executable, arguments);
     }
-    return starter.start(
-      executable,
-      arguments,
-      workingDirectory: workingDirectory,
-      environment: body.environment,
+    return (
+      executable: executable,
+      arguments: arguments,
+      directory: directory,
       runInShell: runInShell,
-      output: lines.live ? null : lines.call,
     );
   }
 

@@ -242,6 +242,41 @@ final class SystemProcessStarter implements ProcessStarter {
   /// What a killed process answers with — `timeout(1)`'s number, so a shell
   /// wrapping xtask need not learn a new one. The engine still answers 1: a
   /// task that hung is a task that failed.
+  @override
+  Future<Captured> capture(
+    String executable,
+    List<String> arguments, {
+    required String workingDirectory,
+    required Map<String, String> environment,
+    required bool runInShell,
+  }) async {
+    final process = await Process.start(
+      executable,
+      arguments,
+      workingDirectory: workingDirectory,
+      environment: environment,
+      runInShell: runInShell,
+    );
+    // Closed at once: a program that reads its input when it is not a
+    // terminal would otherwise wait for a line that never comes, and a verb
+    // capturing it has no way to type one.
+    unawaited(process.stdin.close());
+    // Decoded leniently, for the reason the streaming path gives: one byte
+    // that is not UTF-8 must not turn a program's answer into an exception.
+    final stdoutText = process.stdout
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .join();
+    final stderrText = process.stderr
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .join();
+    final exitCode = await process.exitCode;
+    return (
+      exitCode: exitCode,
+      stdout: await stdoutText,
+      stderr: await stderrText,
+    );
+  }
+
   static const timedOut = 124;
 
   /// What a process stopped because the run gave up answers with — a shell's

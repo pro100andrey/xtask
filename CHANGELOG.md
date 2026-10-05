@@ -10,6 +10,7 @@ verb's job it had to rebuild beside `context.run`.
 
 - `VerbContext` takes `root:`. Only code that builds a context itself — a
   verb's own tests — has to pass it.
+- `VerbContext`'s constructor is no longer `const`, since it builds `out`.
 - `ExitCode.continuationNotice` is gone; `continuationNotice(body:,
   continuation:)` is the sentence, and it names the two tasks.
 
@@ -21,6 +22,14 @@ verb's job it had to rebuild beside `context.run`.
 
 ### Added
 
+- `context.capture(argv)`: runs a program the way `context.run` does — the
+  same lookup, the same `3` for a missing tool, the same batch-shim refusal —
+  and answers with its exit code and both streams whole, with its input
+  closed. A verb that needed a program's output used to reach for
+  `Process.run` and lose all of that.
+- `context.which(name)`: the file a start would find, or `null`.
+- `context.out`: `log` as a `StringSink` (`LogSink`), flushed when the verb
+  returns, for a library that writes to a sink.
 - `context.root`: the repository root, absolute. A set's members and every
   path in the file are relative to it; `context.workingDirectory` is where the
   task runs and moves with `in:`. The example joined members onto

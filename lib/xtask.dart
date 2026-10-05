@@ -17,7 +17,7 @@ import 'src/process.dart';
 // Re-exported rather than restated. A second declaration of `Verb` or of what
 // a verb is handed would be two lists of the same thing, which is the defect
 // this package exists to remove.
-export 'src/context.dart' show Verb, VerbContext;
+export 'src/context.dart' show Captured, LogSink, Verb, VerbContext;
 
 // A verb answers with a number, and the README tells its author to write that
 // number against the table this class is. Not exporting it meant telling them

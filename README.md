@@ -164,6 +164,16 @@ Future<int> regen(VerbContext context) async {
   //                   PATH, PATHEXT, the batch rule, the exit codes.
   //                   `workingDirectory:` is a path from the repository
   //                   root, and stays inside it; left out, it is the task's
+  // context.capture(...)
+  //                   the same start, run to the end with its output kept:
+  //                   `(exitCode:, stdout:, stderr:)`, each stream whole.
+  //                   For a verb that has to read what a program said —
+  //                   not `Process.run`, which loses everything above
+  // context.which('code')
+  //                   the file a start would find, or null — to decide
+  //                   before starting anything
+  // context.out      `log` as a StringSink, for a library that writes to
+  //                  one; a last line without a newline is flushed for you
   // context.args     `args:` with `$all` expanded, then anything
   //                  the command line passed after `--`
   // context.env      this machine's environment, with `env:` winning a clash

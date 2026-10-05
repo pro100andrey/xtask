@@ -140,6 +140,39 @@ final class FakeStarter implements ProcessStarter {
     (output ?? (_) {})('$name again');
     return codes[name] ?? ExitCode.success;
   }
+
+  /// What a captured executable prints, by name: its stdout and its stderr.
+  final prints = <String, (String, String)>{};
+
+  /// Executables run through `capture`, in order.
+  final captured = <Started>[];
+
+  @override
+  Future<Captured> capture(
+    String executable,
+    List<String> arguments, {
+    required String workingDirectory,
+    required Map<String, String> environment,
+    required bool runInShell,
+  }) async {
+    final name = p.basename(executable);
+    captured.add(
+      Started(
+        executable,
+        arguments,
+        workingDirectory,
+        environment,
+        runInShell,
+        null,
+      ),
+    );
+    final (out, err) = prints[name] ?? ('', '');
+    return (
+      exitCode: codes[name] ?? ExitCode.success,
+      stdout: out,
+      stderr: err,
+    );
+  }
 }
 
 void main() {
@@ -2054,6 +2087,143 @@ void main() {
     });
   });
 
+  group('a verb that has to read what a program said', () {
+    // Without these a verb that needed a program's output or its location
+    // reached for `Process.run` and a PATH walk of its own, and lost the
+    // resolver's answers: the `3` for a missing tool, `PATHEXT`, the refusal
+    // to hand `cmd.exe` a metacharacter.
+    test('`capture` answers with the code and each stream whole', () async {
+      starter = FakeStarter({'git': 1})
+        ..prints['git'] = (' M lib/a.dart\n', 'warning: x\n');
+      Captured? seen;
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, in: sub, do: look}\n',
+        'a',
+        verbs: {
+          'look': (context) async {
+            seen = await context.capture(['git', 'status', '--porcelain']);
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.success);
+      expect(seen, (
+        exitCode: 1,
+        stdout: ' M lib/a.dart\n',
+        stderr: 'warning: x\n',
+      ));
+      expect(starter.captured.single.arguments, ['status', '--porcelain']);
+      expect(
+        starter.captured.single.workingDirectory,
+        p.join(root.path, 'sub'),
+        reason: "the task's own directory, as `run` would use",
+      );
+      expect(starter.started, isEmpty, reason: 'captured, not streamed');
+    });
+
+    test(
+      '`capture` of a missing tool is a 3 in the words `run` uses',
+      () async {
+        final resolver = ExecutableResolver(
+          environment: const {'PATH': '/nowhere'},
+          windows: false,
+          isRunnable: (_) => false,
+        );
+        final code = await runFile(
+          'version: 1\ntasks:\n  a: {desc: x, do: look}\n',
+          'a',
+          resolver: resolver,
+          verbs: {
+            'look': (context) async {
+              await context.capture(['h2spec']);
+              return ExitCode.success;
+            },
+          },
+        );
+        expect(code, ExitCode.missingTool);
+        expect(
+          logged.join('\n'),
+          contains(resolver.missingToolMessage('h2spec', from: root.path)),
+        );
+      },
+    );
+
+    test('`capture` refuses a metacharacter through a batch shim', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: look}\n',
+        'a',
+        resolver: ExecutableResolver(
+          environment: const {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
+          windows: true,
+          isRunnable: (path) => path.toLowerCase().endsWith('.bat'),
+        ),
+        verbs: {
+          'look': (context) async {
+            await context.capture(['code', '--profile', 'a&b']);
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(starter.captured, isEmpty);
+    });
+
+    test('`which` is the lookup a start would make', () async {
+      final found = <String?>[];
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: look}\n',
+        'a',
+        resolver: ExecutableResolver(
+          environment: const {'PATH': '/opt/bin'},
+          windows: false,
+          isRunnable: (path) => path == '/opt/bin/code',
+        ),
+        verbs: {
+          'look': (context) async {
+            found
+              ..add(context.which('code'))
+              ..add(context.which('h2spec'));
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(found, ['/opt/bin/code', null]);
+    });
+
+    test(
+      '`out` is the log, and a last unterminated line is not lost',
+      () async {
+        await runFile(
+          'version: 1\ntasks:\n  a: {desc: x, do: talk}\n',
+          'a',
+          verbs: {
+            'talk': (context) async {
+              context.out
+                ..write('one ')
+                ..writeln('line')
+                ..write('and a tail');
+              return ExitCode.success;
+            },
+          },
+        );
+        expect(logged, containsAllInOrder(['one line', 'and a tail']));
+      },
+    );
+
+    test('a hand-built context says what it lacks rather than "absent"', () {
+      final context = VerbContext(
+        args: const [],
+        env: const {},
+        root: '/r',
+        workingDirectory: '/r',
+        log: (_) {},
+        start: (_, {workingDirectory}) async => 0,
+      );
+      expect(() => context.which('x'), throwsStateError);
+      expect(() => context.capture(['x']), throwsStateError);
+    });
+  });
+
   group('a verb is given what it needs to be the escape hatch it is', () {
     test('it knows which member it is', () async {
       // It ran once per member with the same arguments and a different
@@ -2377,6 +2547,20 @@ void main() {
   });
 
   group('the real starter, against a real process', () {
+    test('`capture` keeps each stream apart, and closes the input', () async {
+      // `cat` reads its input to the end, so a capture that left it open
+      // would wait here for the suite's own timeout.
+      final starter = SystemProcessStarter();
+      final answered = await starter.capture(
+        '/bin/sh',
+        ['-c', 'cat; printf out; printf err >&2; exit 3'],
+        workingDirectory: Directory.current.path,
+        environment: const {},
+        runInShell: false,
+      );
+      expect(answered, (exitCode: 3, stdout: 'out', stderr: 'err'));
+    }, testOn: '!windows');
+
     test('a flush that never answers does not end the run', () async {
       // The mechanism the CI failure turned out to be. Before an inheriting
       // child this process flushes its own stdout, to order its lines against
