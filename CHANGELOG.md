@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+What the first project to migrate onto 0.2.0 found: places where the
+documentation said one thing and the engine did another, and the part of a
+verb's job it had to rebuild beside `context.run`.
+
+### Breaking
+
+- `VerbContext` takes `root:`. Only code that builds a context itself — a
+  verb's own tests — has to pass it.
+
+### Added
+
+- `context.root`: the repository root, absolute. A set's members and every
+  path in the file are relative to it; `context.workingDirectory` is where the
+  task runs and moves with `in:`. The example joined members onto
+  `workingDirectory`, which is right only for a task without `in:`.
+
 ## 0.2.0
 
 Written against 0.1.0: what a task file, a command line, a verb and a CI

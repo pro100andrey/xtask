@@ -737,6 +737,7 @@ final class Executor {
           VerbContext(
             args: body.arguments,
             env: body.environment,
+            root: bodies.root,
             workingDirectory: body.workingDirectory,
             log: lines.call,
             member: body.member,

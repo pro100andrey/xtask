@@ -34,6 +34,7 @@ final class VerbContext {
   const VerbContext({
     required this.args,
     required this.env,
+    required this.root,
     required this.workingDirectory,
     required this.log,
     required this.start,
@@ -62,7 +63,18 @@ final class VerbContext {
   /// declared cannot ask, and has not needed to.
   final Map<String, String> env;
 
-  /// Where the task runs, absolute.
+  /// The repository root, absolute: the directory holding `xtask.yaml`.
+  ///
+  /// **Not [workingDirectory]**, which is where the task runs — `in:` moves
+  /// that and leaves this alone. Every path the file writes is relative to
+  /// here: a set's member, an `in:`, a `remove` argument. A verb that joins a
+  /// member onto [workingDirectory] instead builds a path that is right only
+  /// for a task without `in:`, and the example taught exactly that until the
+  /// first project with a dozen such joins was read beside the code.
+  final String root;
+
+  /// Where the task runs, absolute: [root], or the `in:` under it — under
+  /// `each:` with `in: \$each`, the member's own directory.
   final String workingDirectory;
 
   /// Where to write. A verb writing to `stdout` directly would bypass the

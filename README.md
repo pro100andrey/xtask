@@ -167,7 +167,11 @@ Future<int> regen(VerbContext context) async {
   // context.args     `args:` with `$all` expanded, then anything
   //                  the command line passed after `--`
   // context.env      this machine's environment, with `env:` winning a clash
+  // context.root     the repository root, absolute — what a set's members,
+  //                  `in:` and every other path in the file are relative to
   // context.workingDirectory
+  //                  where the task runs: the root, or its `in:` under it.
+  //                  Join a set's member onto `root`, never onto this
   return 0;
 }
 ```

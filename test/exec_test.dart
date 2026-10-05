@@ -2054,6 +2054,31 @@ void main() {
       expect(starter.started, isEmpty);
     });
 
+    test('it is told the root apart from where it runs', () async {
+      // A set's members are relative to the root and `in:` moves only the
+      // working directory, so a verb that had one of the two had to guess
+      // the other — and the example guessed `root == workingDirectory`, which
+      // holds only for a task without `in:`.
+      given(['pkg/a/x']);
+      final seen = <(String, String)>[];
+      final code = await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, do: look}'
+            '\n',
+        'a',
+        verbs: {
+          'look': (context) async {
+            seen.add((context.root, context.workingDirectory));
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.success);
+      expect(seen, [(root.path, p.join(root.path, 'pkg', 'a'))]);
+    });
+
     test('and a relative directory is read from the repository root', () async {
       // Against the process's own directory it worked from the root and
       // quietly targeted somewhere else from a subdirectory.

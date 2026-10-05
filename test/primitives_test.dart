@@ -38,6 +38,7 @@ void main() {
     VerbContext(
       args: args,
       env: const {},
+      root: root.path,
       workingDirectory: root.path,
       log: logged.add,
       start: (_, {workingDirectory}) async =>
