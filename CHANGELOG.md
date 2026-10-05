@@ -20,6 +20,17 @@ verb's job it had to rebuild beside `context.run`.
   after it. It used to print "the upload took place" whatever the two tasks
   were.
 
+### Documentation
+
+- `context.workingDirectory` was described, and used in the example, as the
+  repository root. It is where the task runs.
+- The README said it wrote `dart run :xtask` throughout and wrote `xtask`.
+- New: testing a verb; a CI recipe for an installed engine; where to run
+  `--check-ci`, and the two ways a step naming a gate set is not counted;
+  which directory each path is read from; the refusals no single key shows;
+  `timeout:` on Windows; coming from `make`. `interruptible:`, `serial:` and
+  `exclusive:` are now explained after `-j`, which they are about.
+
 ### Fixed
 
 - A blank name — `"  ":` for a task, a set or an environment variable — is

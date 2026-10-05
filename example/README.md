@@ -16,9 +16,8 @@ dart run :xtask --dry-run check # what would run, resolved on this machine
 dart run :xtask check           # run it
 ```
 
-`dart run :xtask` and not the installed `xtask`, because one task here has a
-`do:` — and a verb is this project's own function, so no engine installed from
-pub.dev contains it. That is what `bin/xtask.dart` is for, and what reaches it.
+`dart run :xtask` rather than the installed `xtask`, because only it reaches
+`bin/xtask.dart`.
 
 The rest — the keys, the exit codes, what `-j` costs — is in the
 [package README](https://pub.dev/packages/xtask).
