@@ -41,9 +41,21 @@ abstract final class ExitCode {
   /// publish failed, which is false and unrecoverable in the wrong direction —
   /// the registry will not accept that version again.
   static const continuationFailed = 4;
-
-  /// What a [continuationFailed] run prints, and what the Makefile it replaces
-  /// already printed.
-  static const continuationNotice =
-      'the upload took place, and a red result below it does not undo that';
 }
+
+/// What an [ExitCode.continuationFailed] run prints: that [body] finished,
+/// and that [continuation], failing after it, does not undo that.
+///
+/// **Both names, and nothing about what they were.** This was one fixed
+/// sentence — "the upload took place" — lifted from the Makefile of the
+/// project that asked for `then:`, and it was printed after every `then:`
+/// that failed. The first project to use `then:` for anything else, a build
+/// followed by an install, was told about an upload that never happened.
+/// The engine knows which task finished and which failed after it; whether
+/// the first was an upload is the project's to say.
+String continuationNotice({
+  required String body,
+  required String continuation,
+}) =>
+    '`$body` finished, and `$continuation` failing after it does not undo '
+    'that';

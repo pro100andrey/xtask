@@ -24,7 +24,7 @@ export 'src/context.dart' show Verb, VerbContext;
 // to write `return 0;` — the very thing `boundaries_test.dart` refuses inside
 // this package, for the reason that applies just as well outside it: the
 // constant carries why the code is that code, and the digit does not.
-export 'src/exit_codes.dart' show ExitCode;
+export 'src/exit_codes.dart' show ExitCode, continuationNotice;
 
 /// Runs `xtask` with the verbs this project supplies, and answers with the
 /// process exit code — the README's exit code table says what each means.

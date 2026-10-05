@@ -522,6 +522,16 @@ says which of the three endings happened, not how much of the plan was
 abandoned — those are different questions and `--keep-going` is the one that
 answers the second.
 
+What a `4` prints names the two tasks — `` `publish` finished, and `announce`
+failing after it does not undo that `` — and nothing about what they were. The
+engine knows which body finished and which `then:` failed after it; whether
+the first was an upload, a deploy or a build is the project's to say.
+
+A verb may answer `4` itself, when its own body has an irreversible half and a
+check after it — an upload, then a wait until the registry serves what was
+uploaded. The engine reduces that `4` as it does a continuation's: alone it is
+the run's answer, and beside an ordinary failure the ordinary failure wins.
+
 With `--keep-going` and more than one failure, the code is the **first**
 failure's. A code is a report about one failure, and a run with three cannot
 honestly claim to be about all of them; the summary is where the others are.

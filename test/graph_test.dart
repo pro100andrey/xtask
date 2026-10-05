@@ -215,7 +215,10 @@ void main() {
       expect(
         ExitCode.continuationFailed,
         isNot(ExitCode.taskFailed),
-        reason: ExitCode.continuationNotice,
+        reason: continuationNotice(
+          body: 'publish',
+          continuation: 'announce',
+        ),
       );
     });
   });

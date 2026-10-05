@@ -434,7 +434,12 @@ final class Executor {
       if (step.isContinuation) {
         // Always 4, whatever went wrong inside it: the body already
         // succeeded, so the publish happened.
-        lines(ExitCode.continuationNotice);
+        lines(
+          continuationNotice(
+            body: step.continuationOf!,
+            continuation: task.name,
+          ),
+        );
         return ExitCode.continuationFailed;
       }
       return failure.code;

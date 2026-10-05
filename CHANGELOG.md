@@ -10,6 +10,14 @@ verb's job it had to rebuild beside `context.run`.
 
 - `VerbContext` takes `root:`. Only code that builds a context itself — a
   verb's own tests — has to pass it.
+- `ExitCode.continuationNotice` is gone; `continuationNotice(body:,
+  continuation:)` is the sentence, and it names the two tasks.
+
+### Changed
+
+- A failed `then:` prints which body finished and which continuation failed
+  after it. It used to print "the upload took place" whatever the two tasks
+  were.
 
 ### Added
 

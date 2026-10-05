@@ -799,7 +799,15 @@ void main() {
         keepGoing: true,
       );
       expect(code, ExitCode.continuationFailed);
-      expect(logged.join('\n'), contains(ExitCode.continuationNotice));
+      expect(
+        logged.join('\n'),
+        contains(
+          continuationNotice(
+            body: 'publish',
+            continuation: 'announce',
+          ),
+        ),
+      );
     });
   });
 
@@ -1413,22 +1421,28 @@ void main() {
   });
 
   group('a continuation that fails is the third outcome, not a failure', () {
-    test('exit 4, and the notice the Makefile already printed', () async {
-      starter = FakeStarter({'verify': 1});
-      final code = await runFile(
-        'version: 1\ntasks:\n'
-            '  publish: {desc: x, run: [upload], then: [verify]}\n'
-            '  verify: {desc: y, run: [verify]}\n',
-        'publish',
-      );
-      expect(code, ExitCode.continuationFailed);
-      expect(logged.join('\n'), contains(ExitCode.continuationNotice));
-      expect(
-        starter.started.map((s) => p.basename(s.executable)),
-        ['upload', 'verify'],
-        reason: 'the upload happened first, and that is the point',
-      );
-    });
+    test(
+      'exit 4, and a notice naming what finished and what did not',
+      () async {
+        starter = FakeStarter({'verify': 1});
+        final code = await runFile(
+          'version: 1\ntasks:\n'
+              '  publish: {desc: x, run: [upload], then: [verify]}\n'
+              '  verify: {desc: y, run: [verify]}\n',
+          'publish',
+        );
+        expect(code, ExitCode.continuationFailed);
+        expect(
+          logged.join('\n'),
+          contains('`publish` finished, and `verify` failing after it'),
+        );
+        expect(
+          starter.started.map((s) => p.basename(s.executable)),
+          ['upload', 'verify'],
+          reason: 'the upload happened first, and that is the point',
+        );
+      },
+    );
 
     test('a body that fails is still exit 1, continuation or not', () async {
       starter = FakeStarter({'upload': 1});
@@ -1439,7 +1453,7 @@ void main() {
         'publish',
       );
       expect(code, ExitCode.taskFailed);
-      expect(logged.join('\n'), isNot(contains(ExitCode.continuationNotice)));
+      expect(logged.join('\n'), isNot(contains('does not undo')));
     });
 
     test('a missing tool INSIDE a continuation still answers 4', () async {
@@ -1453,6 +1467,52 @@ void main() {
       );
       expect(code, ExitCode.continuationFailed);
     });
+
+    test('the notice says nothing the engine does not know', () async {
+      // `then:` used for a build followed by an install was told "the upload
+      // took place" — the sentence of the one project that asked for `then:`.
+      starter = FakeStarter({'install': 1});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  build: {desc: x, run: [compile], then: [install]}\n'
+            '  install: {desc: y, run: [install]}\n',
+        'build',
+      );
+      expect(code, ExitCode.continuationFailed);
+      expect(logged.join('\n'), isNot(contains('upload')));
+      expect(
+        logged.join('\n'),
+        contains('`build` finished, and `install` failing after it'),
+      );
+    });
+
+    test(
+      'a verb may answer 4 itself, and a plain failure still wins',
+      () async {
+        // A verb whose body has an irreversible half — upload, then wait for
+        // the registry — has the same third ending inside one body. Its 4 is
+        // reduced as a continuation's is: no run where an ordinary task also
+        // failed may claim "only the part after the irreversible step broke".
+        final alone = await runFile(
+          'version: 1\ntasks:\n  publish: {desc: x, do: upload-then-wait}\n',
+          'publish',
+          verbs: {'upload-then-wait': (_) async => ExitCode.continuationFailed},
+        );
+        expect(alone, ExitCode.continuationFailed);
+
+        starter = FakeStarter({'lint': 1});
+        final mixed = await runFile(
+          'version: 1\ntasks:\n'
+              '  publish: {desc: x, do: upload-then-wait}\n'
+              '  lint: {desc: y, run: [lint]}\n'
+              '  all: {desc: z, needs: [publish, lint]}\n',
+          'all',
+          keepGoing: true,
+          verbs: {'upload-then-wait': (_) async => ExitCode.continuationFailed},
+        );
+        expect(mixed, ExitCode.taskFailed);
+      },
+    );
   });
 
   group('the batch-shim rule: arguments to a batch shim', () {
