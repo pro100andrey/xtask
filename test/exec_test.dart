@@ -2173,6 +2173,10 @@ void main() {
       // `run`/`capture` read a relative program from the `workingDirectory:`
       // they are given; `which` read it from the task's own directory
       // whatever it was given, so the two could name different files.
+      //
+      // Compared as paths, not strings: this resolver is POSIX by
+      // construction, so on a Windows host it joins the native root with `/`.
+      final gen = p.join(root.path, 'pkg', 'tool', 'gen');
       final found = <String?>[];
       await runFile(
         'version: 1\ntasks:\n  a: {desc: x, do: look}\n',
@@ -2180,7 +2184,7 @@ void main() {
         resolver: ExecutableResolver(
           environment: const {'PATH': '/nowhere'},
           windows: false,
-          isRunnable: (path) => path == p.join(root.path, 'pkg', 'tool', 'gen'),
+          isRunnable: (path) => p.equals(path, gen),
         ),
         verbs: {
           'look': (context) async {
@@ -2191,7 +2195,8 @@ void main() {
           },
         },
       );
-      expect(found, [null, p.join(root.path, 'pkg', 'tool', 'gen')]);
+      expect(found.first, isNull);
+      expect(p.normalize(found.last!), gen);
     });
 
     test('`out` is flushed before the next log line or program', () async {
