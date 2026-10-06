@@ -166,8 +166,9 @@ The file name *is* the declaration: `dart run :xtask` resolves to
 `dart install` — which fails outright without one — not for `dart run`.)
 
 The colon in `dart run :xtask` is the whole difference from
-`dart run xtask:xtask`, and it is easy to read past: what is written to the left of it is which package the executable comes
-from, and an empty left side means yours. Without a `bin/xtask.dart` of your
+`dart run xtask:xtask`, and it is easy to read past: what is written to the
+left of it is which package the executable comes from, and an empty left side
+means yours. Without a `bin/xtask.dart` of your
 own the short spelling fails with `Could not find bin/xtask.dart in package
 <yours>`, which is a truthful error and a baffling one if nobody said the file
 was optional.
@@ -549,8 +550,9 @@ skipped  check — needs `format`, which did not pass
 
 `interruptible: true` gives back some of what `-j` costs. A run does not reach
 into what is already running, because a build killed half-way leaves whatever
-it was doing in whatever state that half is. That is right for a build and wrong for a check: `dart format
---output=none`, `dart analyze` and `dart test` write nothing a half-run would
+it was doing in whatever state that half is. That is right for a build and
+wrong for a check: `dart format --output=none`, `dart analyze` and
+`dart test` write nothing a half-run would
 leave behind, and the engine cannot tell the two apart while the person who
 wrote the task can. Sequentially a format failure at 0.4s means the rest never
 run; in parallel they run to the end anyway and the machine spends the whole
@@ -818,8 +820,8 @@ underlines `dsec:` or a `gate:` written as a string, while you type. Everything
 that needs the graph or the filesystem — a cycle, a `needs:` pointing at
 nothing, an undeclared or empty gate set, an orphan gate, a glob matching
 nothing, an unregistered verb, an `in:` that reaches outside the repository —
-is what `--validate` answers. A schema catches a mistyped **key**; `--validate` catches
-a mistyped **name**.
+is what `--validate` answers. A schema catches a mistyped **key**;
+`--validate` catches a mistyped **name**.
 
 The schema describes one version of the engine, which is why it is generated
 into your repository rather than fetched from a URL — and why a committed copy

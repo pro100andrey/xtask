@@ -1,173 +1,104 @@
 # Changelog
 
-## Unreleased
-
-What the first project to migrate onto 0.2.0 found: places where the
-documentation said one thing and the engine did another, and the part of a
-verb's job it had to rebuild beside `context.run`.
+## 0.3.0
 
 ### Breaking
 
-- `VerbContext` takes `root:`. Only code that builds a context itself — a
-  verb's own tests — has to pass it.
-- `VerbContext`'s constructor is no longer `const`, since it builds `out`.
-- `ExitCode.continuationNotice` is gone; `continuationNotice(body:,
-  continuation:)` is the sentence, and it names the two tasks.
+- `VerbContext` requires `root:` and is no longer `const`. Only code that
+  builds a context itself — a verb's tests — is affected.
+- `ExitCode.continuationNotice` is replaced by the top-level
+  `continuationNotice(body:, continuation:)`.
+
+### Added
+
+- `--check-schema <path>` answers 2 when a committed schema is not the one
+  this engine emits.
+- `--check-ci` names the tasks in a gate set that no job reaches.
+- For verbs: `context.root`; `context.capture(argv, workingDirectory:,
+  timeout:)`, which starts a program as `context.run` does and returns its
+  exit code and output; `context.which(name, workingDirectory:)`; and
+  `context.out`, a `StringSink` over `log`.
 
 ### Changed
 
-- A failed `then:` prints which body finished and which continuation failed
-  after it. It used to print "the upload took place" whatever the two tasks
-  were.
-
-### Documentation
-
-- `context.workingDirectory` was described, and used in the example, as the
-  repository root. It is where the task runs.
-- The README said it wrote `dart run :xtask` throughout and wrote `xtask`.
-- New: testing a verb; a CI recipe for an installed engine; where to run
-  `--check-ci`, and the two ways a step naming a gate set is not counted;
-  which directory each path is read from; the refusals no single key shows;
-  `timeout:` on Windows; coming from `make`. `interruptible:`, `serial:` and
-  `exclusive:` are now explained after `-j`, which they are about.
+- A failed `then:` names the task that finished and the continuation that
+  failed, instead of always saying "the upload took place".
 
 ### Fixed
 
-- `--check-ci`: a `working-directory:` that is a `${{ … }}` expression — on
-  the step or from `defaults:` — is reported rather than read as the root, as
-  an expression in a `run:` line already was. Where the directory came from a
-  default, the finding says so.
-
-- A blank name — `"  ":` for a task, a set or an environment variable — is
-  refused as an empty one. The schema already refused it; the parser
-  accepted it.
-- The schema refuses what the parser refuses between keys: `all:` with
-  `each:`, `timeout:` or `interruptible: true` without a `run:` body, a blank
-  entry in `needs:`, `then:`, `gate:` or `exclusive:`, and a blank `do:`.
-
-- `--check-ci` reads `defaults: run: working-directory:` on a job and on the
-  workflow, as GitHub applies them. Only the step's own key was read, so a
-  job-level default could move every step into a package with its own
-  `xtask.yaml` and still be counted as running this file's gate set.
-
-### Added
-
-- `--check-schema <path>`: whether a committed schema is the one this engine
-  emits, answering 2 with the command that regenerates it. A task can run
-  it; it could not run the redirect that writes the file.
-- `--check-ci` names the tasks that are in a gate set and that no job's run
-  reaches, grouped by their gate sets. Reported, like a gate set no job runs,
-  and never refused.
-- `context.capture(argv)`: runs a program the way `context.run` does — the
-  same lookup, the same `3` for a missing tool, the same batch-shim refusal —
-  and answers with its exit code and both streams whole, with its input
-  closed. A verb that needed a program's output used to reach for
-  `Process.run` and lose all of that.
-- `context.which(name, {workingDirectory})`: the file a start given the same
-  directory would find, or `null`.
-- `context.capture(..., timeout:)`: a program that outlives it is stopped and
-  answers 124, with what it had written.
-- `context.out`: `log` as a `StringSink` (`LogSink`), flushed when the verb
-  returns, for a library that writes to a sink.
-- `context.root`: the repository root, absolute. A set's members and every
-  path in the file are relative to it; `context.workingDirectory` is where the
-  task runs and moves with `in:`. The example joined members onto
-  `workingDirectory`, which is right only for a task without `in:`.
+- `--check-ci` reads `defaults: run: working-directory:` on the job and the
+  workflow, and reports a `${{ … }}` working directory instead of reading it
+  as the root.
+- A blank name (`"  "`) is refused like an empty one.
+- The schema refuses what the parser refuses: `all:` with `each:`,
+  `timeout:` or `interruptible: true` without `run:`, a blank entry in
+  `needs:`, `then:`, `gate:` or `exclusive:`, and a blank `do:`.
+- The README described `context.workingDirectory` as the repository root.
+  It is where the task runs; a set's members are relative to `context.root`.
 
 ## 0.2.0
 
-Written against 0.1.0: what a task file, a command line, a verb and a CI
-workflow do differently.
-
 ### Breaking
 
-- `gates: [check, release]` declares the gate sets; a task joins one with
-  `gate: [check]`. `collects:` is gone, and a misspelled `gate:` is refused.
-- `argv-from:` is `all:`, and `$all` goes where its members belong in the
-  argument list rather than at the end.
-- `--parallel` is `-j <n>`, with `-j auto` for the machine's processors capped
-  at 8.
-- A path a task names — `in:`, a set's member, a `remove` argument — is refused
-  if absolute or climbing through `..`.
-- A task, gate, set or environment-variable name containing a line break is
-  refused.
-- `remove` lists a path once and in sorted order.
+- Gate sets are declared with `gates: [...]` and joined with `gate: [...]`.
+  `collects:` is gone.
+- `argv-from:` is `all:`, and `$all` goes where it is written.
+- `--parallel` is `-j <n>`; `-j auto` is the processor count, at most 8.
+- An absolute path, or one through `..`, is refused in `in:`, a set member
+  and a `remove` argument.
+- A name containing a line break is refused.
+- `remove` lists each path once, sorted.
 
 ### Added
 
-- `values:` — a set of names rather than paths.
-- `produced-by:` on a glob set, so `--validate` can ask that a task naming it
-  `needs:` the producer.
-- `$each` in a task's arguments; `exclusive: [token]`; `interruptible: true`;
-  `serial: true`.
-- For verbs: `context.member`, and `context.run(argv, workingDirectory:)`,
-  which starts a program the way a `run:` body does.
+- `values:` sets, `produced-by:` on glob sets, `$each` in arguments,
+  `exclusive:`, `interruptible:` and `serial:`.
+- For verbs: `context.member` and `context.run(argv, workingDirectory:)`.
 
 ### Fixed
 
-- Seven paths ended the process at 255 instead of a code the table has.
-- `do: remove` refuses an argument naming its own directory (`''`, `.`, `./`
-  deleted it whole), and deletes from where its task runs rather than the root.
-- `x needs y`, `y then z`, `z needs x` was refused as a cycle.
-- `--check-ci` asks whether a job enforces the gate set: a step under another
-  `xtask.yaml` or under `continue-on-error: true` no longer counts. A step is
-  judged by the command line's own parser rather than by guessing at a shell;
-  a multi-line script, a `${{ … }}` expression and xtask outside command
-  position are reported. `# xtask: not a gate — reason` requires the reason
-  and excuses only what it names. `xtask.exe` and `.\xtask` are recognised.
-- A brace alternative with nothing in it (`{lib,}`) is refused rather than
-  crashing at match time.
-- A closed stdout (`| head -1`, `>&-`) no longer ends the run.
-- The exit code does not depend on scheduling: a plain failure answers ahead
-  of a `then:` continuation, and the plan's order decides among failures.
-- `--dry-run` prints the resolved argv, directory and `remove` paths, and stops
-  where the run would. `--validate` refuses exactly what the run refuses.
+- Seven paths that ended the process at 255 answer a documented code.
+- `do: remove` refuses its own directory (`''`, `.`, `./`) and deletes
+  relative to where the task runs, not the root.
+- `x needs y`, `y then z`, `z needs x` is no longer refused as a cycle.
+- `--check-ci` reads a step with the command line's own parser instead of
+  guessing at shell. A step under another `xtask.yaml` or with
+  `continue-on-error: true` does not count; a multi-line script, a `${{ … }}`
+  expression and xtask outside command position are reported; the
+  `# xtask: not a gate — reason` marker requires the reason; `xtask.exe` and
+  `.\xtask` are recognised.
+- `{lib,}` is refused instead of crashing at match time.
+- A closed stdout (`| head -1`) no longer ends the run.
+- The exit code no longer depends on scheduling.
+- `--dry-run` prints the resolved argv, directory and `remove` paths.
+  `--validate` refuses everything a run would.
 - Every contradiction in a task is reported in one refusal.
-- A repository-relative program is read from where the body runs.
+- A repository-relative program is resolved from where the body runs.
 - A set is read when its task is about to run, not at planning.
-- A YAML alias, a merge key, and invisible whitespace in an indent are refused.
-- A killed task does not leave the run hanging on a grandchild.
+- YAML aliases, merge keys and invisible whitespace in an indent are refused.
+- A killed task no longer leaves the run waiting on a grandchild.
 
-### Faster
+### Performance
 
-Planning is no longer quadratic in a chain's length, a walk is pruned on the
-include patterns, and a `remove` of several patterns reads the tree once.
+- Planning is linear in a chain's length, a glob prunes the walk, and a
+  `remove` of several patterns reads the tree once.
 
 ## 0.1.0
 
-First release. Enough to replace one repository's `make`, and no more.
+First release.
 
-- `xtask.yaml` parsing with `--validate`, and errors that name the line rather
-  than the file.
-- The graph: `needs`, `then`, cycle detection with the cycle spelled out,
-  run-once per invocation, declared order, and the five exit codes — `4`
-  included, for a body that succeeded and a continuation that did not.
-- Bodies: `run` as argv, `do` naming a verb the project registered, `args`,
-  `argv-from`, `each`, `in`, `env`. Executable resolution honours `PATH`,
-  `PATHEXT` and the fact that Windows cannot start a batch shim directly.
-- `env-required`, checked before a body runs. The engine installs nothing.
-- Sets: lists and globs with exclusions, expanded by the engine in a
-  deterministic order. An expansion matching nothing is an error.
-- Gate sets, the `collects:` derivation, `--list` and `--gate-members`, and
-  log-grouping markers on a host that folds output.
-- The `remove` primitive, which is the whole built-in list.
-- `--dry-run`, printing what a run resolves to rather than what is written.
-- `--emit-schema`, a JSON Schema for editors, generated from the same key lists
-  the parser refuses unknown keys with.
-- A mode that takes a name takes it either way — `--why build` and
-  `--why=build` — because one flag taking both spellings and the rest taking
-  one is a rule nobody can hold.
-- `--why`, which names every entry point that reaches a task and spells the
-  route edge by edge, saying whether each edge is a `needs:` or a `then:`.
-- `--check-ci`, which reads the workflow files and reports a shell step that
-  names a command instead of a gate set, and a gate set with no job to run it.
-- `--keep-going`, and `--parallel`, which is the one place a promise is
-  deliberately broken: output is collected per task and printed when that task
-  ends, so the run says how wide it is and that the silence is expected.
-- What each task took, printed after the last section rather than beside the
-  task, because a line inside a fold is invisible to somebody who has expanded
-  nothing.
-
-Deliberately not here: `--emit-ci`, `--dry-run` output formats, a watch mode,
-coloured output, shell completion. Each is a real convenience and each is a
-place to hide a second list.
+- `xtask.yaml` and `--validate`, with errors that name the line.
+- The graph: `needs`, `then`, cycle detection, run-once, declared order, and
+  five exit codes.
+- Bodies: `run` as argv, `do` for a verb the project registers, `args`,
+  `argv-from`, `each`, `in`, `env`. Executables are resolved through `PATH`
+  and `PATHEXT`, and Windows batch shims are handled.
+- `env-required`, checked before a body runs.
+- Sets: lists and globs with exclusions, in a deterministic order. A set that
+  expands to nothing is an error.
+- Gate sets through `collects:`, `--list`, `--gate-members`, and folded log
+  sections on a host that supports them.
+- The built-in `remove` verb.
+- `--dry-run`, `--emit-schema`, `--why`, `--check-ci`, `--keep-going` and
+  `--parallel`.
+- Per-task timings, printed after the last section.
