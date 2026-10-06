@@ -278,6 +278,13 @@ final class SystemProcessStarter implements ProcessStarter {
           .transform(const Utf8Decoder(allowMalformed: true))
           .listen(err.write),
     ];
+    // Watched from the start, as `start` watches them. A stream that has
+    // already closed when the process is waited on never tells a later
+    // `asFuture` so, and the bounded wait below then sat out the whole grace
+    // after nearly every program — five seconds a capture.
+    final collecting = Future.wait([
+      for (final subscription in reading) subscription.asFuture<void>(),
+    ]);
 
     final int code;
     if (timeout == null) {
@@ -295,9 +302,7 @@ final class SystemProcessStarter implements ProcessStarter {
     // something — `sh -c 'daemon &'`, a build tool's daemon — hands it the
     // pipes, and they stay open for as long as it lives; waiting for them to
     // close would hang the run on a process that has already answered.
-    await Future.wait([
-      for (final subscription in reading) subscription.asFuture<void>(),
-    ]).timeout(grace, onTimeout: () => const <void>[]);
+    await collecting.timeout(grace, onTimeout: () => const <void>[]);
     for (final subscription in reading) {
       await subscription.cancel();
     }

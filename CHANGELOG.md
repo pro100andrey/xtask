@@ -27,8 +27,9 @@
 ### Fixed
 
 - `--check-ci` reads `defaults: run: working-directory:` on the job and the
-  workflow, and reports a `${{ … }}` working directory instead of reading it
-  as the root.
+  workflow. It reports a `${{ … }}` working directory instead of reading it
+  as the root, and a `${{ … }}` `continue-on-error:` instead of reading it as
+  false.
 - A blank name (`"  "`) is refused like an empty one.
 - The schema refuses what the parser refuses: `all:` with `each:`,
   `timeout:` or `interruptible: true` without `run:`, a blank entry in

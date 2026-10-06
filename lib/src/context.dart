@@ -102,9 +102,9 @@ final class VerbContext {
   /// `-j` a task's output is collected and printed whole when it ends, and on
   /// a folding host each task is a section, and a line on `stdout` lands
   /// outside both. The first project to migrate wrote this adapter itself;
-  /// the engine flushes it before each [log] line and each program the verb
+  /// the engine flushes it before each [log] line and each program [run]
   /// starts, so a partial line keeps its place, and when the verb returns,
-  /// so a last one is not lost.
+  /// so a last one is not lost. [capture] shows nothing and flushes nothing.
   final LogSink out;
 
   /// The member of `each:` this invocation is for, or null when there is none.
@@ -156,7 +156,9 @@ final class VerbContext {
   /// for it — so a verb that has to decide before it starts something asks
   /// the same question the start will, given the same directory. The first
   /// project to migrate wrote its own `PATH` walk for this, and a second one
-  /// is a second set of Windows rules to get wrong.
+  /// is a second set of Windows rules to get wrong. A [workingDirectory]
+  /// outside the repository is refused, as [run] refuses it, rather than
+  /// answered `null`.
   String? which(String name, {String? workingDirectory}) {
     final locate = this.locate;
     if (locate == null) {
@@ -183,7 +185,8 @@ final class VerbContext {
   /// one that outlives it is asked to stop, then made to, and answers 124 —
   /// `timeout(1)`'s number — with whatever it had written. A `do:` cannot
   /// carry a `timeout:`, and wrapping this call in `Future.timeout` would
-  /// leave the program running.
+  /// leave the program running. Like a task's `timeout:`, it does not reach
+  /// the program's own children.
   Future<Captured> capture(
     List<String> argv, {
     String? workingDirectory,

@@ -813,7 +813,9 @@ final class Executor {
           collect: (argv, {workingDirectory, timeout}) {
             final (:executable, :arguments, :directory, :runInShell) =
                 _prepareForVerb(body, argv, workingDirectory);
-            out.flush();
+            // No flush: a capture shows nothing, so there is no order to
+            // keep, and flushing split `out.write('git is: ')` from the
+            // version the verb was about to write after it.
             return starter.capture(
               executable,
               arguments,

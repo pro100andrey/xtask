@@ -685,6 +685,23 @@ jobs:
       expect(found.problems.single, isA<RunsAGateThatCannotFail>());
     });
 
+    test('or may not, which is not read as it cannot', () {
+      // An experimental matrix cell: true in some cells, false in others.
+      // Read as false, the job was credited with a gate it may not enforce.
+      workflow('ci.yml', r'''
+jobs:
+  a:
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - run: dart run :xtask ci-analyze
+''');
+      final found = check();
+      expect(found.invocations, isEmpty);
+      final problem = found.problems.single as RunsAGateThatCannotFail;
+      expect(problem.written, r'${{ matrix.experimental }}');
+      expect(problem.onTheJob, isTrue);
+    });
+
     test('and the job may be where that is written', () {
       workflow('ci.yml', '''
 jobs:

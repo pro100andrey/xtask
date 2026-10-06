@@ -406,12 +406,14 @@ person runs, and so in the job that runs that gate too.
 ```
 
 A step names a gate set and is still not counted as running it in two cases,
-both reported as findings. **Its result cannot fail the job**:
-`continue-on-error: true` on the step or on its job. **It reads another
-file**: a `working-directory:` — on the step, or as `defaults: run:` on its
-job or its workflow — that holds an `xtask.yaml` of its own runs that file's
-gate set of the same name. A directory without a file of its own still reaches
-this one, because the file is looked for upwards.
+both reported as findings. **Its result may not fail the job**:
+`continue-on-error:` on the step or on its job, `true` or an expression that
+may be. **It may read another file**: a `working-directory:` — on the step, or
+as `defaults: run:` on its job or its workflow — that holds an `xtask.yaml` of
+its own runs that file's gate set of the same name, and one that is an
+expression could be any directory. A directory without a file of its own still
+reaches this one, because the file is looked for upwards; for the root, write
+`.` rather than `${{ github.workspace }}`.
 
 The rule is blanket, and the exception is written where the exception is: on
 the step's own `run:` line, after the command.
@@ -439,13 +441,14 @@ since whether the condition holds is not something this file can say.
 a marker with nothing after it is what this becomes when it is reached for to
 make a red gate green.
 
-**And it only excuses a step that would otherwise be reported as a command**,
-which is the one thing it claims: that this step is not a gate. On a step that
-does reach xtask it is refused, whatever it says — one that runs a gate set,
-one that names a gate set under a mode, one that asks a question, one the
-command line itself turns away, one that names a gate set with a typo in it.
-Otherwise the marker is a way of making a job that runs nothing pass, which is
-the failure this whole mode exists to catch.
+**And it only excuses a step that is not this file's gate**, which is the one
+thing it claims: a step reported as a command, or one of the two cases above —
+another file's gate set, or a result that may not fail the job. On any other
+step that reaches xtask it is refused, whatever it says — one that runs a gate
+set here, one that names a gate set under a mode, one that asks a question, one
+the command line itself turns away, one that names a gate set with a typo in
+it. Otherwise the marker is a way of making a job that runs nothing pass,
+which is the failure this whole mode exists to catch.
 
 Every exemption is printed with its reason next to the jobs that passed, so a
 workflow that has quietly exempted its way to green says so in the same

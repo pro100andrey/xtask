@@ -2219,6 +2219,26 @@ void main() {
       );
     });
 
+    test('and not before a capture, which shows nothing', () async {
+      // Flushed there too, `git is: ` and the version written after it came
+      // out as two lines.
+      starter = FakeStarter({'git': 0})
+        ..prints['git'] = ('git version 2\n', '');
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: talk}\n',
+        'a',
+        verbs: {
+          'talk': (context) async {
+            context.out.write('git is: ');
+            final answered = await context.capture(['git', '--version']);
+            context.out.writeln(answered.stdout.trim());
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(logged, contains('git is: git version 2'));
+    });
+
     test('`which` is the lookup a start would make', () async {
       final found = <String?>[];
       await runFile(
@@ -2617,6 +2637,31 @@ void main() {
       expect(answered.stdout, 'hi\n');
       expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
     }, testOn: '!windows');
+
+    test(
+      '`capture` of a program that has ended does not wait out the grace',
+      () async {
+        // The grace bounds a wait for pipes a grandchild holds. Watching the
+        // pipes only after the exit meant missing that they had already closed,
+        // so nearly every capture waited the whole of it.
+        final starter = SystemProcessStarter(
+          grace: const Duration(seconds: 30),
+        );
+        final watch = Stopwatch()..start();
+        for (var i = 0; i < 5; i++) {
+          final answered = await starter.capture(
+            '/bin/sh',
+            ['-c', 'printf hi'],
+            workingDirectory: Directory.current.path,
+            environment: const {},
+            runInShell: false,
+          );
+          expect(answered.stdout, 'hi');
+        }
+        expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+      },
+      testOn: '!windows',
+    );
 
     test('`capture` stops a program that outlives its timeout', () async {
       final watch = Stopwatch()..start();

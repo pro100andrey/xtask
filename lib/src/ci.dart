@@ -40,6 +40,7 @@ final class CiStep {
     this.movedBy,
     this.cannotFail = false,
     this.jobCannotFail = false,
+    this.continueOnError = 'true',
   });
 
   /// The file it came from, relative to the repository root.
@@ -102,6 +103,11 @@ final class CiStep {
   /// Whether the key is on the JOB rather than on this step — which is where a
   /// reader has to go to remove it, and the only reason the two are separate.
   final bool jobCannotFail;
+
+  /// The `continue-on-error:` behind [cannotFail], as written: `true`, or a
+  /// `${{ … }}` expression, which may be true and so is not credited as
+  /// enforcing — the rule [readsAnotherFile] follows for a directory.
+  final String continueOnError;
 }
 
 /// What a person writes on a `run:` line that is not a gate set.
@@ -238,13 +244,21 @@ final class RunsSomewhereElse extends CiProblem {
 /// red stops nothing, so nothing is enforced — and it was being counted as the
 /// invocation that enforces it.
 final class RunsAGateThatCannotFail extends CiProblem {
-  const RunsAGateThatCannotFail(super.step, this.gate, this.onTheJob);
+  const RunsAGateThatCannotFail(
+    super.step,
+    this.gate,
+    this.onTheJob,
+    this.written,
+  );
 
   final String gate;
 
   /// Whether the key is on the job rather than on the step, which is where a
   /// reader has to go to remove it.
   final bool onTheJob;
+
+  /// The value as written: `true`, or an expression that may be.
+  final String written;
 }
 
 final class RunsATaskNotAGate extends CiProblem {
@@ -389,7 +403,14 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
         problems.add(RunsSomewhereElse(step, gate, elsewhere));
       }
       if (step.cannotFail) {
-        problems.add(RunsAGateThatCannotFail(step, gate, step.jobCannotFail));
+        problems.add(
+          RunsAGateThatCannotFail(
+            step,
+            gate,
+            step.jobCannotFail,
+            step.continueOnError,
+          ),
+        );
       }
       if (reason != null) {
         problems.add(ExemptsNothing(step, gate));
@@ -642,7 +663,7 @@ _Reading _readStep(String command) {
   if (command.contains('\n')) {
     return _Script(command.split('\n').length);
   }
-  if (command.contains(r'${{')) {
+  if (isExpression(command)) {
     return const _Expression();
   }
   final words = command.split(RegExp(r'\s+'));
@@ -793,6 +814,8 @@ Iterable<CiStep> _steps(File workflow, String name, String root) sync* {
           : fromWorkflow != null
           ? "the workflow's `defaults: run:`"
           : null;
+      final onTheJob = _mayBeTrue(job.nodes['continue-on-error']);
+      final soft = onTheJob ?? _mayBeTrue(step.nodes['continue-on-error']);
       yield CiStep(
         name,
         '${entry.key}',
@@ -802,10 +825,9 @@ Iterable<CiStep> _steps(File workflow, String name, String root) sync* {
         readsAnotherFile: _anotherFile(root, where),
         movedBy: movedBy,
         // Either place says it: GitHub applies a job's to every step.
-        cannotFail:
-            _saysTrue(step.nodes['continue-on-error']) ||
-            _saysTrue(job.nodes['continue-on-error']),
-        jobCannotFail: _saysTrue(job.nodes['continue-on-error']),
+        cannotFail: soft != null,
+        jobCannotFail: onTheJob != null,
+        continueOnError: soft ?? 'true',
       );
     }
   }
@@ -836,7 +858,7 @@ String? _anotherFile(String root, YamlNode? where) {
   if (written.isEmpty || written == '.' || written == './') {
     return null;
   }
-  if (written.contains(r'${{')) {
+  if (isExpression(written)) {
     return written;
   }
   if (leavesRoot(written)) {
@@ -846,11 +868,23 @@ String? _anotherFile(String root, YamlNode? where) {
   return File(own).existsSync() ? written : null;
 }
 
-/// Whether [node] is the literal `true`.
+/// [node] as written when it is `true` or may be, and null when it is not.
 ///
-/// A `${{ … }}` expression is not read: it is not this checker's language, and
-/// guessing would be the reading the rest of this file refuses to do.
-bool _saysTrue(YamlNode? node) => node?.value == true;
+/// A `${{ … }}` expression is not read: it is not this checker's language.
+/// Reading it as false credited `continue-on-error: ${{ matrix.experimental }}`
+/// as enforcing — the guess, in the direction that passes, that the rest of
+/// this file refuses to make.
+String? _mayBeTrue(YamlNode? node) {
+  final value = node?.value;
+  if (value == true) {
+    return 'true';
+  }
+  return value is String && isExpression(value) ? value.trim() : null;
+}
+
+/// Whether [written] holds a `${{ … }}` expression, which this checker does
+/// not evaluate — in a `run:` line, a directory or a flag alike.
+bool isExpression(String written) => written.contains(r'${{');
 
 /// The key node and the value node of [key] in [map], or null.
 ///

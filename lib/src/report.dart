@@ -414,7 +414,7 @@ String _why(CiProblem problem) => switch (problem) {
         'runs nothing'
         '${declared.isEmpty ? '' : '. Declared: ${_names(declared)}'}',
   RunsSomewhereElse(:final step, :final gate, :final where) =>
-    where.contains(r'${{')
+    isExpression(where)
         ? 'runs `$gate` under `working-directory: $where`'
               '${_movedBy(step)}, an expression — so which `$xtaskFileName` '
               'it reads cannot be said here, and a value that names a '
@@ -427,11 +427,17 @@ String _why(CiProblem problem) => switch (problem) {
               "says nothing about this one. This file's gate set is left with "
               'no job running it: name it in a step at the root, or say why '
               'this one is not it',
-  RunsAGateThatCannotFail(:final gate, :final onTheJob) =>
-    'runs the gate set `$gate` with `continue-on-error: true` on '
-        '${onTheJob ? 'its job' : 'the step'}, so the gate can go red and stop '
-        'nothing. A gate nothing enforces is the green nobody checked, which '
-        'is the whole of what this mode is for',
+  RunsAGateThatCannotFail(:final gate, :final onTheJob, :final written) =>
+    isExpression(written)
+        ? 'runs the gate set `$gate` with `continue-on-error: $written` on '
+              '${onTheJob ? 'its job' : 'the step'}, an expression — so '
+              'whether a red gate stops anything cannot be said here, and '
+              'where it is true it stops nothing. Remove the key, or say why '
+              "this step is not this file's gate"
+        : 'runs the gate set `$gate` with `continue-on-error: true` on '
+              '${onTheJob ? 'its job' : 'the step'}, so the gate can go red '
+              'and stop nothing. A gate nothing enforces is the green nobody '
+              'checked, which is the whole of what this mode is for',
   RunsATaskNotAGate(:final task, :final declared) =>
     'runs the task `$task` rather than a gate set. The job does run it — and '
         'only it: the next task added to the gate this one is in is a task no '

@@ -1241,6 +1241,23 @@ jobs:
         },
       );
 
+      test(
+        'one that cannot be opened says why, not what an encoding would',
+        () async {
+          final file = File(p.join(root.path, 'xtask.schema.json'))
+            ..writeAsStringSync(xtaskJsonSchema());
+          Process.runSync('chmod', ['000', file.path]);
+          addTearDown(() => Process.runSync('chmod', ['644', file.path]));
+          expect(
+            await run(['--check-schema', 'xtask.schema.json']),
+            ExitCode.invalidFile,
+          );
+          expect(err.join('\n'), contains('cannot be read ('));
+          expect(err.join('\n'), isNot(contains('UTF')));
+        },
+        testOn: '!windows',
+      );
+
       test('and none at all is a 2 too, not a pass', () async {
         expect(
           await run(['--check-schema', 'xtask.schema.json']),

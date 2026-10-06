@@ -109,15 +109,19 @@ Future<int> runCli(
     try {
       text = committed.readAsStringSync();
     } on FileSystemException catch (e) {
-      // **A sentence and 2, not a trace and 255.** The likeliest cause is
-      // the regenerating command itself: PowerShell 5.1's `>` writes UTF-16,
-      // which no editor's schema loader reads either.
-      final why = e.osError?.message ?? e.message;
+      // **A sentence and 2, not a trace and 255.** A failure the operating
+      // system reports — permissions, a directory — is said as it is. One it
+      // does not is the decoding, and its likeliest cause is the regenerating
+      // command itself: PowerShell 5.1's `>` writes UTF-16, which no editor's
+      // schema loader reads either.
+      final os = e.osError;
       err(
-        'xtask: `$path` cannot be read as UTF-8 text ($why). Regenerate it '
-        "from a shell whose `>` writes UTF-8 — PowerShell 5.1's writes "
-        'UTF-16:\n'
-        '  xtask --emit-schema > $path',
+        os != null
+            ? 'xtask: `$path` cannot be read (${os.message})'
+            : 'xtask: `$path` cannot be read as UTF-8 text (${e.message}). '
+                  'Regenerate it from a shell whose `>` writes UTF-8 — '
+                  "PowerShell 5.1's writes UTF-16:\n"
+                  '  xtask --emit-schema > $path',
       );
       return ExitCode.invalidFile;
     }
