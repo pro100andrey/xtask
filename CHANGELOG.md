@@ -33,6 +33,11 @@ verb's job it had to rebuild beside `context.run`.
 
 ### Fixed
 
+- `--check-ci`: a `working-directory:` that is a `${{ … }}` expression — on
+  the step or from `defaults:` — is reported rather than read as the root, as
+  an expression in a `run:` line already was. Where the directory came from a
+  default, the finding says so.
+
 - A blank name — `"  ":` for a task, a set or an environment variable — is
   refused as an empty one. The schema already refused it; the parser
   accepted it.
@@ -58,7 +63,10 @@ verb's job it had to rebuild beside `context.run`.
   and answers with its exit code and both streams whole, with its input
   closed. A verb that needed a program's output used to reach for
   `Process.run` and lose all of that.
-- `context.which(name)`: the file a start would find, or `null`.
+- `context.which(name, {workingDirectory})`: the file a start given the same
+  directory would find, or `null`.
+- `context.capture(..., timeout:)`: a program that outlives it is stopped and
+  answers 124, with what it had written.
 - `context.out`: `log` as a `StringSink` (`LogSink`), flushed when the verb
   returns, for a library that writes to a sink.
 - `context.root`: the repository root, absolute. A set's members and every

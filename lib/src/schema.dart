@@ -33,6 +33,18 @@ import 'model.dart';
 String xtaskJsonSchema() =>
     '${const JsonEncoder.withIndent('  ').convert(_document)}\n';
 
+/// Whether [text] — a committed copy — is [xtaskJsonSchema].
+///
+/// **One comparison, for `--check-schema` and for this repository's own test
+/// alike.** Line endings and a trailing newline are not differences: a
+/// checkout with `autocrlf`, or a redirect that adds a newline of its own,
+/// holds the same schema, and a gate that went red over either would be
+/// re-run until somebody stopped reading it.
+bool isCurrentSchema(String text) =>
+    _normalised(text) == _normalised(xtaskJsonSchema());
+
+String _normalised(String text) => text.replaceAll('\r\n', '\n').trimRight();
+
 /// Draft 07, because it is what the editors that read this actually implement.
 const _draft = 'http://json-schema.org/draft-07/schema#';
 

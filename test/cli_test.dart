@@ -49,6 +49,7 @@ final class FakeStarter implements ProcessStarter {
     required String workingDirectory,
     required Map<String, String> environment,
     required bool runInShell,
+    Duration? timeout,
   }) async {
     started.add(Started(executable, arguments, workingDirectory));
     return (
@@ -360,6 +361,14 @@ void main() {
         isA<CheckSchema>().having((r) => r.path, 'path', 'xtask.schema.json'),
       );
       expect(parseArguments(['--check-schema']), isA<ShowUsage>());
+      expect(
+        parseArguments(['--check-schema=s.json']),
+        isA<CheckSchema>().having((r) => r.path, 'path', 's.json'),
+      );
+      expect(
+        (parseArguments(['--check-schema=']) as ShowUsage).problem,
+        contains('needs a name'),
+      );
       expect(parseArguments(['--check-schema', 'a', 'b']), isA<ShowUsage>());
     });
 
@@ -1212,6 +1221,23 @@ jobs:
             err.join('\n'),
             contains('xtask --emit-schema > xtask.schema.json'),
           );
+        },
+      );
+
+      test(
+        'one that is not UTF-8 is a 2 with a sentence, not a trace',
+        () async {
+          // What PowerShell 5.1's `>` writes: UTF-16LE with a byte-order mark.
+          File(p.join(root.path, 'xtask.schema.json')).writeAsBytesSync([
+            0xFF,
+            0xFE,
+            for (final unit in xtaskJsonSchema().codeUnits) ...[unit, 0],
+          ]);
+          expect(
+            await run(['--check-schema', 'xtask.schema.json']),
+            ExitCode.invalidFile,
+          );
+          expect(err.join('\n'), contains('cannot be read as UTF-8'));
         },
       );
 

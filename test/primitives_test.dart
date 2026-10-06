@@ -44,7 +44,6 @@ void main() {
       start: (_, {workingDirectory}) async =>
           throw StateError('`remove` starts nothing'),
     ),
-    root: root.path,
   );
 
   group('a link that leads outside the repository', () {
@@ -423,7 +422,7 @@ void main() {
       // Two lists of the same thing would be the defect this tool exists to
       // remove, and this is the pair most likely to drift: a primitive added to
       // the map and forgotten in the set is one `--validate` would then refuse.
-      expect(builtInVerbs(root: root.path).keys.toSet(), builtInVerbNames);
+      expect(builtInVerbs.keys.toSet(), builtInVerbNames);
     });
   });
 

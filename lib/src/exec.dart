@@ -768,9 +768,20 @@ final class Executor {
   }
 
   /// A verb, handed the context the engine owes it, with its [VerbContext.out]
-  /// flushed however it ends.
+  /// flushed however it ends — and before anything else reaches the log.
+  ///
+  /// **Before, as well as after.** A partial line held in `out` belongs ahead
+  /// of whatever is written next: a `log` line, or the output of a program
+  /// the verb starts. Flushed only at the end, `out.write('building… ')`
+  /// followed by `run(...)` printed the program's output first and the
+  /// sentence introducing it last.
   Future<int> _runVerb(ResolvedVerb body, Verb implementation, _Lines lines) {
     final out = LogSink(lines.call);
+    void log(String line) {
+      out.flush();
+      lines(line);
+    }
+
     // `Future.sync`, so a verb that throws before it returns a future is
     // flushed too.
     return Future.sync(
@@ -780,7 +791,7 @@ final class Executor {
           env: body.environment,
           root: bodies.root,
           workingDirectory: body.workingDirectory,
-          log: lines.call,
+          log: log,
           out: out,
           member: body.member,
           // The same resolution and the same starter a `run:` body gets, so
@@ -789,6 +800,7 @@ final class Executor {
           start: (argv, {workingDirectory}) {
             final (:executable, :arguments, :directory, :runInShell) =
                 _prepareForVerb(body, argv, workingDirectory);
+            out.flush();
             return starter.start(
               executable,
               arguments,
@@ -798,19 +810,26 @@ final class Executor {
               output: lines.live ? null : lines.call,
             );
           },
-          collect: (argv, {workingDirectory}) {
+          collect: (argv, {workingDirectory, timeout}) {
             final (:executable, :arguments, :directory, :runInShell) =
                 _prepareForVerb(body, argv, workingDirectory);
+            out.flush();
             return starter.capture(
               executable,
               arguments,
               workingDirectory: directory,
               environment: body.environment,
               runInShell: runInShell,
+              timeout: timeout,
             );
           },
-          locate: (name) =>
-              bodies.resolver.resolve(name, from: body.workingDirectory),
+          // From the directory a start given the same `workingDirectory:`
+          // would use, under the same rules — or the answer is about a
+          // different program than the one `run` would start.
+          locate: (name, {workingDirectory}) => bodies.resolver.resolve(
+            name,
+            from: _verbDirectory(body, workingDirectory),
+          ),
         ),
       ),
     ).whenComplete(out.flush);

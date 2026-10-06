@@ -77,11 +77,13 @@ final class VerbContext {
   /// The repository root, absolute: the directory holding `xtask.yaml`.
   ///
   /// **Not [workingDirectory]**, which is where the task runs — `in:` moves
-  /// that and leaves this alone. Every path the file writes is relative to
-  /// here: a set's member, an `in:`, a `remove` argument. A verb that joins a
-  /// member onto [workingDirectory] instead builds a path that is right only
-  /// for a task without `in:`, and the example taught exactly that until the
-  /// first project with a dozen such joins was read beside the code.
+  /// that and leaves this alone. A set's member and an `in:` are relative to
+  /// here; what a body is handed to act on where it runs — a `remove`
+  /// argument, a program written with a separator — is read from
+  /// [workingDirectory] instead. A verb that joins a member onto
+  /// [workingDirectory] builds a path that is right only for a task without
+  /// `in:`, and the example taught exactly that until the first project with
+  /// a dozen such joins was read beside the code.
   final String root;
 
   /// Where the task runs, absolute: [root], or the `in:` under it — under
@@ -100,8 +102,9 @@ final class VerbContext {
   /// `-j` a task's output is collected and printed whole when it ends, and on
   /// a folding host each task is a section, and a line on `stdout` lands
   /// outside both. The first project to migrate wrote this adapter itself;
-  /// the engine flushes it when the verb returns, so a last line without a
-  /// newline is not lost.
+  /// the engine flushes it before each [log] line and each program the verb
+  /// starts, so a partial line keeps its place, and when the verb returns,
+  /// so a last one is not lost.
   final LogSink out;
 
   /// The member of `each:` this invocation is for, or null when there is none.
@@ -118,12 +121,13 @@ final class VerbContext {
   start;
 
   /// How a program is found on this verb's behalf. Use [which].
-  final String? Function(String name)? locate;
+  final String? Function(String name, {String? workingDirectory})? locate;
 
   /// How a program is run to the end with its output kept. Use [capture].
   final Future<Captured> Function(
     List<String> argv, {
     String? workingDirectory,
+    Duration? timeout,
   })?
   collect;
 
@@ -148,11 +152,12 @@ final class VerbContext {
   /// The file [name] would start as, absolute, or `null` when nothing would.
   ///
   /// The lookup a `run:` body gets — `PATH`, `PATHEXT` on Windows, a name with
-  /// a separator taken as a path from this task's directory — so a verb that
-  /// has to decide before it starts something asks the same question the
-  /// start will. The first project to migrate wrote its own `PATH` walk for
-  /// this, and a second one is a second set of Windows rules to get wrong.
-  String? which(String name) {
+  /// a separator taken as a path from [workingDirectory], under [run]'s rules
+  /// for it — so a verb that has to decide before it starts something asks
+  /// the same question the start will, given the same directory. The first
+  /// project to migrate wrote its own `PATH` walk for this, and a second one
+  /// is a second set of Windows rules to get wrong.
+  String? which(String name, {String? workingDirectory}) {
     final locate = this.locate;
     if (locate == null) {
       throw StateError(
@@ -161,7 +166,7 @@ final class VerbContext {
         'to as well',
       );
     }
-    return locate(name);
+    return locate(name, workingDirectory: workingDirectory);
   }
 
   /// Runs [argv] to the end and answers with its exit code and its output,
@@ -173,7 +178,17 @@ final class VerbContext {
   /// same rules for [workingDirectory]. **Without this a verb that had to read
   /// what a program said reached for `Process.run`**, and lost every one of
   /// those. Nothing is shown while it runs, and its standard input is closed.
-  Future<Captured> capture(List<String> argv, {String? workingDirectory}) {
+  ///
+  /// [timeout] is the one thing a verb can say about a program it waits on:
+  /// one that outlives it is asked to stop, then made to, and answers 124 —
+  /// `timeout(1)`'s number — with whatever it had written. A `do:` cannot
+  /// carry a `timeout:`, and wrapping this call in `Future.timeout` would
+  /// leave the program running.
+  Future<Captured> capture(
+    List<String> argv, {
+    String? workingDirectory,
+    Duration? timeout,
+  }) {
     final collect = this.collect;
     if (collect == null) {
       throw StateError(
@@ -182,15 +197,20 @@ final class VerbContext {
         '`capture` has to as well',
       );
     }
-    return collect(argv, workingDirectory: workingDirectory);
+    return collect(
+      argv,
+      workingDirectory: workingDirectory,
+      timeout: timeout,
+    );
   }
 }
 
 /// A `StringSink` that hands each complete line to [log].
 ///
 /// What is written without a trailing newline is held until the next newline
-/// or [flush]. The engine flushes [VerbContext.out] when the verb returns; a
-/// sink made by hand is flushed by whoever made it.
+/// or [flush]. The engine flushes [VerbContext.out] before anything else
+/// reaches the log and when the verb returns; a sink made by hand is flushed
+/// by whoever made it.
 final class LogSink implements StringSink {
   LogSink(this.log);
 
@@ -275,12 +295,14 @@ abstract interface class ProcessStarter {
   ///
   /// The one way a body's output is kept rather than shown: only a verb asks
   /// for it, through [VerbContext.capture], and only because it has to read
-  /// what the program said.
+  /// what the program said. [timeout], where given, is enforced here, for
+  /// [start]'s reason: only whoever holds the process can stop it.
   Future<Captured> capture(
     String executable,
     List<String> arguments, {
     required String workingDirectory,
     required Map<String, String> environment,
     required bool runInShell,
+    Duration? timeout,
   });
 }

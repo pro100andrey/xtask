@@ -617,6 +617,28 @@ tasks:
       }
     });
 
+    test('and an expression is not read as moving nowhere', () {
+      // `${{ matrix.package }}` may name a directory with a file of its own in
+      // one cell and not in the next; counting it as the root's gate would be
+      // the guess this checker refuses to make about a `run:` line.
+      workflow('ci.yml', r'''
+jobs:
+  a:
+    defaults:
+      run:
+        working-directory: ${{matrix.package}}
+    steps:
+      - run: dart run :xtask ci-analyze
+''');
+      final found = check();
+      expect(found.invocations, isEmpty);
+      final problem = found.problems.single as RunsSomewhereElse;
+      expect(problem.where, startsWith(r'${{'));
+      final said = refusals(found).join('\n');
+      expect(said, contains('an expression'));
+      expect(said, contains("from its job's `defaults: run:`"));
+    });
+
     test("and the step's own key still wins over a default", () {
       File(p.join(root.path, 'packages', 'a', 'xtask.yaml'))
         ..parent.createSync(recursive: true)

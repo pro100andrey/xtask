@@ -37,6 +37,7 @@ final class CiStep {
     this.exemption,
     this.condition,
     this.readsAnotherFile,
+    this.movedBy,
     this.cannotFail = false,
     this.jobCannotFail = false,
   });
@@ -61,8 +62,16 @@ final class CiStep {
   /// it would be reading an expression language it does not have.
   final String? condition;
 
-  /// The step's `working-directory:` when a different `xtask.yaml` is there,
-  /// as written; null otherwise.
+  /// The step's `working-directory:` — its own, or the default its job or
+  /// workflow gives it — when a different `xtask.yaml` is there, or when it is
+  /// a `${{ … }}` expression and which file it reaches cannot be said; as
+  /// written, and null otherwise.
+  ///
+  /// **An expression is not read as "nowhere".** `working-directory:
+  /// ${{ matrix.package }}` moves each cell into a directory this checker
+  /// cannot name, and counting it as the root's gate would credit the root
+  /// with a run that may read a different file in every cell — the guess the
+  /// rest of this file refuses to make about a `run:` line.
   ///
   /// **`working-directory:` is the sanctioned prefix and stays one.** A step
   /// that moves into a directory with no file of its own still reaches this
@@ -76,6 +85,11 @@ final class CiStep {
   /// Decided where the root is known and carried as a fact, so that judging a
   /// step stays a question about the step.
   final String? readsAnotherFile;
+
+  /// Where [readsAnotherFile] came from when it is not the step's own key —
+  /// `its job's \`defaults: run:\`` or `the workflow's …` — so a reader looks
+  /// where it is written; null for the step's own.
+  final String? movedBy;
 
   /// Whether `continue-on-error:` on the step or its job means the result
   /// cannot fail the job.
@@ -768,10 +782,17 @@ Iterable<CiStep> _steps(File workflow, String name, String root) sync* {
       // GitHub's order: the step's own key, else the job's default, else the
       // workflow's. Reading only the step's let a job-level default move
       // every step into a package with its own file, unseen.
-      final where =
-          step.nodes['working-directory'] ??
-          _runDefault(job) ??
-          _runDefault(document);
+      final own = step.nodes['working-directory'];
+      final fromJob = own == null ? _runDefault(job) : null;
+      final fromWorkflow = own == null && fromJob == null
+          ? _runDefault(document)
+          : null;
+      final where = own ?? fromJob ?? fromWorkflow;
+      final movedBy = fromJob != null
+          ? "its job's `defaults: run:`"
+          : fromWorkflow != null
+          ? "the workflow's `defaults: run:`"
+          : null;
       yield CiStep(
         name,
         '${entry.key}',
@@ -779,6 +800,7 @@ Iterable<CiStep> _steps(File workflow, String name, String root) sync* {
         exemption: _exemptionOn(lines, run.key, run.value),
         condition: condition == null ? null : '${condition.value}',
         readsAnotherFile: _anotherFile(root, where),
+        movedBy: movedBy,
         // Either place says it: GitHub applies a job's to every step.
         cannotFail:
             _saysTrue(step.nodes['continue-on-error']) ||
@@ -799,7 +821,8 @@ YamlNode? _runDefault(YamlMap owner) {
   return run is YamlMap ? run.nodes['working-directory'] : null;
 }
 
-/// [where], when a `working-directory:` of that name holds its own task file.
+/// [where], when a `working-directory:` of that name holds its own task file,
+/// or when it is an expression and nothing here can say which file it holds.
 ///
 /// `.` and `./` are the root written out and move nothing. A directory that is
 /// not there, or one outside the repository, is not this checker's to refuse —
@@ -812,6 +835,9 @@ String? _anotherFile(String root, YamlNode? where) {
   final written = '${where.value}'.trim();
   if (written.isEmpty || written == '.' || written == './') {
     return null;
+  }
+  if (written.contains(r'${{')) {
+    return written;
   }
   if (leavesRoot(written)) {
     return null;

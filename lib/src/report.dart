@@ -326,6 +326,10 @@ List<String> workflow(CiReport report) {
   ];
 }
 
+/// `, from <where>` when a step's directory is not its own key.
+String _movedBy(CiStep step) =>
+    step.movedBy == null ? '' : ' (from ${step.movedBy})';
+
 /// The tasks no job reaches, grouped by the gate sets they are in.
 ///
 /// **Grouped, because the grouping is the signal.** A file with a people's
@@ -338,8 +342,13 @@ List<String> _unreached(
 ) {
   final bySets = <String, List<String>>{};
   for (final (:task, :gates) in unreached) {
+    // Sorted: `[a, b]` and `[b, a]` are one membership, and two groups for it
+    // would hide the one group worth reading among them.
     bySets
-        .putIfAbsent(gates.map((g) => '`$g`').join(', '), () => [])
+        .putIfAbsent(
+          ([...gates]..sort()).map((g) => '`$g`').join(', '),
+          () => [],
+        )
         .add('`$task`');
   }
   const heading =
@@ -404,12 +413,20 @@ String _why(CiProblem problem) => switch (problem) {
     'runs the gate set `$gate`, which this file does not declare — so the job '
         'runs nothing'
         '${declared.isEmpty ? '' : '. Declared: ${_names(declared)}'}',
-  RunsSomewhereElse(:final gate, :final where) =>
-    'runs `$gate` under `working-directory: $where`, which has an '
-        '`$xtaskFileName` of its own — so the invocation reads that file and '
-        "runs ITS `$gate`, and says nothing about this one. This file's gate "
-        'set is left with no job running it: name it in a step at the root, '
-        'or say why this one is not it',
+  RunsSomewhereElse(:final step, :final gate, :final where) =>
+    where.contains(r'${{')
+        ? 'runs `$gate` under `working-directory: $where`'
+              '${_movedBy(step)}, an expression — so which `$xtaskFileName` '
+              'it reads cannot be said here, and a value that names a '
+              "directory with a file of its own runs THAT file's `$gate`. "
+              'Name the directory, or say why this step is not this '
+              "file's gate"
+        : 'runs `$gate` under `working-directory: $where`'
+              '${_movedBy(step)}, which has an `$xtaskFileName` of its own — '
+              'so the invocation reads that file and runs ITS `$gate`, and '
+              "says nothing about this one. This file's gate set is left with "
+              'no job running it: name it in a step at the root, or say why '
+              'this one is not it',
   RunsAGateThatCannotFail(:final gate, :final onTheJob) =>
     'runs the gate set `$gate` with `continue-on-error: true` on '
         '${onTheJob ? 'its job' : 'the step'}, so the gate can go red and stop '

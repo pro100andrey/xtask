@@ -157,7 +157,12 @@ const modes = {
 /// The modes that want a name after them, and refuse an empty one.
 ///
 /// The rest take none, and the sentence for those is that they take none.
-const _modesTakingAName = {'--why', '--gate-members', '--dry-run'};
+const _modesTakingAName = {
+  '--why',
+  '--gate-members',
+  '--dry-run',
+  '--check-schema',
+};
 
 /// How wide `-j auto` may go, whatever the machine is.
 ///

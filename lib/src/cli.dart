@@ -96,11 +96,8 @@ Future<int> runCli(
 
   if (request is CheckSchema) {
     // Also before the file: it is a question about the engine and one file.
-    // Line endings and a trailing newline are not differences — a checkout
-    // with `autocrlf`, or a redirect that adds one, has the same schema.
     final path = request.path;
     final committed = File(p.join(workingDirectory, path));
-    String normalised(String text) => text.replaceAll('\r\n', '\n').trimRight();
     if (!committed.existsSync()) {
       err(
         'xtask: there is no `$path` to compare. Write one with:\n'
@@ -108,8 +105,23 @@ Future<int> runCli(
       );
       return ExitCode.invalidFile;
     }
-    if (normalised(committed.readAsStringSync()) !=
-        normalised(xtaskJsonSchema())) {
+    final String text;
+    try {
+      text = committed.readAsStringSync();
+    } on FileSystemException catch (e) {
+      // **A sentence and 2, not a trace and 255.** The likeliest cause is
+      // the regenerating command itself: PowerShell 5.1's `>` writes UTF-16,
+      // which no editor's schema loader reads either.
+      final why = e.osError?.message ?? e.message;
+      err(
+        'xtask: `$path` cannot be read as UTF-8 text ($why). Regenerate it '
+        "from a shell whose `>` writes UTF-8 — PowerShell 5.1's writes "
+        'UTF-16:\n'
+        '  xtask --emit-schema > $path',
+      );
+      return ExitCode.invalidFile;
+    }
+    if (!isCurrentSchema(text)) {
       err(
         'xtask: `$path` is not the schema this engine ($packageVersion) '
         'emits, so an editor reading it completes keys and refusals that '
@@ -170,7 +182,7 @@ Future<int> runCli(
     return ExitCode.invalidFile;
   }
 
-  final known = {...builtInVerbs(root: root), ...verbs};
+  final known = {...builtInVerbs, ...verbs};
 
   /// What a task comes to on this machine, for the one task the command line
   /// named.

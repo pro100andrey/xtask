@@ -154,6 +154,7 @@ final class FakeStarter implements ProcessStarter {
     required String workingDirectory,
     required Map<String, String> environment,
     required bool runInShell,
+    Duration? timeout,
   }) async {
     final name = p.basename(executable);
     captured.add(
@@ -250,7 +251,7 @@ void main() {
               r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
               '\n',
           'clean',
-          verbs: builtInVerbs(root: root.path),
+          verbs: builtInVerbs,
         );
         expect(code, ExitCode.invalidFile);
         expect(logged.join('\n'), contains('list of literal patterns'));
@@ -2168,6 +2169,56 @@ void main() {
       expect(starter.captured, isEmpty);
     });
 
+    test('`which` asks from the directory a start would use', () async {
+      // `run`/`capture` read a relative program from the `workingDirectory:`
+      // they are given; `which` read it from the task's own directory
+      // whatever it was given, so the two could name different files.
+      final found = <String?>[];
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: look}\n',
+        'a',
+        resolver: ExecutableResolver(
+          environment: const {'PATH': '/nowhere'},
+          windows: false,
+          isRunnable: (path) => path == p.join(root.path, 'pkg', 'tool', 'gen'),
+        ),
+        verbs: {
+          'look': (context) async {
+            found
+              ..add(context.which('./tool/gen'))
+              ..add(context.which('./tool/gen', workingDirectory: 'pkg'));
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(found, [null, p.join(root.path, 'pkg', 'tool', 'gen')]);
+    });
+
+    test('`out` is flushed before the next log line or program', () async {
+      // Flushed only when the verb returned, a partial line printed after
+      // everything that followed it — the program's output included.
+      var flushedBeforeTheProgram = false;
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: talk}\n',
+        'a',
+        verbs: {
+          'talk': (context) async {
+            context.out.write('building ');
+            await context.run(['ruff']);
+            flushedBeforeTheProgram = logged.contains('building ');
+            context.out.write('checking ');
+            context.log('done');
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(flushedBeforeTheProgram, isTrue);
+      expect(
+        logged.indexOf('checking '),
+        lessThan(logged.indexOf('done')),
+      );
+    });
+
     test('`which` is the lookup a start would make', () async {
       final found = <String?>[];
       await runFile(
@@ -2547,6 +2598,44 @@ void main() {
   });
 
   group('the real starter, against a real process', () {
+    test('`capture` does not wait on a grandchild holding its pipes', () async {
+      // `sh -c 'sleep 30 & echo hi'` answers at once and leaves `sleep`
+      // holding stdout and stderr. Waiting for them to close hung the run for
+      // as long as the background process lived.
+      final watch = Stopwatch()..start();
+      final answered =
+          await SystemProcessStarter(
+            grace: const Duration(milliseconds: 200),
+          ).capture(
+            '/bin/sh',
+            ['-c', 'sleep 30 & echo hi'],
+            workingDirectory: Directory.current.path,
+            environment: const {},
+            runInShell: false,
+          );
+      expect(answered.exitCode, 0);
+      expect(answered.stdout, 'hi\n');
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+    }, testOn: '!windows');
+
+    test('`capture` stops a program that outlives its timeout', () async {
+      final watch = Stopwatch()..start();
+      final answered =
+          await SystemProcessStarter(
+            grace: const Duration(milliseconds: 200),
+          ).capture(
+            '/bin/sh',
+            ['-c', 'printf started; sleep 30'],
+            workingDirectory: Directory.current.path,
+            environment: const {},
+            runInShell: false,
+            timeout: const Duration(milliseconds: 300),
+          );
+      expect(answered.exitCode, SystemProcessStarter.timedOut);
+      expect(answered.stdout, 'started', reason: 'what it wrote is kept');
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+    }, testOn: '!windows');
+
     test('`capture` keeps each stream apart, and closes the input', () async {
       // `cat` reads its input to the end, so a capture that left it open
       // would wait here for the suite's own timeout.

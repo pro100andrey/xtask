@@ -136,20 +136,23 @@ Future<int> regen(VerbContext context) async {
   //                   the same start, run to the end with its output kept:
   //                   `(exitCode:, stdout:, stderr:)`, each stream whole.
   //                   For a verb that has to read what a program said —
-  //                   not `Process.run`, which loses everything above
+  //                   not `Process.run`, which loses everything above.
+  //                   `timeout:` stops one that outlives it, with 124
   // context.which('code')
   //                   the file a start would find, or null — to decide
-  //                   before starting anything
+  //                   before starting anything. Takes the same
+  //                   `workingDirectory:` `run` would be given
   // context.out      `log` as a StringSink, for a library that writes to
   //                  one; a last line without a newline is flushed for you
   // context.args     `args:` with `$all` expanded, then anything
   //                  the command line passed after `--`
   // context.env      this machine's environment, with `env:` winning a clash
-  // context.root     the repository root, absolute — what a set's members,
-  //                  `in:` and every other path in the file are relative to
+  // context.root     the repository root, absolute — what a set's members
+  //                  and `in:` are relative to
   // context.workingDirectory
-  //                  where the task runs: the root, or its `in:` under it.
-  //                  Join a set's member onto `root`, never onto this
+  //                  where the task runs: the root, or its `in:` under it —
+  //                  what a `remove` argument is read from. Join a set's
+  //                  member onto `root`, never onto this
   return 0;
 }
 ```
@@ -662,12 +665,17 @@ string, and the file does not compute.
 
 ### What else is refused
 
-Beyond each key's own shape, `--validate` and every run refuse a task that
-contradicts itself or does nothing: `all:` with `each:`; `timeout:` or
-`interruptible: true` without a `run:` body; `serial:` without `each:`, which
-leaves nothing to keep in order; an `exclusive:` token that one task without
-an `each:` holds and no other asks for, which keeps nothing apart; and a task
-with no body, no `needs:` and no `then:`, which does nothing when run.
+Beyond each key's own shape, two kinds of task are refused whenever the file
+is read — by every command, a run included — because the task contradicts
+itself: `all:` with `each:`, and `timeout:` or `interruptible: true` without a
+`run:` body.
+
+Three more are `--validate`'s, since they are about the file as a whole rather
+than one task's keys, and a run does not stop for them: `serial:` without
+`each:`, which leaves nothing to keep in order; an `exclusive:` token that one
+task without an `each:` holds and no other asks for, which keeps nothing apart;
+and a task with no body, no `needs:` and no `then:`, which does nothing when
+run. Put `--validate` in the gate a person runs to have them caught.
 
 ### A fuller example
 

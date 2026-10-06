@@ -110,9 +110,9 @@ void main() {
     // nothing compares them. A task cannot write the file, because `>` is
     // shell and a task's description has none — so writing stays a person's
     // deliberate act and checking is the gate's, which is the right way round.
-    // Here the check is this test, calling the function directly; a project
-    // that cannot reach the function runs `--check-schema`, which compares the
-    // same way.
+    // Here the check is this test; a project that cannot reach the function
+    // runs `--check-schema`, and both ask `isCurrentSchema`, so they cannot
+    // come to disagree about what "current" means.
     late File schema;
 
     setUpAll(() => schema = File(p.join(root, 'xtask.schema.json')));
@@ -129,8 +129,8 @@ void main() {
 
     test('and it has not fallen behind the model it describes', () {
       expect(
-        schema.readAsStringSync(),
-        xtaskJsonSchema(),
+        isCurrentSchema(schema.readAsStringSync()),
+        isTrue,
         reason:
             'the schema is out of date. Regenerate it:\n'
             '  dart run :xtask --emit-schema > xtask.schema.json',

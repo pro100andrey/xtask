@@ -222,14 +222,7 @@ final class SystemProcessStarter implements ProcessStarter {
     }
     final stoppedEarly = outcome.stopped;
 
-    process.kill();
-    final stopped = await process.exitCode
-        .then<int?>((code) => code)
-        .timeout(grace, onTimeout: () => null);
-    if (stopped == null) {
-      process.kill(ProcessSignal.sigkill);
-      await process.exitCode;
-    }
+    await _stop(process);
     // Bounded, because the pipes may outlive the process: collecting ends when
     // stdout and stderr close, and a grandchild that inherited them keeps them
     // open. The same grace as the kill — a moment for what was already
@@ -239,9 +232,18 @@ final class SystemProcessStarter implements ProcessStarter {
     return stoppedEarly ? interrupted : timedOut;
   }
 
-  /// What a killed process answers with — `timeout(1)`'s number, so a shell
-  /// wrapping xtask need not learn a new one. The engine still answers 1: a
-  /// task that hung is a task that failed.
+  /// Asks [process] to stop, and makes it after [grace].
+  Future<void> _stop(Process process) async {
+    process.kill();
+    final stopped = await process.exitCode
+        .then<int?>((code) => code)
+        .timeout(grace, onTimeout: () => null);
+    if (stopped == null) {
+      process.kill(ProcessSignal.sigkill);
+      await process.exitCode;
+    }
+  }
+
   @override
   Future<Captured> capture(
     String executable,
@@ -249,6 +251,7 @@ final class SystemProcessStarter implements ProcessStarter {
     required String workingDirectory,
     required Map<String, String> environment,
     required bool runInShell,
+    Duration? timeout,
   }) async {
     final process = await Process.start(
       executable,
@@ -259,24 +262,51 @@ final class SystemProcessStarter implements ProcessStarter {
     );
     // Closed at once: a program that reads its input when it is not a
     // terminal would otherwise wait for a line that never comes, and a verb
-    // capturing it has no way to type one.
-    unawaited(process.stdin.close());
+    // capturing it has no way to type one. A close that fails because the
+    // child has already gone is not a failure of this run — unhandled, it
+    // would end the isolate at 255, which is why `start` swallows it too.
+    unawaited(process.stdin.close().catchError((Object _) {}));
     // Decoded leniently, for the reason the streaming path gives: one byte
     // that is not UTF-8 must not turn a program's answer into an exception.
-    final stdoutText = process.stdout
-        .transform(const Utf8Decoder(allowMalformed: true))
-        .join();
-    final stderrText = process.stderr
-        .transform(const Utf8Decoder(allowMalformed: true))
-        .join();
-    final exitCode = await process.exitCode;
-    return (
-      exitCode: exitCode,
-      stdout: await stdoutText,
-      stderr: await stderrText,
-    );
+    final out = StringBuffer();
+    final err = StringBuffer();
+    final reading = [
+      process.stdout
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .listen(out.write),
+      process.stderr
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .listen(err.write),
+    ];
+
+    final int code;
+    if (timeout == null) {
+      code = await process.exitCode;
+    } else {
+      final finished = await process.exitCode
+          .then<int?>((code) => code)
+          .timeout(timeout, onTimeout: () => null);
+      if (finished == null) {
+        await _stop(process);
+      }
+      code = finished ?? timedOut;
+    }
+    // **Bounded, as `start` bounds it.** A captured program that backgrounds
+    // something — `sh -c 'daemon &'`, a build tool's daemon — hands it the
+    // pipes, and they stay open for as long as it lives; waiting for them to
+    // close would hang the run on a process that has already answered.
+    await Future.wait([
+      for (final subscription in reading) subscription.asFuture<void>(),
+    ]).timeout(grace, onTimeout: () => const <void>[]);
+    for (final subscription in reading) {
+      await subscription.cancel();
+    }
+    return (exitCode: code, stdout: '$out', stderr: '$err');
   }
 
+  /// What a killed process answers with — `timeout(1)`'s number, so a shell
+  /// wrapping xtask need not learn a new one. The engine still answers 1: a
+  /// task that hung is a task that failed.
   static const timedOut = 124;
 
   /// What a process stopped because the run gave up answers with — a shell's
