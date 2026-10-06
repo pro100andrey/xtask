@@ -319,6 +319,46 @@ List<String> workflow(CiReport report) {
     // should say so in the same breath as it passes.
     for (final step in report.exempted) _exempted(step),
     if (report.ok && report.unrun.isNotEmpty) ...['', nobody],
+    if (report.ok && report.unreached.isNotEmpty) ...[
+      '',
+      ..._unreached(report.unreached),
+    ],
+  ];
+}
+
+/// `, from <where>` when a step's directory is not its own key.
+String _movedBy(CiStep step) =>
+    step.movedBy == null ? '' : ' (from ${step.movedBy})';
+
+/// The tasks no job reaches, grouped by the gate sets they are in.
+///
+/// **Grouped, because the grouping is the signal.** A file with a people's
+/// gate set beside the jobs' has whole families no job is meant to reach —
+/// an editor extension's checks, say — and those come back every run. The
+/// task somebody forgot to give a job's label arrives as a group of its own,
+/// in the people's set alone, which is the line worth reading.
+List<String> _unreached(
+  List<({String task, List<String> gates})> unreached,
+) {
+  final bySets = <String, List<String>>{};
+  for (final (:task, :gates) in unreached) {
+    // Sorted: `[a, b]` and `[b, a]` are one membership, and two groups for it
+    // would hide the one group worth reading among them.
+    bySets
+        .putIfAbsent(
+          ([...gates]..sort()).map((g) => '`$g`').join(', '),
+          () => [],
+        )
+        .add('`$task`');
+  }
+  const heading =
+      'no job reaches these tasks, though each is in a gate set — right if '
+      "somebody runs those by hand, wrong if a task was given a person's "
+      "gate set and not a job's:";
+  return [
+    heading,
+    for (final MapEntry(key: sets, value: tasks) in bySets.entries)
+      '  ${tasks.join(', ')} — in $sets',
   ];
 }
 
@@ -373,17 +413,31 @@ String _why(CiProblem problem) => switch (problem) {
     'runs the gate set `$gate`, which this file does not declare — so the job '
         'runs nothing'
         '${declared.isEmpty ? '' : '. Declared: ${_names(declared)}'}',
-  RunsSomewhereElse(:final gate, :final where) =>
-    'runs `$gate` under `working-directory: $where`, which has an '
-        '`$xtaskFileName` of its own — so the invocation reads that file and '
-        "runs ITS `$gate`, and says nothing about this one. This file's gate "
-        'set is left with no job running it: name it in a step at the root, '
-        'or say why this one is not it',
-  RunsAGateThatCannotFail(:final gate, :final onTheJob) =>
-    'runs the gate set `$gate` with `continue-on-error: true` on '
-        '${onTheJob ? 'its job' : 'the step'}, so the gate can go red and stop '
-        'nothing. A gate nothing enforces is the green nobody checked, which '
-        'is the whole of what this mode is for',
+  RunsSomewhereElse(:final step, :final gate, :final where) =>
+    isExpression(where)
+        ? 'runs `$gate` under `working-directory: $where`'
+              '${_movedBy(step)}, an expression — so which `$xtaskFileName` '
+              'it reads cannot be said here, and a value that names a '
+              "directory with a file of its own runs THAT file's `$gate`. "
+              'Name the directory, or say why this step is not this '
+              "file's gate"
+        : 'runs `$gate` under `working-directory: $where`'
+              '${_movedBy(step)}, which has an `$xtaskFileName` of its own — '
+              'so the invocation reads that file and runs ITS `$gate`, and '
+              "says nothing about this one. This file's gate set is left with "
+              'no job running it: name it in a step at the root, or say why '
+              'this one is not it',
+  RunsAGateThatCannotFail(:final gate, :final onTheJob, :final written) =>
+    isExpression(written)
+        ? 'runs the gate set `$gate` with `continue-on-error: $written` on '
+              '${onTheJob ? 'its job' : 'the step'}, an expression — so '
+              'whether a red gate stops anything cannot be said here, and '
+              'where it is true it stops nothing. Remove the key, or say why '
+              "this step is not this file's gate"
+        : 'runs the gate set `$gate` with `continue-on-error: true` on '
+              '${onTheJob ? 'its job' : 'the step'}, so the gate can go red '
+              'and stop nothing. A gate nothing enforces is the green nobody '
+              'checked, which is the whole of what this mode is for',
   RunsATaskNotAGate(:final task, :final declared) =>
     'runs the task `$task` rather than a gate set. The job does run it — and '
         'only it: the next task added to the gate this one is in is a task no '

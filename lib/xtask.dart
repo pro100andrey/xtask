@@ -17,14 +17,14 @@ import 'src/process.dart';
 // Re-exported rather than restated. A second declaration of `Verb` or of what
 // a verb is handed would be two lists of the same thing, which is the defect
 // this package exists to remove.
-export 'src/context.dart' show Verb, VerbContext;
+export 'src/context.dart' show Captured, LogSink, Verb, VerbContext;
 
 // A verb answers with a number, and the README tells its author to write that
 // number against the table this class is. Not exporting it meant telling them
 // to write `return 0;` — the very thing `boundaries_test.dart` refuses inside
 // this package, for the reason that applies just as well outside it: the
 // constant carries why the code is that code, and the digit does not.
-export 'src/exit_codes.dart' show ExitCode;
+export 'src/exit_codes.dart' show ExitCode, continuationNotice;
 
 /// Runs `xtask` with the verbs this project supplies, and answers with the
 /// process exit code — the README's exit code table says what each means.

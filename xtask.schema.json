@@ -107,13 +107,57 @@
         "required": [
           "desc"
         ],
-        "not": {
-          "required": [
-            "run",
-            "do"
-          ],
-          "$comment": "a task has one body or none, never two"
-        },
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "run",
+                "do"
+              ]
+            },
+            "$comment": "a task has one body or none, never two"
+          },
+          {
+            "not": {
+              "required": [
+                "all",
+                "each"
+              ]
+            },
+            "$comment": "`each:` runs the body once per member and `all:` once for all of them; a task is one or the other"
+          },
+          {
+            "if": {
+              "not": {
+                "required": [
+                  "run"
+                ]
+              }
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "timeout"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "interruptible"
+                    ],
+                    "properties": {
+                      "interruptible": {
+                        "const": true
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "$comment": "`timeout:` and `interruptible: true` need a `run:` body to act on"
+          }
+        ],
         "properties": {
           "desc": {
             "type": "string",
@@ -139,6 +183,7 @@
           "do": {
             "type": "string",
             "minLength": 1,
+            "pattern": "\\S",
             "description": "A verb: `remove`, or one this project registered in its own `bin/xtask.dart`. The engine ships no project verbs."
           },
           "args": {
@@ -188,21 +233,27 @@
           "needs": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
             },
             "description": "Direct requirements, run before this task. Each runs once per invocation however many tasks need it."
           },
           "then": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
             },
             "description": "Continuations, run after this task's body rather than before it. A body that succeeded and a continuation that failed is its own outcome, with its own exit code."
           },
           "gate": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
             },
             "description": "The gate sets this task belongs to. A gate set is named after who runs it: one person's command, or one CI job's."
           },
@@ -217,7 +268,9 @@
           "exclusive": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
             },
             "description": "Tokens this task holds alone while it runs. Two tasks the graph calls independent may still share a port or a browser; naming what they share is what keeps them apart."
           },

@@ -33,6 +33,18 @@ import 'model.dart';
 String xtaskJsonSchema() =>
     '${const JsonEncoder.withIndent('  ').convert(_document)}\n';
 
+/// Whether [text] — a committed copy — is [xtaskJsonSchema].
+///
+/// **One comparison, for `--check-schema` and for this repository's own test
+/// alike.** Line endings and a trailing newline are not differences: a
+/// checkout with `autocrlf`, or a redirect that adds a newline of its own,
+/// holds the same schema, and a gate that went red over either would be
+/// re-run until somebody stopped reading it.
+bool isCurrentSchema(String text) =>
+    _normalised(text) == _normalised(xtaskJsonSchema());
+
+String _normalised(String text) => text.replaceAll('\r\n', '\n').trimRight();
+
 /// Draft 07, because it is what the editors that read this actually implement.
 const _draft = 'http://json-schema.org/draft-07/schema#';
 
@@ -197,18 +209,62 @@ Map<String, Object?> get _task => {
   'type': 'object',
   'additionalProperties': false,
   'required': ['desc'],
-  // Both body keys present is refused by the parser, so the schema refuses it
-  // too — spelled from [bodyKeys] rather than from a repetition of them.
-  'not': {
-    'required': bodyKeys.toList(),
-    r'$comment': 'a task has one body or none, never two',
-  },
+  // The refusals that read one key against another, as the parser makes them
+  // — spelled from [bodyKeys] rather than from a repetition of them.
+  'allOf': [
+    {
+      'not': {'required': bodyKeys.toList()},
+      r'$comment': 'a task has one body or none, never two',
+    },
+    {
+      'not': {
+        'required': ['all', 'each'],
+      },
+      r'$comment':
+          '`each:` runs the body once per member and `all:` once for all of '
+          'them; a task is one or the other',
+    },
+    {
+      // Only a process can be stopped from outside or given a deadline: a
+      // verb is a Dart function, and no body leaves nothing to stop.
+      'if': {
+        'not': {
+          'required': ['run'],
+        },
+      },
+      'then': {
+        'not': {
+          'anyOf': [
+            {
+              'required': ['timeout'],
+            },
+            {
+              'required': ['interruptible'],
+              'properties': {
+                'interruptible': {'const': true},
+              },
+            },
+          ],
+        },
+      },
+      r'$comment':
+          '`timeout:` and `interruptible: true` need a `run:` body to act on',
+    },
+  ],
   'properties': checkedProperties(taskKeys, _taskKeys, 'task key'),
 };
 
 const _strings = <String, Object?>{
   'type': 'array',
   'items': {'type': 'string'},
+};
+
+/// A list of names another key resolves — `needs:`, `then:`, `gate:`,
+/// `exclusive:` — none of which may be blank. The parser refuses a blank
+/// entry in each, and the schema offered one as a plain string.
+const _nameList = <String, Object?>{
+  'type': 'array',
+  'items': {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
 };
 
 // **Alphabetical, and that is not cosmetic.** This table must not be what
@@ -240,6 +296,8 @@ const _taskKeys = <String, Map<String, Object?>>{
   'do': {
     'type': 'string',
     'minLength': 1,
+    // Not blank: `do: '  '` names no verb, and the parser says so.
+    'pattern': r'\S',
     'description':
         'A verb: `remove`, or one this project registered in its own '
         '`bin/xtask.dart`. The engine ships no project verbs.',
@@ -269,14 +327,14 @@ const _taskKeys = <String, Map<String, Object?>>{
         'the engine installs nothing, it only says which one is missing.',
   },
   'exclusive': {
-    ..._strings,
+    ..._nameList,
     'description':
         'Tokens this task holds alone while it runs. Two tasks the graph '
         'calls independent may still share a port or a browser; naming what '
         'they share is what keeps them apart.',
   },
   'gate': {
-    ..._strings,
+    ..._nameList,
     'description':
         'The gate sets this task belongs to. A gate set is named after who '
         "runs it: one person's command, or one CI job's.",
@@ -302,7 +360,7 @@ const _taskKeys = <String, Map<String, Object?>>{
         'outside is not something Dart can do.',
   },
   'needs': {
-    ..._strings,
+    ..._nameList,
     'description':
         'Direct requirements, run before this task. Each runs once per '
         'invocation however many tasks need it.',
@@ -335,7 +393,7 @@ const _taskKeys = <String, Map<String, Object?>>{
         'is in the file and the number is not.',
   },
   'then': {
-    ..._strings,
+    ..._nameList,
     'description':
         "Continuations, run after this task's body rather than before it. A "
         'body that succeeded and a continuation that failed is its own '

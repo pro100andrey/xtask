@@ -517,7 +517,9 @@ String _name(YamlNode key, String what) {
   if (value is! String) {
     throw XtaskFormatException('$what must be a string', key.span);
   }
-  if (value.isEmpty) {
+  // Blank counts as empty, as the schema has always said: `"  ":` is a task
+  // `--list` prints as nothing and no `needs:` can write.
+  if (value.trim().isEmpty) {
     throw XtaskFormatException(
       'the file has $what that is empty. A name is what a report prints and '
       'what something else writes to reach it, and neither works with nothing '

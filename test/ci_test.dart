@@ -547,6 +547,32 @@ jobs:
       ]);
     });
   });
+  group('a task no job reaches is named, though nothing refuses it', () {
+    // The case `unrun` cannot show: `check` is always on it, so a task added
+    // to `check` without a job's gate set is on no list and CI never runs it.
+    const split = '''
+version: 1
+gates: [check, ci]
+tasks:
+  lint: {desc: a, gate: [check, ci], needs: [codegen], run: [lint]}
+  codegen: {desc: b, gate: [check], run: [gen]}
+  forgotten: {desc: c, gate: [check], run: [new]}
+  helper: {desc: d, run: [h]}
+''';
+
+    test('reached through a run, or through its `needs:`, is not', () {
+      steps('      - run: dart run :xtask ci\n');
+      final found = check(split);
+      expect(found.ok, isTrue);
+      expect(
+        [for (final (:task, :gates) in found.unreached) '$task in $gates'],
+        ['forgotten in [check]'],
+        reason: '`codegen` is needed by `lint`; `helper` is in no gate set',
+      );
+      expect(found.unrun, ['check']);
+    });
+  });
+
   group('a step that names the gate and does not enforce it', () {
     // **Three ways a job looked like the one running a gate set and was
     // not**, all of them green before: the mode written to stop a silent
@@ -565,6 +591,71 @@ jobs:
       final found = check();
       expect(found.invocations, isEmpty);
       expect(found.problems.single, isA<RunsSomewhereElse>());
+    });
+
+    test('and a default the job or the workflow sets moves it too', () {
+      // GitHub applies `defaults: run: working-directory:` to every `run:`
+      // step without its own key. Read from the step alone, a job-level
+      // default carried every step into a package with its own file unseen.
+      File(p.join(root.path, 'packages', 'a', 'xtask.yaml'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync(
+          'version: 1\ngates: [ci-analyze]\n'
+          'tasks:\n  x: {desc: x, gate: [ci-analyze], run: [dart]}\n',
+        );
+      const onTheJob =
+          'jobs:\n  a:\n    defaults:\n      run:\n'
+          '        working-directory: packages/a\n    steps:\n';
+      const onTheWorkflow =
+          'defaults:\n  run:\n    working-directory: packages/a\n'
+          'jobs:\n  a:\n    steps:\n';
+      for (final placed in [onTheJob, onTheWorkflow]) {
+        workflow('ci.yml', '$placed      - run: dart run :xtask ci-analyze\n');
+        final found = check();
+        expect(found.invocations, isEmpty, reason: placed);
+        expect(found.problems.single, isA<RunsSomewhereElse>(), reason: placed);
+      }
+    });
+
+    test('and an expression is not read as moving nowhere', () {
+      // `${{ matrix.package }}` may name a directory with a file of its own in
+      // one cell and not in the next; counting it as the root's gate would be
+      // the guess this checker refuses to make about a `run:` line.
+      workflow('ci.yml', r'''
+jobs:
+  a:
+    defaults:
+      run:
+        working-directory: ${{matrix.package}}
+    steps:
+      - run: dart run :xtask ci-analyze
+''');
+      final found = check();
+      expect(found.invocations, isEmpty);
+      final problem = found.problems.single as RunsSomewhereElse;
+      expect(problem.where, startsWith(r'${{'));
+      final said = refusals(found).join('\n');
+      expect(said, contains('an expression'));
+      expect(said, contains("from its job's `defaults: run:`"));
+    });
+
+    test("and the step's own key still wins over a default", () {
+      File(p.join(root.path, 'packages', 'a', 'xtask.yaml'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync(
+          'version: 1\ntasks:\n  x: {desc: x, run: [dart]}\n',
+        );
+      workflow('ci.yml', '''
+jobs:
+  a:
+    defaults:
+      run:
+        working-directory: packages/a
+    steps:
+      - run: dart run :xtask ci-analyze
+        working-directory: .
+''');
+      expect(check().invocations.single.gate, 'ci-analyze');
     });
 
     test(
@@ -592,6 +683,23 @@ jobs:
       final found = check();
       expect(found.invocations, isEmpty);
       expect(found.problems.single, isA<RunsAGateThatCannotFail>());
+    });
+
+    test('or may not, which is not read as it cannot', () {
+      // An experimental matrix cell: true in some cells, false in others.
+      // Read as false, the job was credited with a gate it may not enforce.
+      workflow('ci.yml', r'''
+jobs:
+  a:
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - run: dart run :xtask ci-analyze
+''');
+      final found = check();
+      expect(found.invocations, isEmpty);
+      final problem = found.problems.single as RunsAGateThatCannotFail;
+      expect(problem.written, r'${{ matrix.experimental }}');
+      expect(problem.onTheJob, isTrue);
     });
 
     test('and the job may be where that is written', () {

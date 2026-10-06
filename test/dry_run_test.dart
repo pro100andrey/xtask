@@ -270,7 +270,7 @@ void main() {
               r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
               '\n',
           'clean',
-          verbs: builtInVerbs(root: root.path),
+          verbs: builtInVerbs,
         ),
         completion(ExitCode.success),
       );
@@ -300,7 +300,7 @@ void main() {
               r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
               '\n',
           'clean',
-          verbs: builtInVerbs(root: root.path),
+          verbs: builtInVerbs,
         ),
         completion(ExitCode.success),
       );
@@ -319,7 +319,7 @@ void main() {
               '  clean: {desc: x, do: remove, args: [../outside]}\n'
               '  after: {desc: y, needs: [clean], run: [dart, test]}\n',
           'after',
-          verbs: builtInVerbs(root: root.path),
+          verbs: builtInVerbs,
         ),
         completion(ExitCode.invalidFile),
       );
@@ -351,7 +351,7 @@ void main() {
               '  a: {desc: x, run: [dart, test], then: [clean]}\n'
               '  clean: {desc: y, do: remove, args: [../outside]}\n',
           'a',
-          verbs: builtInVerbs(root: root.path),
+          verbs: builtInVerbs,
         ),
         completion(ExitCode.continuationFailed),
       );
@@ -363,7 +363,7 @@ void main() {
           'version: 1\ntasks:\n'
               "  clean: {desc: x, do: remove, args: ['a{b']}\n",
           'clean',
-          verbs: builtInVerbs(root: root.path),
+          verbs: builtInVerbs,
         ),
         completion(ExitCode.invalidFile),
       );
@@ -394,7 +394,7 @@ void main() {
       final code = await dry(
         'version: 1\ntasks:\n  clean: {desc: x, do: remove, args: [build]}\n',
         'clean',
-        verbs: builtInVerbs(root: root.path),
+        verbs: builtInVerbs,
       );
       expect(code, ExitCode.success);
       expect(Directory(p.join(root.path, 'build')).existsSync(), isTrue);

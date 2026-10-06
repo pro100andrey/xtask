@@ -41,6 +41,23 @@ final class FakeStarter implements ProcessStarter {
     started.add(Started(executable, arguments, workingDirectory));
     return codes[p.basename(executable)] ?? ExitCode.success;
   }
+
+  @override
+  Future<Captured> capture(
+    String executable,
+    List<String> arguments, {
+    required String workingDirectory,
+    required Map<String, String> environment,
+    required bool runInShell,
+    Duration? timeout,
+  }) async {
+    started.add(Started(executable, arguments, workingDirectory));
+    return (
+      exitCode: codes[p.basename(executable)] ?? ExitCode.success,
+      stdout: '',
+      stderr: '',
+    );
+  }
 }
 
 void main() {
@@ -336,6 +353,23 @@ void main() {
     test('--version is a mode, and takes nothing else', () {
       expect(parseArguments(['--version']), isA<ShowVersion>());
       expect(parseArguments(['--version', 'a']), isA<ShowUsage>());
+    });
+
+    test('--check-schema is a mode, and takes one path', () {
+      expect(
+        parseArguments(['--check-schema', 'xtask.schema.json']),
+        isA<CheckSchema>().having((r) => r.path, 'path', 'xtask.schema.json'),
+      );
+      expect(parseArguments(['--check-schema']), isA<ShowUsage>());
+      expect(
+        parseArguments(['--check-schema=s.json']),
+        isA<CheckSchema>().having((r) => r.path, 'path', 's.json'),
+      );
+      expect(
+        (parseArguments(['--check-schema=']) as ShowUsage).problem,
+        contains('needs a name'),
+      );
+      expect(parseArguments(['--check-schema', 'a', 'b']), isA<ShowUsage>());
     });
 
     test('--emit-schema is a mode, and takes nothing else', () {
@@ -1150,6 +1184,100 @@ jobs:
         // ends without one, or with two, is a diff every editor argues with.
         await run(['--emit-schema']);
         expect('${printed()}\n', xtaskJsonSchema());
+      });
+    });
+
+    group('--check-schema', () {
+      // The comparison this repository makes in a test, for a project that
+      // can only run a command.
+      File committed(String text) =>
+          File(p.join(root.path, 'xtask.schema.json'))..writeAsStringSync(text);
+
+      test('the schema this engine emits is answered 0', () async {
+        committed(xtaskJsonSchema());
+        expect(
+          await run(['--check-schema', 'xtask.schema.json']),
+          ExitCode.success,
+        );
+      });
+
+      test('and so is it with CRLF, or without the last newline', () async {
+        committed(xtaskJsonSchema().replaceAll('\n', '\r\n').trimRight());
+        expect(
+          await run(['--check-schema', 'xtask.schema.json']),
+          ExitCode.success,
+        );
+      });
+
+      test(
+        'one that has fallen behind is a 2 that says how to fix it',
+        () async {
+          committed('{}\n');
+          expect(
+            await run(['--check-schema', 'xtask.schema.json']),
+            ExitCode.invalidFile,
+          );
+          expect(
+            err.join('\n'),
+            contains('xtask --emit-schema > xtask.schema.json'),
+          );
+        },
+      );
+
+      test(
+        'one that is not UTF-8 is a 2 with a sentence, not a trace',
+        () async {
+          // What PowerShell 5.1's `>` writes: UTF-16LE with a byte-order mark.
+          File(p.join(root.path, 'xtask.schema.json')).writeAsBytesSync([
+            0xFF,
+            0xFE,
+            for (final unit in xtaskJsonSchema().codeUnits) ...[unit, 0],
+          ]);
+          expect(
+            await run(['--check-schema', 'xtask.schema.json']),
+            ExitCode.invalidFile,
+          );
+          expect(err.join('\n'), contains('cannot be read as UTF-8'));
+        },
+      );
+
+      test(
+        'one that cannot be opened says why, not what an encoding would',
+        () async {
+          final file = File(p.join(root.path, 'xtask.schema.json'))
+            ..writeAsStringSync(xtaskJsonSchema());
+          Process.runSync('chmod', ['000', file.path]);
+          addTearDown(() => Process.runSync('chmod', ['644', file.path]));
+          expect(
+            await run(['--check-schema', 'xtask.schema.json']),
+            ExitCode.invalidFile,
+          );
+          expect(err.join('\n'), contains('cannot be read ('));
+          expect(err.join('\n'), isNot(contains('UTF')));
+        },
+        testOn: '!windows',
+      );
+
+      test('and none at all is a 2 too, not a pass', () async {
+        expect(
+          await run(['--check-schema', 'xtask.schema.json']),
+          ExitCode.invalidFile,
+        );
+        expect(err.join('\n'), contains('there is no `xtask.schema.json`'));
+      });
+
+      test('a path is read from where the command runs', () async {
+        Directory(p.join(root.path, 'sub')).createSync();
+        File(
+          p.join(root.path, 'sub', 'schema.json'),
+        ).writeAsStringSync(xtaskJsonSchema());
+        expect(
+          await run([
+            '--check-schema',
+            'schema.json',
+          ], from: p.join(root.path, 'sub')),
+          ExitCode.success,
+        );
       });
     });
 

@@ -222,6 +222,18 @@ final class SystemProcessStarter implements ProcessStarter {
     }
     final stoppedEarly = outcome.stopped;
 
+    await _stop(process);
+    // Bounded, because the pipes may outlive the process: collecting ends when
+    // stdout and stderr close, and a grandchild that inherited them keeps them
+    // open. The same grace as the kill — a moment for what was already
+    // written, and no longer.
+    await collecting?.timeout(grace, onTimeout: () => const <void>[]);
+    await stopReading();
+    return stoppedEarly ? interrupted : timedOut;
+  }
+
+  /// Asks [process] to stop, and makes it after [grace].
+  Future<void> _stop(Process process) async {
     process.kill();
     final stopped = await process.exitCode
         .then<int?>((code) => code)
@@ -230,13 +242,71 @@ final class SystemProcessStarter implements ProcessStarter {
       process.kill(ProcessSignal.sigkill);
       await process.exitCode;
     }
-    // Bounded, because the pipes may outlive the process: collecting ends when
-    // stdout and stderr close, and a grandchild that inherited them keeps them
-    // open. The same grace as the kill — a moment for what was already
-    // written, and no longer.
-    await collecting?.timeout(grace, onTimeout: () => const <void>[]);
-    await stopReading();
-    return stoppedEarly ? interrupted : timedOut;
+  }
+
+  @override
+  Future<Captured> capture(
+    String executable,
+    List<String> arguments, {
+    required String workingDirectory,
+    required Map<String, String> environment,
+    required bool runInShell,
+    Duration? timeout,
+  }) async {
+    final process = await Process.start(
+      executable,
+      arguments,
+      workingDirectory: workingDirectory,
+      environment: environment,
+      runInShell: runInShell,
+    );
+    // Closed at once: a program that reads its input when it is not a
+    // terminal would otherwise wait for a line that never comes, and a verb
+    // capturing it has no way to type one. A close that fails because the
+    // child has already gone is not a failure of this run — unhandled, it
+    // would end the isolate at 255, which is why `start` swallows it too.
+    unawaited(process.stdin.close().catchError((Object _) {}));
+    // Decoded leniently, for the reason the streaming path gives: one byte
+    // that is not UTF-8 must not turn a program's answer into an exception.
+    final out = StringBuffer();
+    final err = StringBuffer();
+    final reading = [
+      process.stdout
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .listen(out.write),
+      process.stderr
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .listen(err.write),
+    ];
+    // Watched from the start, as `start` watches them. A stream that has
+    // already closed when the process is waited on never tells a later
+    // `asFuture` so, and the bounded wait below then sat out the whole grace
+    // after nearly every program — five seconds a capture.
+    final collecting = Future.wait([
+      for (final subscription in reading) subscription.asFuture<void>(),
+    ]);
+
+    final int code;
+    if (timeout == null) {
+      code = await process.exitCode;
+    } else {
+      final finished = await process.exitCode
+          .then<int?>((code) => code)
+          .timeout(timeout, onTimeout: () => null);
+      if (finished == null) {
+        await _stop(process);
+      }
+      code = finished ?? timedOut;
+    }
+    // **Bounded, as `start` bounds it.** A captured program that backgrounds
+    // something — `sh -c 'daemon &'`, a build tool's daemon — hands it the
+    // pipes, and they stay open for as long as it lives; waiting for them to
+    // close would hang the run on a process that has already answered.
+    await collecting.timeout(grace, onTimeout: () => const <void>[]);
+    for (final subscription in reading) {
+      await subscription.cancel();
+    }
+    return (exitCode: code, stdout: '$out', stderr: '$err');
   }
 
   /// What a killed process answers with — `timeout(1)`'s number, so a shell

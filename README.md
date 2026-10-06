@@ -73,7 +73,8 @@ Two lines in that file are doing the work. `gates: [check]` at the top says
 which groups this repository has; `gate: [check]` on a task says it is in one.
 `xtask check` then runs the group, in the order the file writes it — a gate set
 is not a task and needs none. [Gate sets](#gate-sets-and-ci) says why the whole
-tool exists for those two lines.
+tool exists for those two lines, and [The keys](#the-keys) is every key a task
+can have.
 
 ## Using it from Dart
 
@@ -101,40 +102,7 @@ shipped cannot contain your function, so you hand it over from a file of yours:
 dart run :xtask <task>
 ```
 
-The colon is the whole difference between the last two, and it is easy to read
-past: what is written to the left of it is which package the executable comes
-from, and an empty left side means yours. Without a `bin/xtask.dart` of your
-own the short spelling fails with `Could not find bin/xtask.dart in package
-<yours>`, which is a truthful error and a baffling one if nobody said the file
-was optional.
-
-`dart install xtask` puts a real `xtask` on the PATH, compiled, and for a
-repository whose tasks are all `run:` that is the pleasant way to work.
-
-It stops working the moment a project registers a **verb**, and that is the
-design rather than a limitation. What gets installed is this package's own
-entry point, and it passes no verbs, because it cannot know yours: `do: notify`
-then meets *"the engine ships no project verbs"*, correctly, since the `notify`
-the file means is a Dart function in your repository and not in the tool. That
-is why the entry point belongs to the project — a global install is the engine,
-and `dart run :xtask` is the engine plus what you wrote. The second thing is
-also pinned by your `pubspec.yaml`, where a globally installed tool is a version
-of its own that no repository can see.
-
-`dart run` pays the JIT's start-up — around half a second, every invocation. It
-is nothing against a gate that spends seconds inside a test runner, and it is
-the entire cost of `--gate-members`, `--why` or `--dry-run`, which is where a
-shell loop or a file being written notices it. `dart compile exe
-bin/xtask.dart` removes it. The binary still reads `xtask.yaml` at run time, so
-tasks, gates and sets keep changing without recompiling; verbs are Dart, so a
-binary holds the ones it was built with and wants rebuilding after one changes.
-This repository keeps its own invocation as the `aot` task rather than a second
-copy in this file — `xtask --dry-run aot` prints it.
-
-The rest of this README writes the short spelling, because this repository has
-a `bin/xtask.dart`. If you installed the engine and wrote no Dart, read every
-`dart run :xtask` below as plain `xtask`: the flags and the file are the same,
-and only the way the program is reached differs.
+That file is `bin/xtask.dart`, and it is the whole of what a project writes:
 
 ```dart
 import 'dart:io';
@@ -164,10 +132,27 @@ Future<int> regen(VerbContext context) async {
   //                   PATH, PATHEXT, the batch rule, the exit codes.
   //                   `workingDirectory:` is a path from the repository
   //                   root, and stays inside it; left out, it is the task's
+  // context.capture(...)
+  //                   the same start, run to the end with its output kept:
+  //                   `(exitCode:, stdout:, stderr:)`, each stream whole.
+  //                   For a verb that has to read what a program said —
+  //                   not `Process.run`, which loses everything above.
+  //                   `timeout:` stops one that outlives it, with 124
+  // context.which('code')
+  //                   the file a start would find, or null — to decide
+  //                   before starting anything. Takes the same
+  //                   `workingDirectory:` `run` would be given
+  // context.out      `log` as a StringSink, for a library that writes to
+  //                  one; a last line without a newline is flushed for you
   // context.args     `args:` with `$all` expanded, then anything
   //                  the command line passed after `--`
   // context.env      this machine's environment, with `env:` winning a clash
+  // context.root     the repository root, absolute — what a set's members
+  //                  and `in:` are relative to
   // context.workingDirectory
+  //                  where the task runs: the root, or its `in:` under it —
+  //                  what a `remove` argument is read from. Join a set's
+  //                  member onto `root`, never onto this
   return 0;
 }
 ```
@@ -179,6 +164,64 @@ The file name *is* the declaration: `dart run :xtask` resolves to
 `bin/xtask.dart` and nothing else, so nothing has to name it to make that work.
 (`pubspec.yaml` does carry an `executables:` entry, and it is there for
 `dart install` — which fails outright without one — not for `dart run`.)
+
+The colon in `dart run :xtask` is the whole difference from
+`dart run xtask:xtask`, and it is easy to read past: what is written to the
+left of it is which package the executable comes from, and an empty left side
+means yours. Without a `bin/xtask.dart` of your
+own the short spelling fails with `Could not find bin/xtask.dart in package
+<yours>`, which is a truthful error and a baffling one if nobody said the file
+was optional.
+
+`dart install xtask` puts a real `xtask` on the PATH, compiled, and for a
+repository whose tasks are all `run:` that is the pleasant way to work.
+
+It stops working the moment a project registers a **verb**, and that is the
+design rather than a limitation. What gets installed is this package's own
+entry point, and it passes no verbs, because it cannot know yours: `do: notify`
+then meets *"the engine ships no project verbs"*, correctly, since the `notify`
+the file means is a Dart function in your repository and not in the tool. That
+is why the entry point belongs to the project — a global install is the engine,
+and `dart run :xtask` is the engine plus what you wrote. The second thing is
+also pinned by your `pubspec.yaml`, where a globally installed tool is a version
+of its own that no repository can see.
+
+`dart run` pays the JIT's start-up — around half a second, every invocation. It
+is nothing against a gate that spends seconds inside a test runner, and it is
+the entire cost of `--gate-members`, `--why` or `--dry-run`, which is where a
+shell loop or a file being written notices it. `dart compile exe
+bin/xtask.dart` removes it. The binary still reads `xtask.yaml` at run time, so
+tasks, gates and sets keep changing without recompiling; verbs are Dart, so a
+binary holds the ones it was built with and wants rebuilding after one changes.
+This repository keeps its own invocation as the `aot` task rather than a second
+copy in this file — `xtask --dry-run aot` prints it.
+
+### Testing a verb
+
+A verb is a function of a `VerbContext`, so a test builds one and calls it —
+no engine, no file, no process:
+
+```dart
+final logged = <String>[];
+final code = await regen(
+  VerbContext(
+    args: ['schema/a.lake'],
+    env: const {},
+    root: repo.path,
+    workingDirectory: repo.path,
+    log: logged.add,
+    start: (argv, {workingDirectory}) async => 0,
+  ),
+);
+expect(code, ExitCode.success);
+```
+
+`start` is how `context.run` starts a program, so a fake one records what the
+verb asked for. `locate` and `collect` stand behind `which` and `capture` the
+same way, and are needed only by a verb that calls them — one that does and
+was not given them is told so, rather than answered "not found". `out` is a
+sink over `log` unless one is given; call `context.out.flush()` before
+reading `logged` if the verb's last line may lack a newline.
 
 ## The command
 
@@ -199,6 +242,7 @@ xtask --validate             parse and check the file; run nothing
 xtask --check-ci             does the CI file still run the gate sets?
 xtask --dry-run <task>       print the resolved plan; run nothing
 xtask --emit-schema          print the JSON Schema for this file format
+xtask --check-schema <path>  does that file match --emit-schema?
 xtask --version              print which engine this is
 ```
 
@@ -277,9 +321,7 @@ test
 ```
 
 Two routes, because there are two: the gate set reaches it, and so does
-somebody typing its name. An edge says which kind it is — `runs`, `needs`,
-`then` — because "it runs before this" and "it runs after this" are the two
-answers a single word would blur.
+somebody typing its name.
 
 ## Gate sets, and CI
 
@@ -320,6 +362,16 @@ jobs:
       - run: dart run :xtask check
 ```
 
+A repository that installs the engine rather than depending on it has one
+step that is not a gate — the install — and says so on the step, with the
+marker described below:
+
+```yaml
+      - uses: dart-lang/setup-dart@v1
+      - run: dart install xtask # xtask: not a gate — the engine itself, which no action installs
+      - run: xtask check
+```
+
 Run-once still holds, because a job is one invocation. Parallelism is preserved,
 because it comes from the jobs the CI system already schedules. And a failure is
 still legible: on a host that folds output — GitHub Actions today — each task is
@@ -335,9 +387,33 @@ one invocation of one gate set is refused, because that is exactly how the
 duplicate list grows back — somebody writes `- run: dart analyze` instead of
 adding a task. A gate set no job runs is reported rather than refused: gate
 sets are named after who runs them, and that is the jobs *plus the people*,
-which nothing in the file distinguishes. A step that asks xtask a question —
+which nothing in the file distinguishes. The same goes one level down: a task
+that is in some gate set and that no job's run reaches — through `needs:` and
+`then:` included — is named too, grouped by the gate sets it is in, because a
+people's set is always on the first list and the task added to it without a
+job's label would otherwise be on none. A step that asks xtask a question —
 `--validate`, `--check-ci` itself — is reported the same way: it names no
 command that could drift, so there is nothing to move into the file.
+
+Run it where drift is caught before it is pushed: as a task in the gate set a
+person runs, and so in the job that runs that gate too.
+
+```yaml
+  workflows-check:
+    desc: fail if a CI step runs anything but one gate set
+    gate: [check]
+    run: [dart, run, ':xtask', --check-ci]
+```
+
+A step names a gate set and is still not counted as running it in two cases,
+both reported as findings. **Its result may not fail the job**:
+`continue-on-error:` on the step or on its job, `true` or an expression that
+may be. **It may read another file**: a `working-directory:` — on the step, or
+as `defaults: run:` on its job or its workflow — that holds an `xtask.yaml` of
+its own runs that file's gate set of the same name, and one that is an
+expression could be any directory. A directory without a file of its own still
+reaches this one, because the file is looked for upwards; for the root, write
+`.` rather than `${{ github.workspace }}`.
 
 The rule is blanket, and the exception is written where the exception is: on
 the step's own `run:` line, after the command.
@@ -365,13 +441,14 @@ since whether the condition holds is not something this file can say.
 a marker with nothing after it is what this becomes when it is reached for to
 make a red gate green.
 
-**And it only excuses a step that would otherwise be reported as a command**,
-which is the one thing it claims: that this step is not a gate. On a step that
-does reach xtask it is refused, whatever it says — one that runs a gate set,
-one that names a gate set under a mode, one that asks a question, one the
-command line itself turns away, one that names a gate set with a typo in it.
-Otherwise the marker is a way of making a job that runs nothing pass, which is
-the failure this whole mode exists to catch.
+**And it only excuses a step that is not this file's gate**, which is the one
+thing it claims: a step reported as a command, or one of the two cases above —
+another file's gate set, or a result that may not fail the job. On any other
+step that reaches xtask it is refused, whatever it says — one that runs a gate
+set here, one that names a gate set under a mode, one that asks a question, one
+the command line itself turns away, one that names a gate set with a typo in
+it. Otherwise the marker is a way of making a job that runs nothing pass,
+which is the failure this whole mode exists to catch.
 
 Every exemption is printed with its reason next to the jobs that passed, so a
 workflow that has quietly exempted its way to green says so in the same
@@ -405,32 +482,6 @@ web-e2e:
 
 which turns "a browser test failed somewhere inside" into "task `web-e2e`
 requires `CHROMEDRIVER`, which is not set".
-
-`interruptible: true` is the third of these, and it gives back what `-j`
-otherwise costs. A run does not reach into what is already running, because a
-build killed half-way leaves whatever it was doing in whatever state that half
-is. That is right for a build and wrong for a check: `dart format
---output=none`, `dart analyze` and `dart test` write nothing a half-run would
-leave behind, and the engine cannot tell the two apart while the person who
-wrote the task can. Sequentially a format failure at 0.4s means the rest never
-run; in parallel they run to the end anyway and the machine spends the whole
-budget to learn what it knew in a tenth of a second. With the key, the fast
-answer arrives at the fast answer's price. `--keep-going` stops nothing at all,
-which is the whole of what that flag says.
-
-`-j` says **how many**; the file says **whether**. `serial: true` is one task
-whose members must not overlap — six packages sharing one `~/.pub-cache`, or
-one git index, where `git add` fails outright rather than waiting.
-`exclusive: [chromedriver]` is the same fact between tasks: two suites the
-graph calls independent may still drive the one browser on the machine — and
-because the token is held by the task, a task that holds one runs its own
-`each:` members one at a time as well. Naming a browser and then driving it
-from four members at once would be the guarantee said and not kept. Both
-can only ever make a run slower, never change its result, which is the right
-property for something every machine reads — and getting them wrong makes a
-run **flaky**, which is a different kind of wrong from making it slow. A number
-would be one machine's width written into a file the rest of them share, so
-there is no key for it.
 
 ## Reading a run
 
@@ -500,6 +551,32 @@ skipped  analyze — the run stopped at an earlier failure
 skipped  check — needs `format`, which did not pass
 ```
 
+`interruptible: true` gives back some of what `-j` costs. A run does not reach
+into what is already running, because a build killed half-way leaves whatever
+it was doing in whatever state that half is. That is right for a build and
+wrong for a check: `dart format --output=none`, `dart analyze` and
+`dart test` write nothing a half-run would
+leave behind, and the engine cannot tell the two apart while the person who
+wrote the task can. Sequentially a format failure at 0.4s means the rest never
+run; in parallel they run to the end anyway and the machine spends the whole
+budget to learn what it knew in a tenth of a second. With the key, the fast
+answer arrives at the fast answer's price. `--keep-going` stops nothing at all,
+which is the whole of what that flag says.
+
+`-j` says **how many**; the file says **whether**. `serial: true` is one task
+whose members must not overlap — six packages sharing one `~/.pub-cache`, or
+one git index, where `git add` fails outright rather than waiting.
+`exclusive: [chromedriver]` is the same fact between tasks: two suites the
+graph calls independent may still drive the one browser on the machine — and
+because the token is held by the task, a task that holds one runs its own
+`each:` members one at a time as well. Naming a browser and then driving it
+from four members at once would be the guarantee said and not kept. Both
+can only ever make a run slower, never change its result, which is the right
+property for something every machine reads — and getting them wrong makes a
+run **flaky**, which is a different kind of wrong from making it slow. A number
+would be one machine's width written into a file the rest of them share, so
+there is no key for it.
+
 ## Exit codes
 
 An exit code is not a success flag; it is the shortest possible bug report.
@@ -518,6 +595,16 @@ says which of the three endings happened, not how much of the plan was
 abandoned — those are different questions and `--keep-going` is the one that
 answers the second.
 
+What a `4` prints names the two tasks — `` `publish` finished, and `announce`
+failing after it does not undo that `` — and nothing about what they were. The
+engine knows which body finished and which `then:` failed after it; whether
+the first was an upload, a deploy or a build is the project's to say.
+
+A verb may answer `4` itself, when its own body has an irreversible half and a
+check after it — an upload, then a wait until the registry serves what was
+uploaded. The engine reduces that `4` as it does a continuation's: alone it is
+the run's answer, and beside an ordinary failure the ordinary failure wins.
+
 With `--keep-going` and more than one failure, the code is the **first**
 failure's. A code is a report about one failure, and a run with three cannot
 honestly claim to be about all of them; the summary is where the others are.
@@ -528,8 +615,9 @@ one.
 
 A **verb**'s exit code is what the run answers with — it is your Dart, written
 against this table, whose constants the package exports as `ExitCode` so a
-verb can name the reason rather than the digit; and the built-in `remove` answers `2` for a path outside the
-repository because that means *the file is wrong*. A program started by `run:`
+verb can name the reason rather than the digit; and the built-in `remove`
+answers `2` for a path outside the repository because that means *the file is
+wrong*. A program started by `run:`
 has never heard of this table, so its code goes in the message and the run
 answers `1`.
 
@@ -568,6 +656,33 @@ spawns a server and hangs may leave the server behind. A `do:` cannot carry a
 `timeout:` at all: a verb is a Dart function, nothing outside it can stop one,
 and a limit that passed while the verb kept writing to disk would be worse than
 none. That is refused when the file is read, not discovered at runtime.
+
+### Paths
+
+Every path the file writes — a set's member, an `in:` — is relative to the
+repository root, the directory holding `xtask.yaml`. What a body is handed is
+read from where it runs: a `run:` program written with a separator, and a
+`remove` argument, are looked for under the task's `in:`. A verb is given both
+directories, absolute: `context.root`, and `context.workingDirectory` for the
+`in:`. A path is refused if it is absolute or climbs through `..` — even one
+that would come back inside, because whether it does is a computation over the
+string, and the file does not compute.
+
+### What else is refused
+
+Beyond each key's own shape, two kinds of task are refused whenever the file
+is read — by every command, a run included — because the task contradicts
+itself: `all:` with `each:`, and `timeout:` or `interruptible: true` without a
+`run:` body.
+
+Three more are `--validate`'s, since they are about the file as a whole rather
+than one task's keys, and a run does not stop for them: `serial:` without
+`each:`, which leaves nothing to keep in order; an `exclusive:` token that one
+task without an `each:` holds and no other asks for, which keeps nothing apart;
+and a task with no body, no `needs:` and no `then:`, which does nothing when
+run. Put `--validate` in the gate a person runs to have them caught.
+
+### A fuller example
 
 The example at the top uses three keys because three is what that repository
 needs. Here is one using the rest — a release, which is where `needs:`,
@@ -708,11 +823,41 @@ underlines `dsec:` or a `gate:` written as a string, while you type. Everything
 that needs the graph or the filesystem — a cycle, a `needs:` pointing at
 nothing, an undeclared or empty gate set, an orphan gate, a glob matching
 nothing, an unregistered verb, an `in:` that reaches outside the repository —
-is what `--validate` answers. A schema catches a mistyped **key**; `--validate` catches
-a mistyped **name**.
+is what `--validate` answers. A schema catches a mistyped **key**;
+`--validate` catches a mistyped **name**.
 
 The schema describes one version of the engine, which is why it is generated
-into your repository rather than fetched from a URL.
+into your repository rather than fetched from a URL — and why a committed copy
+falls behind the day the engine is upgraded. Writing it stays a person's act,
+because a redirect is shell; checking it is a gate's:
+
+```yaml
+  schema-check:
+    desc: fail if xtask.schema.json is not the schema this engine emits
+    gate: [check]
+    run: [dart, run, ':xtask', --check-schema, xtask.schema.json]
+```
+
+The path is read from where the command runs — the root, for a task without
+`in:`. Line endings and a trailing newline are not differences.
+
+## Coming from make
+
+| a `Makefile` has | here it is |
+| --- | --- |
+| a target with a recipe | a task with `run:` — argv, one program per task |
+| a recipe that branches, loops or pipes | a verb (`do:`) in `bin/xtask.dart` |
+| prerequisites | `needs:` |
+| `$(MAKE) next` at the end of a recipe | `then: [next]` |
+| a phony target that only lists others | a gate set: `gates:` at the top, `gate:` on each task |
+| `VAR=x` before a command | `env:` |
+| a variable holding a file list | a set, named by `all:` or `each:` |
+| `make help` | `xtask --list` |
+| `make -j` | `xtask <task> -j <n>` |
+
+Two things have no counterpart, on purpose: a file's timestamp deciding whether
+a recipe runs (see what it deliberately is not), and one target's output
+captured into another's command line (R1).
 
 ## Three rules
 
@@ -750,6 +895,10 @@ them existing only because `package.json` scripts are shell.
   computed in the file, R1 is gone.
 
 ## Windows
+
+`timeout:` ends a process outright here. There is no signal to ask with first,
+so the moment a POSIX process is given to write what it has is not given on
+Windows.
 
 `run:` is argv, and the engine resolves the program itself — walking `PATH`,
 honouring `PATHEXT`, and knowing that `CreateProcess` cannot start a `.bat` or

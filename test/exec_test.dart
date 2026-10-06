@@ -140,6 +140,40 @@ final class FakeStarter implements ProcessStarter {
     (output ?? (_) {})('$name again');
     return codes[name] ?? ExitCode.success;
   }
+
+  /// What a captured executable prints, by name: its stdout and its stderr.
+  final prints = <String, (String, String)>{};
+
+  /// Executables run through `capture`, in order.
+  final captured = <Started>[];
+
+  @override
+  Future<Captured> capture(
+    String executable,
+    List<String> arguments, {
+    required String workingDirectory,
+    required Map<String, String> environment,
+    required bool runInShell,
+    Duration? timeout,
+  }) async {
+    final name = p.basename(executable);
+    captured.add(
+      Started(
+        executable,
+        arguments,
+        workingDirectory,
+        environment,
+        runInShell,
+        null,
+      ),
+    );
+    final (out, err) = prints[name] ?? ('', '');
+    return (
+      exitCode: codes[name] ?? ExitCode.success,
+      stdout: out,
+      stderr: err,
+    );
+  }
 }
 
 void main() {
@@ -217,7 +251,7 @@ void main() {
               r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
               '\n',
           'clean',
-          verbs: builtInVerbs(root: root.path),
+          verbs: builtInVerbs,
         );
         expect(code, ExitCode.invalidFile);
         expect(logged.join('\n'), contains('list of literal patterns'));
@@ -799,7 +833,15 @@ void main() {
         keepGoing: true,
       );
       expect(code, ExitCode.continuationFailed);
-      expect(logged.join('\n'), contains(ExitCode.continuationNotice));
+      expect(
+        logged.join('\n'),
+        contains(
+          continuationNotice(
+            body: 'publish',
+            continuation: 'announce',
+          ),
+        ),
+      );
     });
   });
 
@@ -1413,22 +1455,28 @@ void main() {
   });
 
   group('a continuation that fails is the third outcome, not a failure', () {
-    test('exit 4, and the notice the Makefile already printed', () async {
-      starter = FakeStarter({'verify': 1});
-      final code = await runFile(
-        'version: 1\ntasks:\n'
-            '  publish: {desc: x, run: [upload], then: [verify]}\n'
-            '  verify: {desc: y, run: [verify]}\n',
-        'publish',
-      );
-      expect(code, ExitCode.continuationFailed);
-      expect(logged.join('\n'), contains(ExitCode.continuationNotice));
-      expect(
-        starter.started.map((s) => p.basename(s.executable)),
-        ['upload', 'verify'],
-        reason: 'the upload happened first, and that is the point',
-      );
-    });
+    test(
+      'exit 4, and a notice naming what finished and what did not',
+      () async {
+        starter = FakeStarter({'verify': 1});
+        final code = await runFile(
+          'version: 1\ntasks:\n'
+              '  publish: {desc: x, run: [upload], then: [verify]}\n'
+              '  verify: {desc: y, run: [verify]}\n',
+          'publish',
+        );
+        expect(code, ExitCode.continuationFailed);
+        expect(
+          logged.join('\n'),
+          contains('`publish` finished, and `verify` failing after it'),
+        );
+        expect(
+          starter.started.map((s) => p.basename(s.executable)),
+          ['upload', 'verify'],
+          reason: 'the upload happened first, and that is the point',
+        );
+      },
+    );
 
     test('a body that fails is still exit 1, continuation or not', () async {
       starter = FakeStarter({'upload': 1});
@@ -1439,7 +1487,7 @@ void main() {
         'publish',
       );
       expect(code, ExitCode.taskFailed);
-      expect(logged.join('\n'), isNot(contains(ExitCode.continuationNotice)));
+      expect(logged.join('\n'), isNot(contains('does not undo')));
     });
 
     test('a missing tool INSIDE a continuation still answers 4', () async {
@@ -1453,6 +1501,52 @@ void main() {
       );
       expect(code, ExitCode.continuationFailed);
     });
+
+    test('the notice says nothing the engine does not know', () async {
+      // `then:` used for a build followed by an install was told "the upload
+      // took place" — the sentence of the one project that asked for `then:`.
+      starter = FakeStarter({'install': 1});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  build: {desc: x, run: [compile], then: [install]}\n'
+            '  install: {desc: y, run: [install]}\n',
+        'build',
+      );
+      expect(code, ExitCode.continuationFailed);
+      expect(logged.join('\n'), isNot(contains('upload')));
+      expect(
+        logged.join('\n'),
+        contains('`build` finished, and `install` failing after it'),
+      );
+    });
+
+    test(
+      'a verb may answer 4 itself, and a plain failure still wins',
+      () async {
+        // A verb whose body has an irreversible half — upload, then wait for
+        // the registry — has the same third ending inside one body. Its 4 is
+        // reduced as a continuation's is: no run where an ordinary task also
+        // failed may claim "only the part after the irreversible step broke".
+        final alone = await runFile(
+          'version: 1\ntasks:\n  publish: {desc: x, do: upload-then-wait}\n',
+          'publish',
+          verbs: {'upload-then-wait': (_) async => ExitCode.continuationFailed},
+        );
+        expect(alone, ExitCode.continuationFailed);
+
+        starter = FakeStarter({'lint': 1});
+        final mixed = await runFile(
+          'version: 1\ntasks:\n'
+              '  publish: {desc: x, do: upload-then-wait}\n'
+              '  lint: {desc: y, run: [lint]}\n'
+              '  all: {desc: z, needs: [publish, lint]}\n',
+          'all',
+          keepGoing: true,
+          verbs: {'upload-then-wait': (_) async => ExitCode.continuationFailed},
+        );
+        expect(mixed, ExitCode.taskFailed);
+      },
+    );
   });
 
   group('the batch-shim rule: arguments to a batch shim', () {
@@ -1994,6 +2088,218 @@ void main() {
     });
   });
 
+  group('a verb that has to read what a program said', () {
+    // Without these a verb that needed a program's output or its location
+    // reached for `Process.run` and a PATH walk of its own, and lost the
+    // resolver's answers: the `3` for a missing tool, `PATHEXT`, the refusal
+    // to hand `cmd.exe` a metacharacter.
+    test('`capture` answers with the code and each stream whole', () async {
+      starter = FakeStarter({'git': 1})
+        ..prints['git'] = (' M lib/a.dart\n', 'warning: x\n');
+      Captured? seen;
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, in: sub, do: look}\n',
+        'a',
+        verbs: {
+          'look': (context) async {
+            seen = await context.capture(['git', 'status', '--porcelain']);
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.success);
+      expect(seen, (
+        exitCode: 1,
+        stdout: ' M lib/a.dart\n',
+        stderr: 'warning: x\n',
+      ));
+      expect(starter.captured.single.arguments, ['status', '--porcelain']);
+      expect(
+        starter.captured.single.workingDirectory,
+        p.join(root.path, 'sub'),
+        reason: "the task's own directory, as `run` would use",
+      );
+      expect(starter.started, isEmpty, reason: 'captured, not streamed');
+    });
+
+    test(
+      '`capture` of a missing tool is a 3 in the words `run` uses',
+      () async {
+        final resolver = ExecutableResolver(
+          environment: const {'PATH': '/nowhere'},
+          windows: false,
+          isRunnable: (_) => false,
+        );
+        final code = await runFile(
+          'version: 1\ntasks:\n  a: {desc: x, do: look}\n',
+          'a',
+          resolver: resolver,
+          verbs: {
+            'look': (context) async {
+              await context.capture(['h2spec']);
+              return ExitCode.success;
+            },
+          },
+        );
+        expect(code, ExitCode.missingTool);
+        expect(
+          logged.join('\n'),
+          contains(resolver.missingToolMessage('h2spec', from: root.path)),
+        );
+      },
+    );
+
+    test('`capture` refuses a metacharacter through a batch shim', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: look}\n',
+        'a',
+        resolver: ExecutableResolver(
+          environment: const {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
+          windows: true,
+          isRunnable: (path) => path.toLowerCase().endsWith('.bat'),
+        ),
+        verbs: {
+          'look': (context) async {
+            await context.capture(['code', '--profile', 'a&b']);
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(starter.captured, isEmpty);
+    });
+
+    test('`which` asks from the directory a start would use', () async {
+      // `run`/`capture` read a relative program from the `workingDirectory:`
+      // they are given; `which` read it from the task's own directory
+      // whatever it was given, so the two could name different files.
+      //
+      // Compared as paths, not strings: this resolver is POSIX by
+      // construction, so on a Windows host it joins the native root with `/`.
+      final gen = p.join(root.path, 'pkg', 'tool', 'gen');
+      final found = <String?>[];
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: look}\n',
+        'a',
+        resolver: ExecutableResolver(
+          environment: const {'PATH': '/nowhere'},
+          windows: false,
+          isRunnable: (path) => p.equals(path, gen),
+        ),
+        verbs: {
+          'look': (context) async {
+            found
+              ..add(context.which('./tool/gen'))
+              ..add(context.which('./tool/gen', workingDirectory: 'pkg'));
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(found.first, isNull);
+      expect(p.normalize(found.last!), gen);
+    });
+
+    test('`out` is flushed before the next log line or program', () async {
+      // Flushed only when the verb returned, a partial line printed after
+      // everything that followed it — the program's output included.
+      var flushedBeforeTheProgram = false;
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: talk}\n',
+        'a',
+        verbs: {
+          'talk': (context) async {
+            context.out.write('building ');
+            await context.run(['ruff']);
+            flushedBeforeTheProgram = logged.contains('building ');
+            context.out.write('checking ');
+            context.log('done');
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(flushedBeforeTheProgram, isTrue);
+      expect(
+        logged.indexOf('checking '),
+        lessThan(logged.indexOf('done')),
+      );
+    });
+
+    test('and not before a capture, which shows nothing', () async {
+      // Flushed there too, `git is: ` and the version written after it came
+      // out as two lines.
+      starter = FakeStarter({'git': 0})
+        ..prints['git'] = ('git version 2\n', '');
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: talk}\n',
+        'a',
+        verbs: {
+          'talk': (context) async {
+            context.out.write('git is: ');
+            final answered = await context.capture(['git', '--version']);
+            context.out.writeln(answered.stdout.trim());
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(logged, contains('git is: git version 2'));
+    });
+
+    test('`which` is the lookup a start would make', () async {
+      final found = <String?>[];
+      await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: look}\n',
+        'a',
+        resolver: ExecutableResolver(
+          environment: const {'PATH': '/opt/bin'},
+          windows: false,
+          isRunnable: (path) => path == '/opt/bin/code',
+        ),
+        verbs: {
+          'look': (context) async {
+            found
+              ..add(context.which('code'))
+              ..add(context.which('h2spec'));
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(found, ['/opt/bin/code', null]);
+    });
+
+    test(
+      '`out` is the log, and a last unterminated line is not lost',
+      () async {
+        await runFile(
+          'version: 1\ntasks:\n  a: {desc: x, do: talk}\n',
+          'a',
+          verbs: {
+            'talk': (context) async {
+              context.out
+                ..write('one ')
+                ..writeln('line')
+                ..write('and a tail');
+              return ExitCode.success;
+            },
+          },
+        );
+        expect(logged, containsAllInOrder(['one line', 'and a tail']));
+      },
+    );
+
+    test('a hand-built context says what it lacks rather than "absent"', () {
+      final context = VerbContext(
+        args: const [],
+        env: const {},
+        root: '/r',
+        workingDirectory: '/r',
+        log: (_) {},
+        start: (_, {workingDirectory}) async => 0,
+      );
+      expect(() => context.which('x'), throwsStateError);
+      expect(() => context.capture(['x']), throwsStateError);
+    });
+  });
+
   group('a verb is given what it needs to be the escape hatch it is', () {
     test('it knows which member it is', () async {
       // It ran once per member with the same arguments and a different
@@ -2052,6 +2358,31 @@ void main() {
       );
       expect(code, ExitCode.invalidFile);
       expect(starter.started, isEmpty);
+    });
+
+    test('it is told the root apart from where it runs', () async {
+      // A set's members are relative to the root and `in:` moves only the
+      // working directory, so a verb that had one of the two had to guess
+      // the other — and the example guessed `root == workingDirectory`, which
+      // holds only for a task without `in:`.
+      given(['pkg/a/x']);
+      final seen = <(String, String)>[];
+      final code = await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, do: look}'
+            '\n',
+        'a',
+        verbs: {
+          'look': (context) async {
+            seen.add((context.root, context.workingDirectory));
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.success);
+      expect(seen, [(root.path, p.join(root.path, 'pkg', 'a'))]);
     });
 
     test('and a relative directory is read from the repository root', () async {
@@ -2292,6 +2623,83 @@ void main() {
   });
 
   group('the real starter, against a real process', () {
+    test('`capture` does not wait on a grandchild holding its pipes', () async {
+      // `sh -c 'sleep 30 & echo hi'` answers at once and leaves `sleep`
+      // holding stdout and stderr. Waiting for them to close hung the run for
+      // as long as the background process lived.
+      final watch = Stopwatch()..start();
+      final answered =
+          await SystemProcessStarter(
+            grace: const Duration(milliseconds: 200),
+          ).capture(
+            '/bin/sh',
+            ['-c', 'sleep 30 & echo hi'],
+            workingDirectory: Directory.current.path,
+            environment: const {},
+            runInShell: false,
+          );
+      expect(answered.exitCode, 0);
+      expect(answered.stdout, 'hi\n');
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+    }, testOn: '!windows');
+
+    test(
+      '`capture` of a program that has ended does not wait out the grace',
+      () async {
+        // The grace bounds a wait for pipes a grandchild holds. Watching the
+        // pipes only after the exit meant missing that they had already closed,
+        // so nearly every capture waited the whole of it.
+        final starter = SystemProcessStarter(
+          grace: const Duration(seconds: 30),
+        );
+        final watch = Stopwatch()..start();
+        for (var i = 0; i < 5; i++) {
+          final answered = await starter.capture(
+            '/bin/sh',
+            ['-c', 'printf hi'],
+            workingDirectory: Directory.current.path,
+            environment: const {},
+            runInShell: false,
+          );
+          expect(answered.stdout, 'hi');
+        }
+        expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+      },
+      testOn: '!windows',
+    );
+
+    test('`capture` stops a program that outlives its timeout', () async {
+      final watch = Stopwatch()..start();
+      final answered =
+          await SystemProcessStarter(
+            grace: const Duration(milliseconds: 200),
+          ).capture(
+            '/bin/sh',
+            ['-c', 'printf started; sleep 30'],
+            workingDirectory: Directory.current.path,
+            environment: const {},
+            runInShell: false,
+            timeout: const Duration(milliseconds: 300),
+          );
+      expect(answered.exitCode, SystemProcessStarter.timedOut);
+      expect(answered.stdout, 'started', reason: 'what it wrote is kept');
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+    }, testOn: '!windows');
+
+    test('`capture` keeps each stream apart, and closes the input', () async {
+      // `cat` reads its input to the end, so a capture that left it open
+      // would wait here for the suite's own timeout.
+      final starter = SystemProcessStarter();
+      final answered = await starter.capture(
+        '/bin/sh',
+        ['-c', 'cat; printf out; printf err >&2; exit 3'],
+        workingDirectory: Directory.current.path,
+        environment: const {},
+        runInShell: false,
+      );
+      expect(answered, (exitCode: 3, stdout: 'out', stderr: 'err'));
+    }, testOn: '!windows');
+
     test('a flush that never answers does not end the run', () async {
       // The mechanism the CI failure turned out to be. Before an inheriting
       // child this process flushes its own stdout, to order its lines against

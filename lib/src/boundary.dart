@@ -122,7 +122,7 @@ String verbDirectoryLeavesRoot({
   required String task,
   required String written,
 }) =>
-    'task `$task` runs a verb that asked to start a program in `$written`, '
+    'task `$task` runs a verb that asked for a program in `$written`, '
     'which reaches outside the repository. A working directory is relative to '
     'the root and stays there, whether the file wrote it or a verb did';
 

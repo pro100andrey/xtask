@@ -62,9 +62,13 @@ void main() {
         // Handed over as well as called on: `_writing(stdout)` reaches for
         // the terminal exactly as much as `stdout.writeln` does, and the rule
         // stopped seeing the entry point the day it started wrapping it.
-        if (RegExp(
-          r'\b(stdout|stderr)[.,)]|(?<![.\w])print\(',
-        ).hasMatch(source))
+        //
+        // `stdout` and `stderr` are only the terminal where `dart:io` is
+        // imported; elsewhere they are names — `Captured`'s fields, which a
+        // verb reads off a program it ran — and `print` needs no import.
+        if ((source.contains("import 'dart:io'") &&
+                RegExp(r'\b(stdout|stderr)[.,)]').hasMatch(source)) ||
+            RegExp(r'(?<![.\w])print\(').hasMatch(source))
           file,
     };
     expect(

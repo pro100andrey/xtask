@@ -24,6 +24,12 @@ void main() {
   Map<String, Object?> task() =>
       at(['properties', 'tasks', 'additionalProperties']);
 
+  Map<String, Object?> rule(int index) =>
+      (task()['allOf']! as List)[index] as Map<String, Object?>;
+
+  Map<String, Object?> property(String key) =>
+      (task()['properties']! as Map)[key] as Map<String, Object?>;
+
   group('it is a projection of the model, not a second copy of it', () {
     test("the task keys are the engine's, all of them and only them", () {
       expect(
@@ -57,7 +63,49 @@ void main() {
     });
 
     test('and two bodies are refused, from the same list the parser uses', () {
-      expect(task()['not'], containsPair('required', bodyKeys.toList()));
+      expect(
+        rule(0)['not'],
+        containsPair('required', bodyKeys.toList()),
+      );
+    });
+  });
+
+  group('it refuses what the parser refuses, key against key', () {
+    // Each of these is a file an editor used to accept and the engine turned
+    // down — the one thing this projection exists not to do.
+    test('`all:` with `each:`', () {
+      expect(rule(1)['not'], {
+        'required': ['all', 'each'],
+      });
+    });
+
+    test('a deadline or a stop on anything but a `run:` body', () {
+      final onlyARun = rule(2);
+      expect(onlyARun['if'], {
+        'not': {
+          'required': ['run'],
+        },
+      });
+      final refused = ((onlyARun['then']! as Map)['not']! as Map)['anyOf'];
+      expect(refused, [
+        {
+          'required': ['timeout'],
+        },
+        {
+          'required': ['interruptible'],
+          'properties': {
+            'interruptible': {'const': true},
+          },
+        },
+      ], reason: '`interruptible: false` says nothing and is not refused');
+    });
+
+    test('a blank entry in a list of names, and a blank verb', () {
+      for (final key in ['needs', 'then', 'gate', 'exclusive']) {
+        final items = property(key)['items']! as Map<String, Object?>;
+        expect(items['pattern'], r'\S', reason: key);
+      }
+      expect(property('do')['pattern'], r'\S');
     });
   });
 

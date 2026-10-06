@@ -26,10 +26,10 @@ import 'globs.dart';
 /// that no second list of these names exists anywhere.
 const builtInVerbNames = <String>{removeVerbName};
 
-/// The built-in verbs, bound to the repository [root] they may act inside.
-Map<String, Verb> builtInVerbs({required String root}) => {
-  removeVerbName: (context) => removeVerb(context, root: root),
-};
+/// The built-in verbs. Each reads the root it may act inside from its
+/// context, as a project's verb does, so a context built by hand cannot hand
+/// it one root and the closure another.
+const Map<String, Verb> builtInVerbs = {removeVerbName: removeVerb};
 
 /// `remove` — deletes each path it is given .
 ///
@@ -42,7 +42,8 @@ Map<String, Verb> builtInVerbs({required String root}) => {
 /// files checked nothing; a **glob among this verb's arguments** matching
 /// nothing is not, because "delete what is there" is satisfied by there being
 /// nothing.
-Future<int> removeVerb(VerbContext context, {required String root}) async {
+Future<int> removeVerb(VerbContext context) async {
+  final root = context.root;
   // **Where the task runs, fenced by where the repository ends.** Two
   // different questions were both answered with [root]: a task written
   // `in: sub` had its `build` looked for and deleted at the repository root

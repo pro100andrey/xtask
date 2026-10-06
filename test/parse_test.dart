@@ -797,6 +797,35 @@ tasks: {}
       }
     });
 
+    test('and a blank one is an empty one', () {
+      // The schema said "not blank" and the parser said "not empty", so
+      // `"  ":` validated clean as a task `--list` printed as nothing and no
+      // `needs:` could write, while an editor underlined it.
+      for (final (what, yaml) in [
+        ('a task name', 'version: 1\ntasks:\n  "  ": {desc: x, run: [d]}\n'),
+        (
+          'a set name',
+          'version: 1\nsets:\n  " ": [a]\ntasks:\n  a: {desc: x, run: [d]}\n',
+        ),
+        (
+          'an environment variable name',
+          'version: 1\ntasks:\n  a: {desc: x, run: [d], env: {" ": v}}\n',
+        ),
+      ]) {
+        expect(
+          () => parseXtaskFile(yaml),
+          throwsA(
+            isA<XtaskFormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('$what that is empty'),
+            ),
+          ),
+          reason: 'a blank $what was accepted',
+        );
+      }
+    });
+
     test('an empty list is refused rather than read as none', () {
       expect(
         () => parseXtaskFile(

@@ -27,9 +27,11 @@ Future<int> countLines(VerbContext context) async {
 }
 
 /// A set's members are relative to the repository root, and a verb is told
-/// where that is rather than having to guess.
+/// where that is rather than having to guess — `context.root`, not
+/// `context.workingDirectory`, which is where the task runs and moves with
+/// `in:`.
 String inside(VerbContext context, String relative) =>
-    '${context.workingDirectory}${Platform.pathSeparator}$relative';
+    '${context.root}${Platform.pathSeparator}$relative';
 
 Future<void> main(List<String> args) async {
   // Assigned, not discarded: `runXtask` answers with the exit code, and a
