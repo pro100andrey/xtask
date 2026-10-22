@@ -156,6 +156,12 @@ _xtask() {
       return
     fi
   done
+  # `--gate=check` is the option and its value in one word: the value is
+  # completed as it would be after `--gate `.
+  if [[ $cur == --*=* ]]; then
+    prev=${cur%%=*}
+    cur=${cur#*=}
+  fi
   case $prev in
 @ARMS@
     *)
@@ -215,7 +221,14 @@ _xtask() {
     _files
     return
   fi
-  case ${words[CURRENT-1]} in
+  local prev=${words[CURRENT-1]}
+  # `--gate=check` is the option and its value in one word: the value is
+  # completed as it would be after `--gate `.
+  if [[ $PREFIX == --*=* ]]; then
+    prev=${PREFIX%%=*}
+    compset -P 1 '*='
+  fi
+  case $prev in
 @ARMS@
     *)
       if [[ $PREFIX == -* ]]; then

@@ -348,7 +348,16 @@ void main() {
     // Seven whole executions used to stand between this suite and a check on
     // a seven-element set.
     test('every character cmd.exe acts on is refused', () {
-      for (final bad in ['a&b', 'a|b', 'a<b', 'a>b', 'a^b', 'a(b', 'a)b']) {
+      for (final bad in [
+        'a&b',
+        'a|b',
+        'a<b',
+        'a>b',
+        'a^b',
+        'a(b',
+        'a)b',
+        '%PATH%',
+      ]) {
         expect(
           () => resolve(
             'version: 1\ntasks:\n  a: {desc: x, run: [dart, "$bad"]}\n',

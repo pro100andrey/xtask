@@ -22,6 +22,14 @@
   climbs out of the root or leads out through a link.
 - `--completion bash|zsh|fish` prints a completion script, which reads task,
   gate set and set names from `--names` when TAB is pressed.
+- A name that is not a task is answered with the near ones — ``did you mean
+  `check`?`` — or with `xtask --list`.
+
+### Fixed
+
+- An argument holding `%` is refused for a batch file, as `&` and `^` are:
+  `cmd.exe` expands `%VAR%` on the command line before the file sees it.
+- `context.out` hands on a line written with `\r\n` without its `\r`.
 
 ## 0.3.0
 

@@ -567,8 +567,9 @@ Request parseArguments(
     // `xtask --keep-going` and `xtask -j 2` name no task, and "it was given"
     // with an empty list to interpolate is a sentence that stops mid-way.
     return const ShowUsage(
-      'a run needs the name of one task. `--keep-going` and `-j` say how a run '
-      'happens, not what it runs — `xtask --list` shows what there is',
+      'a run needs the name of one task. `--keep-going`, `-j` and `--only` say '
+      'how a run happens, not what it runs — `xtask --list` shows what there '
+      'is',
     );
   }
   return operands.length == 1

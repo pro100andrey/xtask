@@ -154,6 +154,23 @@ void main() {
   });
 
   group('a name that does not exist', () {
+    test('is answered with the near names, or where they are', () {
+      const known = ['check', 'format', 'analyze', 'test', 'release'];
+      expect(unknownNameHint('chek', known), ' — did you mean `check`?');
+      expect(unknownNameHint('fromat', known), ' — did you mean `format`?');
+      expect(unknownNameHint('ana', known), ' — did you mean `analyze`?');
+      expect(unknownNameHint('tset', known), ' — did you mean `test`?');
+      expect(
+        unknownNameHint('deploy', known),
+        ' — `xtask --list` shows what there is',
+      );
+      expect(
+        unknownNameHint('x', known),
+        ' — `xtask --list` shows what there is',
+        reason: 'one letter is near too much to suggest anything',
+      );
+    });
+
     test('asked for on the command line', () {
       expect(
         refusalOf(() => planOf('nope', {'a': ''})),

@@ -1101,6 +1101,7 @@ tasks:
 ''');
         expect(await run(['chekc']), ExitCode.invalidFile);
         expect(complained(), contains('there is no task called `chekc`'));
+        expect(complained(), contains('did you mean `check`?'));
       });
     });
 
@@ -1278,6 +1279,10 @@ printf '%s\\n' "\${COMPREPLY[@]}"
         // Bash replaces only what follows the `:`, so that is the answer.
         expect(await complete('xtask web:bu'), ['build']);
         expect(await complete('xtask --dry-run web:'), ['build']);
+        // The option and its value in one word.
+        expect(await complete('xtask --gate=ch'), ['check']);
+        expect(await complete('xtask --dry-run=web:b'), ['build']);
+        expect(await complete('xtask check --only=p'), ['pkgs=']);
         // After `--`, the task's own arguments: files.
         File(p.join(root.path, 'fixture.txt')).writeAsStringSync('');
         expect(

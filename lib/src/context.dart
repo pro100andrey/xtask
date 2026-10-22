@@ -299,8 +299,7 @@ final class LogSink implements StringSink {
         return;
       }
       _pending.write(text.substring(start, newline));
-      log('$_pending');
-      _pending.clear();
+      _emit();
       start = newline + 1;
     }
   }
@@ -320,8 +319,18 @@ final class LogSink implements StringSink {
     if (_pending.isEmpty) {
       return;
     }
-    log('$_pending');
+    _emit();
+  }
+
+  /// The pending line, handed on and cleared.
+  ///
+  /// A `\r\n` ends a line as a `\n` does, as it does in what [VerbContext.tee]
+  /// shows: a library that writes CRLF otherwise handed every line on with a
+  /// `\r` on the end, which a terminal reads as "go back to the start".
+  void _emit() {
+    final line = '$_pending';
     _pending.clear();
+    log(line.endsWith('\r') ? line.substring(0, line.length - 1) : line);
   }
 }
 

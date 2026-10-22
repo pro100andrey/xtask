@@ -469,14 +469,70 @@ void refuseUnlessATask(XtaskFile file, String name) {
     );
   }
   if (!isTask) {
-    throw XtaskFormatException('there is no task called `$name`');
+    throw XtaskFormatException(
+      'there is no task called `$name`'
+      '${unknownNameHint(name, file.tasks.keys)}',
+    );
   }
+}
+
+/// What follows "there is no task called `[name]`": the names in [known] it
+/// is probably a misspelling of, or where the names are.
+///
+/// **A typo is the likeliest reason a name is unknown**, and `chek` is one
+/// letter from `check`; the sentence that leaves the reader to find that
+/// out from `--list` is the longer road to the same place. Near means a
+/// prefix of the name, or at most two edits, and never more than a third of
+/// what was typed — `a` is two edits from most short names, and suggesting
+/// all of them suggests nothing.
+String unknownNameHint(String name, Iterable<String> known) {
+  final limit = name.length < 3 ? 1 : (name.length / 3).ceil().clamp(1, 2);
+  final near = [
+    for (final candidate in known)
+      if (candidate.startsWith(name) && name.length > 1)
+        (candidate, 0)
+      else if (_edits(name, candidate) case final edits when edits <= limit)
+        (candidate, edits),
+  ]..sort((a, b) => a.$2 != b.$2 ? a.$2 - b.$2 : a.$1.compareTo(b.$1));
+  if (near.isEmpty) {
+    return ' — `xtask --list` shows what there is';
+  }
+  final named = near.take(3).map((n) => '`${n.$1}`').join(' or ');
+  return ' — did you mean $named?';
+}
+
+/// How many single-character insertions, deletions, substitutions and
+/// swaps of two neighbours turn [a] into [b].
+int _edits(String a, String b) {
+  // The first row and column are that many insertions, or deletions.
+  final rows = List.generate(
+    a.length + 1,
+    (i) => List.generate(b.length + 1, (j) => i == 0 ? j : (j == 0 ? i : 0)),
+  );
+  for (var i = 1; i <= a.length; i++) {
+    for (var j = 1; j <= b.length; j++) {
+      final cost = a[i - 1] == b[j - 1] ? 0 : 1;
+      var best = [
+        rows[i - 1][j] + 1,
+        rows[i][j - 1] + 1,
+        rows[i - 1][j - 1] + cost,
+      ].reduce((x, y) => x < y ? x : y);
+      if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) {
+        best = best < rows[i - 2][j - 2] + 1 ? best : rows[i - 2][j - 2] + 1;
+      }
+      rows[i][j] = best;
+    }
+  }
+  return rows[a.length][b.length];
 }
 
 final class _Planner {
   _Planner(this.file, {this.directly = const {}});
 
   final XtaskFile file;
+
+  /// Every name a person may type to start a run.
+  Iterable<String> get _everyName => [...file.gates.keys, ...file.tasks.keys];
 
   /// The names this plan reaches because somebody asked for them: the task on
   /// the command line, or the members of the gate set being run.
@@ -577,13 +633,16 @@ final class _Planner {
         switch ((from, isGate)) {
           (null, true) =>
             '`$name` is a gate set, not a task — run it by naming it',
-          (null, false) => 'there is no task called `$name`',
+          (null, false) =>
+            'there is no task called `$name`'
+                '${unknownNameHint(name, _everyName)}',
           (final from?, true) =>
             'task `${from.name}` names the gate set `$name` in `needs:` or '
                 '`then:`, and those are edges between tasks. A gate set is a '
                 'list, not a step: name the tasks, or put this one in the set',
           (final from?, false) =>
-            'task `${from.name}` names `$name`, and there is no such task',
+            'task `${from.name}` names `$name`, and there is no such task'
+                '${unknownNameHint(name, file.tasks.keys)}',
         },
         from?.span,
       );

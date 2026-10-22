@@ -1602,7 +1602,16 @@ void main() {
     );
 
     test('every character cmd acts on is covered', () async {
-      for (final bad in ['a&b', 'a|b', 'a<b', 'a>b', 'a^b', 'a(b', 'a)b']) {
+      for (final bad in [
+        'a&b',
+        'a|b',
+        'a<b',
+        'a>b',
+        'a^b',
+        'a(b',
+        'a)b',
+        '%PATH%',
+      ]) {
         starter = FakeStarter();
         logged = [];
         final code = await runFile(
@@ -2455,6 +2464,26 @@ void main() {
           },
         );
         expect(logged, containsAllInOrder(['one line', 'and a tail']));
+      },
+    );
+
+    test(
+      r'a line ended with CRLF reaches the log without its `\r`',
+      () async {
+        await runFile(
+          'version: 1\ntasks:\n  a: {desc: x, do: talk}\n',
+          'a',
+          verbs: {
+            'talk': (context) async {
+              context.out
+                ..write('one\r\ntwo\r\n')
+                ..write('tail\r');
+              return ExitCode.success;
+            },
+          },
+        );
+        expect(logged, containsAllInOrder(['one', 'two', 'tail']));
+        expect(logged.where((line) => line.contains('\r')), isEmpty);
       },
     );
 

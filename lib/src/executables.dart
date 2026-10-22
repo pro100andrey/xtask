@@ -300,7 +300,11 @@ bool _existsOnWindows(String path) =>
     FileStat.statSync(path).type == FileSystemEntityType.file;
 
 /// Characters `cmd.exe` acts on rather than passes along.
-const _cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"'};
+///
+/// `%` among them: `%PATH%` in an argument reaches a batch file as whatever
+/// this machine's `PATH` is, expanded on the command line before the file
+/// sees it.
+const _cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"', '%'};
 
 /// Refuses an argument the shell would reinterpret, when the shell is
 /// unavoidable — the batch-shim rule.
