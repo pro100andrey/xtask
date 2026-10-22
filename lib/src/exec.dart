@@ -150,6 +150,9 @@ final class _Outcomes {
   /// How much work each fanned-out task's members added up to — the number
   /// `-j` is for, beside how long the task took.
   final work = <String, ({Duration spent, int members})>{};
+
+  /// What `--only` left of the set each narrowed task expanded.
+  final narrowed = <String, ({int kept, int of})>{};
 }
 
 /// How one body ended.
@@ -247,6 +250,7 @@ final class Executor {
         now().difference(began),
         outcomes.work,
         concurrent: concurrent,
+        narrowed: outcomes.narrowed,
       ).forEach(log);
       // Last, because it is the part somebody has to act on and the terminal
       // scrolls.
@@ -265,6 +269,7 @@ final class Executor {
       concurrency > 1 &&
       task.each != null &&
       !task.serial &&
+      !task.alone &&
       task.exclusive.isEmpty;
 
   /// Walks the plan, starting what is ready and waiting for what is running.
@@ -297,6 +302,16 @@ final class Executor {
     // tasks finish in depends on the machine, and the plan's order does not.
     final failures = <int, int>{};
 
+    // The `alone:` task running now, if one is. While it runs nothing is
+    // admitted, whatever is ready and whatever places are free.
+    String? alone;
+
+    // Whether a task that runs alone has been found ready while others ran,
+    // and is waiting for them. From then on it is the next thing to start,
+    // wherever it sits in the plan: a task ahead of it that becomes ready
+    // later is still behind it.
+    var aloneWaits = false;
+
     while (waiting.isNotEmpty || running.isNotEmpty) {
       var began = false;
       for (var at = 0; at < waiting.length; at++) {
@@ -318,6 +333,22 @@ final class Executor {
         if (verdict is NotYet) {
           continue;
         }
+        // **Waited for, and nothing overtakes it.** A task that runs alone
+        // and is ready while others run holds the walk until they have
+        // ended; letting another ready task start in the meantime — behind
+        // it in the plan or ahead of it — would let a steady stream of them
+        // keep it waiting for ever, which is the guarantee kept by never
+        // running at all.
+        if (alone != null) {
+          break;
+        }
+        if (step.task.alone && running.isNotEmpty) {
+          aloneWaits = true;
+          break;
+        }
+        if (aloneWaits && !step.task.alone) {
+          continue;
+        }
         if (!_slots.hasFree) {
           // Nothing can begin until something ends.
           break;
@@ -336,16 +367,26 @@ final class Executor {
               place,
               outcomes,
               // Only where a second TASK could interleave. A one-step plan
-              // keeps its live output, and its members collect on their own.
-              collected: concurrent && plan.steps.length > 1,
+              // keeps its live output, and its members collect on their own
+              // — and so does a task that runs alone, since nothing can.
+              collected:
+                  concurrent && plan.steps.length > 1 && !step.task.alone,
             ).then((code) {
               unawaited(running.remove(name));
+              if (alone == name) {
+                alone = null;
+              }
               finished.add(name);
               if (code != null) {
                 stopped.add(name);
                 failures[order[name]!] = code;
               }
             });
+        if (step.task.alone) {
+          alone = name;
+          aloneWaits = false;
+          break;
+        }
       }
 
       if (running.isEmpty && !began) {
@@ -489,6 +530,9 @@ final class Executor {
       }
       place.release();
       rethrow;
+    }
+    if (bodies.narrowing(task.each ?? task.all ?? '') case final part?) {
+      outcomes.narrowed[task.name] = part;
     }
     if (resolved.isEmpty) {
       // A pure composite. Its `needs:` have already run; there is nothing of
@@ -825,6 +869,22 @@ final class Executor {
               timeout: timeout,
             );
           },
+          // `collect`, shown where `run` shows a program's output — after
+          // whatever the verb had half-written, for `start`'s reason.
+          relay: (argv, {workingDirectory, timeout}) {
+            final (:executable, :arguments, :directory, :runInShell) =
+                _prepareForVerb(body, argv, workingDirectory);
+            out.flush();
+            return starter.capture(
+              executable,
+              arguments,
+              workingDirectory: directory,
+              environment: body.environment,
+              runInShell: runInShell,
+              timeout: timeout,
+              echo: lines.call,
+            );
+          },
           // From the directory a start given the same `workingDirectory:`
           // would use, under the same rules — or the answer is about a
           // different program than the one `run` would start.
@@ -842,8 +902,8 @@ final class Executor {
   /// Refused in the same words a `run:` body is refused with — a name nothing
   /// on `PATH` answers to is still code 3, because "the toolchain is not
   /// installed" and "the code is broken" still reach different people. One
-  /// place for [VerbContext.run] and [VerbContext.capture] both, so the two
-  /// cannot come to disagree about what may start.
+  /// place for [VerbContext.run], [VerbContext.capture] and [VerbContext.tee],
+  /// so they cannot come to disagree about what may start.
   ({
     String executable,
     List<String> arguments,

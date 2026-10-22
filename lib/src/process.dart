@@ -252,6 +252,7 @@ final class SystemProcessStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    void Function(String line)? echo,
   }) async {
     final process = await Process.start(
       executable,
@@ -270,13 +271,26 @@ final class SystemProcessStarter implements ProcessStarter {
     // that is not UTF-8 must not turn a program's answer into an exception.
     final out = StringBuffer();
     final err = StringBuffer();
+    // Each stream keeps its own partial line, so a line is shown whole and
+    // a chunk boundary on one stream cannot splice it into the other's.
+    // `LogSink` is what `context.out` splits with, so what `tee` shows and
+    // what a verb writes are cut into lines by one rule.
+    final shown = [
+      if (echo != null) ...[LogSink(echo), LogSink(echo)],
+    ];
+    void Function(String) keep(StringBuffer whole, int stream) => shown.isEmpty
+        ? whole.write
+        : (chunk) {
+            whole.write(chunk);
+            shown[stream].write(chunk);
+          };
     final reading = [
       process.stdout
           .transform(const Utf8Decoder(allowMalformed: true))
-          .listen(out.write),
+          .listen(keep(out, 0)),
       process.stderr
           .transform(const Utf8Decoder(allowMalformed: true))
-          .listen(err.write),
+          .listen(keep(err, 1)),
     ];
     // Watched from the start, as `start` watches them. A stream that has
     // already closed when the process is waited on never tells a later
@@ -305,6 +319,9 @@ final class SystemProcessStarter implements ProcessStarter {
     await collecting.timeout(grace, onTimeout: () => const <void>[]);
     for (final subscription in reading) {
       await subscription.cancel();
+    }
+    for (final lines in shown) {
+      lines.flush();
     }
     return (exitCode: code, stdout: '$out', stderr: '$err');
   }

@@ -280,6 +280,15 @@ const _taskKeys = <String, Map<String, Object?>>{
         r'A set whose members replace the `$all` marker in `run:` or `args:`, '
         'in one invocation. The marker is a whole argument and appears once.',
   },
+  'alone': {
+    'type': 'boolean',
+    'description':
+        'Whether this task runs with nothing else running at all. Under `-j` '
+        'the run waits for what it has started to end, runs this, and starts '
+        'nothing until it has ended — a benchmark, which shares the machine '
+        'rather than one nameable thing. Its `each:` members run one at a '
+        'time.',
+  },
   'args': {
     ..._strings,
     'description': 'Extra arguments appended to the body.',

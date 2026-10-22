@@ -138,6 +138,10 @@ Future<int> regen(VerbContext context) async {
   //                   For a verb that has to read what a program said —
   //                   not `Process.run`, which loses everything above.
   //                   `timeout:` stops one that outlives it, with 124
+  // context.tee(...)
+  //                   `capture`, with the output shown as it arrives,
+  //                   the way `run` shows it — for a program the verb
+  //                   waits minutes on and then reads
   // context.which('code')
   //                   the file a start would find, or null — to decide
   //                   before starting anything. Takes the same
@@ -149,10 +153,13 @@ Future<int> regen(VerbContext context) async {
   // context.env      this machine's environment, with `env:` winning a clash
   // context.root     the repository root, absolute — what a set's members
   //                  and `in:` are relative to
+  // context.file('packages/a/x.dart'), context.directory(...)
+  //                  a path from the root, written with `/` — a member as it
+  //                  is — and a 2 for one that climbs or links out of it
   // context.workingDirectory
   //                  where the task runs: the root, or its `in:` under it —
-  //                  what a `remove` argument is read from. Join a set's
-  //                  member onto `root`, never onto this
+  //                  what a `remove` argument is read from. A set's member
+  //                  is `context.file(member)`, never joined onto this
   return 0;
 }
 ```
@@ -218,7 +225,8 @@ expect(code, ExitCode.success);
 
 `start` is how `context.run` starts a program, so a fake one records what the
 verb asked for. `locate` and `collect` stand behind `which` and `capture` the
-same way, and are needed only by a verb that calls them — one that does and
+same way, as `relay` stands behind `tee`, and are needed only by a verb that
+calls them — one that does and
 was not given them is told so, rather than answered "not found". `out` is a
 sink over `log` unless one is given; call `context.out.flush()` before
 reading `logged` if the verb's last line may lack a newline.
@@ -232,6 +240,10 @@ xtask <task> --keep-going    report every failure, not just the first —
                              across tasks and across an `each:`
 xtask <task> -j <n>          run n at once — which costs seeing their
                              output as it arrives. `-j auto` picks one
+xtask <task> --only <set>=<pattern>,…
+                             only the members of that set a pattern
+                             matches, wherever an `each:` or `all:`
+                             names it; with --dry-run too
 xtask --list                 every task, grouped under its gate set,
                              in the order `gates:` declares
 xtask --list --gate <name>   only the tasks in that gate set
@@ -243,6 +255,9 @@ xtask --check-ci             does the CI file still run the gate sets?
 xtask --dry-run <task>       print the resolved plan; run nothing
 xtask --emit-schema          print the JSON Schema for this file format
 xtask --check-schema <path>  does that file match --emit-schema?
+xtask --names                every gate set, task and set, one per line
+                             and tab-separated — what completion reads
+xtask --completion <shell>   a completion script for bash, zsh or fish
 xtask --version              print which engine this is
 ```
 
@@ -252,11 +267,43 @@ three. The file is looked for from the current directory **upwards**, so the
 command works from a subdirectory and every path inside the file stays relative
 to the repository root.
 
+A shell completes task, gate set and set names from the file, read when TAB
+is pressed, so nothing is regenerated after the file changes:
+
+```shell
+source <(xtask --completion bash)    # in ~/.bashrc
+source <(xtask --completion zsh)     # in ~/.zshrc, after compinit
+xtask --completion fish | source     # or save it under completions/
+```
+
+The script completes the command `xtask`, and each TAB starts it — so it is
+the installed or compiled one that makes this pleasant: `dart run` spends
+half a second starting before it can answer.
+
 Everything after `--` reaches the body of the **named** task, after its `args:`
 and its expanded `all:`, and nothing else in the plan sees it — so
 `xtask test -- -n "one test"` narrows the tests without also handing `-n` to
 the formatter. A task with no body of its own is refused rather than
 swallowing them.
+
+`--only` narrows a set for one run, without editing the file — two packages
+of seventeen while working on those two:
+
+```shell
+xtask pkg-test --only packages=packages/twk,packages/twk_rich
+```
+
+Every `each:` and `all:` in the plan that names the set gets only the members
+a pattern matches, in the set's order. A pattern is a glob, read against the
+member as text: `packages/twk` keeps that one and not `packages/twk_rich`, and
+`packages/twk*` keeps both, as does `packages/{twk,twk_rich}`: a comma inside
+braces is the pattern's, not a separator. Written again for the same set, the patterns add
+up. `--dry-run` prints the narrowed plan, and the summary says how much of the
+set ran — `over 2 of 17 members`. Each of these is a `2` rather than a smaller
+run: a set the file has not got, a set nothing in the plan expands, a pattern
+that is not one, and a pattern that matches no member — the last when the set
+is read, since that is when its members are known. `--check-ci` reports a step
+that narrows a gate set: the job reads as the gate, and runs part of it.
 
 ## Seeing what will happen
 
@@ -577,6 +624,17 @@ run **flaky**, which is a different kind of wrong from making it slow. A number
 would be one machine's width written into a file the rest of them share, so
 there is no key for it.
 
+`alone: true` is the same fact about the whole machine. A benchmark shares
+nothing nameable with what it must not overlap — it shares the CPU — and the
+way to say that with tokens was to list every task of the gate in its
+`needs:`, so the next task added to the gate ran beside it. Under `-j` the run
+waits for what it has started to end, runs the task, and starts nothing else
+until it has ended; its `each:` members run one at a time, and its output is
+shown as it arrives, because nothing can write beside it. Once it is ready and
+waiting, nothing else starts — not a task behind it in the plan, and not one
+ahead of it that becomes ready later — or a steady supply of them would keep it
+waiting.
+
 ## Exit codes
 
 An exit code is not a success flag; it is the shortest possible bug report.
@@ -645,6 +703,7 @@ registry will not accept that version again.
 | `gate` | the gate sets this task belongs to |
 | `serial` | this task's `each:` members must not overlap, whatever `-j` says |
 | `exclusive` | tokens this task holds alone while it runs — which makes its own `each:` members serial too |
+| `alone` | nothing else runs while this task does, whatever `-j` says |
 | `interruptible` | a failure elsewhere may stop this task where it stands |
 | `timeout` | seconds a `run:` body may take before it is killed — per member under `each:` |
 
@@ -675,12 +734,15 @@ is read — by every command, a run included — because the task contradicts
 itself: `all:` with `each:`, and `timeout:` or `interruptible: true` without a
 `run:` body.
 
-Three more are `--validate`'s, since they are about the file as a whole rather
+More are `--validate`'s, since they are about the file as a whole rather
 than one task's keys, and a run does not stop for them: `serial:` without
 `each:`, which leaves nothing to keep in order; an `exclusive:` token that one
 task without an `each:` holds and no other asks for, which keeps nothing apart;
-and a task with no body, no `needs:` and no `then:`, which does nothing when
-run. Put `--validate` in the gate a person runs to have them caught.
+a task with no body, no `needs:` and no `then:`, which does nothing when
+run; and `alone:` beside `exclusive:`, `serial:` or `interruptible:`, or on a
+task with no body — each of those keys keeps apart, orders or stops what
+running alone already leaves out. Put `--validate` in the gate a person runs
+to have them caught.
 
 ### A fuller example
 

@@ -30,12 +30,16 @@ final class RunTask extends Request {
     this.arguments = const [],
     this.keepGoing = false,
     this.concurrency = 1,
+    this.only = const {},
   });
 
   final String task;
 
   /// What followed `--`, for [task]'s body alone.
   final List<String> arguments;
+
+  /// `--only`: the members of each named set this run is narrowed to.
+  final Narrowing only;
 
   /// `--keep-going`: report every failure rather than the first.
   final bool keepGoing;
@@ -46,13 +50,30 @@ final class RunTask extends Request {
 
 /// `xtask --dry-run <task> [-- <args>]` — print what that would come to .
 final class DryRunTask extends Request {
-  const DryRunTask(this.task, [this.arguments = const []]);
+  const DryRunTask(
+    this.task, [
+    this.arguments = const [],
+    this.only = const {},
+  ]);
 
   final String task;
 
   /// What followed `--`, for [task]'s body alone.
   final List<String> arguments;
+
+  /// `--only`, as the run it describes would be narrowed.
+  final Narrowing only;
 }
+
+/// What `--only` asked for: per set, the patterns a member has to match to be
+/// kept, in the order they were written.
+///
+/// **On the command line, because the file is the wrong place for it.**
+/// Which packages a run reaches today is one person's question about one
+/// afternoon, and a set edited for it is a set somebody commits. Filtering
+/// in a verb from an environment variable was the other way, and then the
+/// run said `over 17 members` about two, and `--dry-run` printed seventeen.
+typedef Narrowing = Map<String, List<String>>;
 
 /// `xtask --list [--gate <name>]` — every task with its description.
 final class ListTasks extends Request {
@@ -128,6 +149,27 @@ final class CheckSchema extends Request {
   final String path;
 }
 
+/// `xtask --names` — every gate set, task and set the file declares, one per
+/// line, for a completion script to read.
+///
+/// **A window on the file for a program, where `--list` is one for a
+/// person.** Tab-separated and unaligned, with the kind first, so a script
+/// can tell a gate set from a task without knowing the file.
+final class ListNames extends Request {
+  const ListNames();
+}
+
+/// `xtask --completion <shell>` — print a completion script for [shell].
+///
+/// Answered without a file, as `--emit-schema` is: the script is the same
+/// for every repository and asks `--names` for what this one declares.
+final class ShowCompletion extends Request {
+  const ShowCompletion(this.shell);
+
+  /// One of `completionShells`.
+  final String shell;
+}
+
 /// The usage text, printed on request and as the error message.
 final class ShowUsage extends Request {
   const ShowUsage([this.problem]);
@@ -151,17 +193,31 @@ const modes = {
   '--dry-run',
   '--emit-schema',
   '--check-schema',
+  '--names',
+  '--completion',
   '--version',
 };
+
+/// The options that are not modes: how a run happens, or what `--list`
+/// narrows to. With [modes], every option the usage names.
+const runOptions = {'--gate', '--keep-going', '--jobs', '--only'};
+
+/// The options in [runOptions] that take a value after them.
+const runOptionsTakingAValue = {'--gate', '--jobs', '--only'};
+
+/// The shells `--completion` writes a script for.
+const completionShells = ['bash', 'zsh', 'fish'];
 
 /// The modes that want a name after them, and refuse an empty one.
 ///
 /// The rest take none, and the sentence for those is that they take none.
-const _modesTakingAName = {
+/// Public because a completion script has to know what follows each one.
+const modesTakingAName = {
   '--why',
   '--gate-members',
   '--dry-run',
   '--check-schema',
+  '--completion',
 };
 
 /// How wide `-j auto` may go, whatever the machine is.
@@ -202,6 +258,7 @@ Request parseArguments(
   var keepGoing = false;
   var concurrency = 1;
   var jobsWritten = false;
+  final only = <String, List<String>>{};
 
   final passed = <String>[];
   var separated = false;
@@ -235,6 +292,25 @@ Request parseArguments(
       if (gate == null || gate.isEmpty) {
         return const ShowUsage('`--gate` needs the name of a gate set');
       }
+      continue;
+    }
+
+    if (argument == '--only' || argument.startsWith('--only=')) {
+      final asked = argument == '--only'
+          ? rest.isNotEmpty && !rest.first.startsWith('-')
+                ? rest.removeAt(0)
+                : null
+          : argument.substring('--only='.length);
+      final refusal = _narrowingRefusal(asked);
+      if (refusal != null) {
+        return ShowUsage(refusal);
+      }
+      final at = asked!.indexOf('=');
+      // Written twice for one set, the patterns add up: the second says
+      // which more members to keep, never which of the first to drop.
+      only
+          .putIfAbsent(asked.substring(0, at), () => [])
+          .addAll(_patterns(asked.substring(at + 1)));
       continue;
     }
 
@@ -306,7 +382,7 @@ Request parseArguments(
       // mistake, and neither is "there is no task called ``".
       if (value.isEmpty) {
         return ShowUsage(
-          _modesTakingAName.contains(joined)
+          modesTakingAName.contains(joined)
               ? '`$joined` needs a name after it, and there is nothing after '
                     'the `=`'
               : '`$joined` takes no name, so there is nothing for the `=` to '
@@ -349,6 +425,15 @@ Request parseArguments(
     // — the same command line answering differently depending on the host.
     return ShowUsage(
       '`-j` is about a run, and `$mode` does not run anything',
+    );
+  }
+
+  if (only.isNotEmpty && mode != null && mode != '--dry-run') {
+    // A set is expanded by a run, and `--dry-run` is the same expansion
+    // printed. Every other mode answers from the file without expanding
+    // one — what `--why` says reaches a task does not depend on its members.
+    return ShowUsage(
+      '`--only` narrows the sets a run expands, and `$mode` expands none',
     );
   }
 
@@ -410,6 +495,31 @@ Request parseArguments(
           );
   }
 
+  if (mode == '--names') {
+    return operands.isEmpty
+        ? const ListNames()
+        : ShowUsage(
+            '`--names` lists the whole file and takes no name, and it was '
+            'given `${operands.first}`',
+          );
+  }
+
+  if (mode == '--completion') {
+    if (operands.length != 1) {
+      return ShowUsage(
+        '`--completion` writes the script for one shell — '
+        '${_shells()}',
+      );
+    }
+    final shell = operands.single;
+    return completionShells.contains(shell)
+        ? ShowCompletion(shell)
+        : ShowUsage(
+            '`--completion $shell` is not a shell it writes for — '
+            '${_shells()}',
+          );
+  }
+
   if (mode == '--check-ci') {
     return operands.isEmpty
         ? const CheckCi()
@@ -442,7 +552,7 @@ Request parseArguments(
 
   if (mode == '--dry-run') {
     return operands.length == 1
-        ? DryRunTask(operands.single, passed)
+        ? DryRunTask(operands.single, passed, Map.unmodifiable(only))
         : const ShowUsage('`--dry-run` needs one task to resolve');
   }
 
@@ -457,8 +567,9 @@ Request parseArguments(
     // `xtask --keep-going` and `xtask -j 2` name no task, and "it was given"
     // with an empty list to interpolate is a sentence that stops mid-way.
     return const ShowUsage(
-      'a run needs the name of one task. `--keep-going` and `-j` say how a run '
-      'happens, not what it runs — `xtask --list` shows what there is',
+      'a run needs the name of one task. `--keep-going`, `-j` and `--only` say '
+      'how a run happens, not what it runs — `xtask --list` shows what there '
+      'is',
     );
   }
   return operands.length == 1
@@ -467,12 +578,59 @@ Request parseArguments(
           arguments: passed,
           keepGoing: keepGoing,
           concurrency: concurrency,
+          only: Map.unmodifiable(only),
         )
       : ShowUsage(
           'xtask runs one task at a time, and it was given '
           '${operands.map((o) => '`$o`').join(' and ')}',
         );
 }
+
+/// [written] split into patterns at each comma outside braces.
+///
+/// **Not at every comma**, because a glob set's own patterns take braces and
+/// `--only` reads the same patterns: `packages/{core,cli}` is one pattern
+/// for two packages, and split at its comma it was two broken ones.
+List<String> _patterns(String written) {
+  final patterns = <String>[];
+  var depth = 0;
+  var start = 0;
+  for (var at = 0; at < written.length; at++) {
+    switch (written[at]) {
+      case '{':
+        depth++;
+      case '}' when depth > 0:
+        depth--;
+      case ',' when depth == 0:
+        patterns.add(written.substring(start, at));
+        start = at + 1;
+    }
+  }
+  return patterns..add(written.substring(start));
+}
+
+/// Why [written] is not `<set>=<pattern>[,<pattern>…]`, or null when it is.
+String? _narrowingRefusal(String? written) {
+  const shape = 'write `--only <set>=<pattern>,<pattern>`';
+  if (written == null || written.isEmpty) {
+    return '`--only` needs a set and the members to keep — $shape';
+  }
+  final at = written.indexOf('=');
+  if (at < 0) {
+    return '`--only $written` names no members to keep — $shape';
+  }
+  if (at == 0) {
+    return '`--only $written` names no set — $shape';
+  }
+  // An empty pattern would keep nothing, which is either a typo or a run
+  // that does nothing on purpose; neither is something to guess between.
+  if (_patterns(written.substring(at + 1)).any((p) => p.isEmpty)) {
+    return '`--only $written` has an empty pattern — $shape';
+  }
+  return null;
+}
+
+String _shells() => 'write one of ${completionShells.join(', ')}';
 
 /// Whether [written] is a number of jobs this parser would accept.
 bool isAJobCount(String written) =>
@@ -487,6 +645,10 @@ const usage = [
   '                               across tasks and across an `each:`',
   '  xtask <task> -j <n>          run n at once — which costs seeing their',
   '                               output as it arrives. `-j auto` picks one',
+  '  xtask <task> --only <set>=<pattern>,…',
+  '                               only the members of that set a pattern',
+  '                               matches, wherever an `each:` or `all:`',
+  '                               names it; with --dry-run too',
   '  xtask --list                 every task, grouped under its gate set,',
   '                               in the order `gates:` declares',
   '  xtask --list --gate <name>   only the tasks in that gate set',
@@ -498,6 +660,9 @@ const usage = [
   '  xtask --dry-run <task>       print the resolved plan; run nothing',
   '  xtask --emit-schema          print the JSON Schema for this file format',
   '  xtask --check-schema <path>  does that file match --emit-schema?',
+  '  xtask --names                every gate set, task and set, one per line',
+  '                               and tab-separated — what completion reads',
+  '  xtask --completion <shell>   a completion script for bash, zsh or fish',
   '  xtask --version              print which engine this is',
   '',
   'the file is `$xtaskFileName`, at the repository root.',

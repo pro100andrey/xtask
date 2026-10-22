@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+
+- `--only <set>=<pattern>,…` narrows a set for one run: every `each:` and
+  `all:` in the plan that names it gets only the members a pattern matches,
+  and `--dry-run` takes it too. A set the file has not got, a set nothing in
+  the plan expands, and a pattern matching no member are each a `2`. The
+  summary says `over 2 of 17 members`, and `--check-ci` reports a step that
+  runs a gate set narrowed.
+- `alone: true`: under `-j` the run waits for what it has started, runs the
+  task, and starts nothing else until it has ended. `--validate` refuses it
+  beside `exclusive:`, `serial:` or `interruptible:`, and on a task with no
+  body.
+- For verbs: `context.tee(argv, workingDirectory:, timeout:)`, which is
+  `capture` with the output shown as it arrives. A hand-built `VerbContext`
+  gives it through `relay:`.
+- For verbs: `context.file(path)` and `context.directory(path)`, a path from
+  the repository root written with `/`, ending the task with `2` when it
+  climbs out of the root or leads out through a link.
+- `--completion bash|zsh|fish` prints a completion script, which reads task,
+  gate set and set names from `--names` when TAB is pressed.
+- A name that is not a task is answered with the near ones — ``did you mean
+  `check`?`` — or with `xtask --list`.
+
+### Fixed
+
+- An argument holding `%` is refused for a batch file, as `&` and `^` are:
+  `cmd.exe` expands `%VAR%` on the command line before the file sees it.
+- `context.out` hands on a line written with `\r\n` without its `\r`.
+
 ## 0.3.0
 
 ### Breaking

@@ -15,7 +15,9 @@ import 'package:xtask/xtask.dart';
 Future<int> countLines(VerbContext context) async {
   var lines = 0;
   for (final relative in context.args) {
-    lines += File(inside(context, relative)).readAsLinesSync().length;
+    // From the repository root, where a set's members are relative to, and
+    // refused with a 2 if one leads outside it.
+    lines += context.file(relative).readAsLinesSync().length;
   }
   final files = context.args.length;
   context.log('$lines lines in $files ${files == 1 ? 'file' : 'files'}');
@@ -25,13 +27,6 @@ Future<int> countLines(VerbContext context) async {
   // only ever manages "it failed".
   return ExitCode.success;
 }
-
-/// A set's members are relative to the repository root, and a verb is told
-/// where that is rather than having to guess — `context.root`, not
-/// `context.workingDirectory`, which is where the task runs and moves with
-/// `in:`.
-String inside(VerbContext context, String relative) =>
-    '${context.root}${Platform.pathSeparator}$relative';
 
 Future<void> main(List<String> args) async {
   // Assigned, not discarded: `runXtask` answers with the exit code, and a

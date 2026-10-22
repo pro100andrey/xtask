@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -147,6 +148,9 @@ final class FakeStarter implements ProcessStarter {
   /// Executables run through `capture`, in order.
   final captured = <Started>[];
 
+  /// Executables whose capture was shown as well as kept, by name.
+  final echoed = <String>[];
+
   @override
   Future<Captured> capture(
     String executable,
@@ -155,8 +159,12 @@ final class FakeStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    void Function(String line)? echo,
   }) async {
     final name = p.basename(executable);
+    if (echo != null) {
+      echoed.add(name);
+    }
     captured.add(
       Started(
         executable,
@@ -168,6 +176,11 @@ final class FakeStarter implements ProcessStarter {
       ),
     );
     final (out, err) = prints[name] ?? ('', '');
+    if (echo != null) {
+      for (final text in [out, err]) {
+        const LineSplitter().convert(text).forEach(echo);
+      }
+    }
     return (
       exitCode: codes[name] ?? ExitCode.success,
       stdout: out,
@@ -1589,7 +1602,16 @@ void main() {
     );
 
     test('every character cmd acts on is covered', () async {
-      for (final bad in ['a&b', 'a|b', 'a<b', 'a>b', 'a^b', 'a(b', 'a)b']) {
+      for (final bad in [
+        'a&b',
+        'a|b',
+        'a<b',
+        'a>b',
+        'a^b',
+        'a(b',
+        'a)b',
+        '%PATH%',
+      ]) {
         starter = FakeStarter();
         logged = [];
         final code = await runFile(
@@ -1598,6 +1620,14 @@ void main() {
           resolver: windowsShims(),
         );
         expect(code, ExitCode.invalidFile, reason: bad);
+        // `%` is not an operator, and the sentence says what it is.
+        expect(
+          logged.join('\n'),
+          bad.contains('%')
+              ? contains('replaces with a variable')
+              : contains('shell operator'),
+          reason: bad,
+        );
       }
     });
 
@@ -2040,6 +2070,91 @@ void main() {
     });
   });
 
+  group('`alone:` runs with nothing beside it', () {
+    List<String> names() =>
+        starter.started.map((s) => p.basename(s.executable)).toList();
+
+    test(
+      'it waits for what is running, and nothing starts beside it',
+      () async {
+        // The shape a benchmark had to be written in before: `needs:` naming
+        // every task of the gate, so that the next one added ran beside it.
+        starter = FakeStarter()
+          ..holds['ruff'] = Completer<void>()
+          ..holds['bench'] = Completer<void>();
+        final running = runFile(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, run: [ruff]}\n'
+              '  b: {desc: y, alone: true, run: [bench]}\n'
+              '  c: {desc: z, run: [mypy]}\n'
+              '  all: {desc: w, needs: [a, b, c]}\n',
+          'all',
+          concurrency: 3,
+        );
+        await pumpEventQueue();
+        expect(
+          names(),
+          ['ruff'],
+          reason: '`b` waits for `a`, and `c` does not overtake it',
+        );
+        starter.holds['ruff']!.complete();
+        await pumpEventQueue();
+        expect(names(), ['ruff', 'bench'], reason: '`c` waits for `b` to end');
+        starter.holds['bench']!.complete();
+        expect(await running, ExitCode.success);
+        expect(names(), ['ruff', 'bench', 'mypy']);
+      },
+    );
+
+    test('and a task ahead of it that becomes ready waits too', () async {
+      // `b` is ahead of `bench` in the plan and becomes ready only when `a`
+      // ends — the moment `bench` was waiting for.
+      starter = FakeStarter()
+        ..holds['ruff'] = Completer<void>()
+        ..holds['bench'] = Completer<void>();
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [ruff]}\n'
+            '  b: {desc: y, needs: [a], run: [mypy]}\n'
+            '  bench: {desc: z, alone: true, run: [bench]}\n'
+            '  all: {desc: w, needs: [a, b, bench]}\n',
+        'all',
+        concurrency: 3,
+      );
+      await pumpEventQueue();
+      expect(names(), ['ruff']);
+      starter.holds['ruff']!.complete();
+      await pumpEventQueue();
+      expect(names(), ['ruff', 'bench'], reason: '`b` did not overtake it');
+      starter.holds['bench']!.complete();
+      expect(await running, ExitCode.success);
+      expect(names(), ['ruff', 'bench', 'mypy']);
+    });
+
+    test('its members run one at a time, and stream', () async {
+      given(['pkg/a/x', 'pkg/b/x']);
+      starter = FakeStarter()..holds['bench'] = Completer<void>();
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  b: {desc: y, each: pkgs, in: $each, alone: true, run: [bench]}'
+            '\n'
+            '  c: {desc: z, run: [mypy]}\n'
+            '  all: {desc: w, needs: [b, c]}\n',
+        'all',
+        concurrency: 4,
+      );
+      await pumpEventQueue();
+      expect(names(), ['bench'], reason: 'one member, and nothing else');
+      starter.holds['bench']!.complete();
+      expect(await running, ExitCode.success);
+      expect(names(), ['bench', 'bench', 'mypy']);
+      // Nothing can write beside it, so nothing is collected.
+      expect(starter.streamed, containsAllInOrder(['bench', 'bench']));
+    });
+  });
+
   group('a failing member does not silence the rest', () {
     Future<int> overThree({required bool keepGoing}) {
       given(['pkg/one/x', 'pkg/two/x', 'pkg/three/x']);
@@ -2244,6 +2359,80 @@ void main() {
       expect(logged, contains('git is: git version 2'));
     });
 
+    test('`tee` shows the output as `run` does, and keeps it', () async {
+      // A benchmark that takes minutes and whose report the verb then reads:
+      // `run` kept nothing and `capture` showed nothing until the end.
+      starter = FakeStarter({'bench': 0})
+        ..prints['bench'] = ('fib 1.2ms\nsort 3.4ms\n', 'warming up\n');
+      Captured? seen;
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, in: sub, do: bench}\n',
+        'a',
+        verbs: {
+          'bench': (context) async {
+            context.out.write('measuring: ');
+            seen = await context.tee(['bench', '--json']);
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.success);
+      expect(seen, (
+        exitCode: 0,
+        stdout: 'fib 1.2ms\nsort 3.4ms\n',
+        stderr: 'warming up\n',
+      ));
+      expect(starter.echoed, ['bench']);
+      expect(
+        logged,
+        containsAllInOrder(['measuring: ', 'fib 1.2ms', 'sort 3.4ms']),
+        reason: 'flushed before, as `run` is, and shown a line at a time',
+      );
+      expect(
+        starter.captured.single.workingDirectory,
+        p.join(root.path, 'sub'),
+      );
+    });
+
+    test('`tee` of a missing tool is the 3 `capture` gives', () async {
+      final resolver = ExecutableResolver(
+        environment: const {'PATH': '/nowhere'},
+        windows: false,
+        isRunnable: (_) => false,
+      );
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: bench}\n',
+        'a',
+        resolver: resolver,
+        verbs: {
+          'bench': (context) async {
+            await context.tee(['bench']);
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.missingTool);
+      expect(
+        logged.join('\n'),
+        contains(resolver.missingToolMessage('bench', from: root.path)),
+      );
+    });
+
+    test('`tee` keeps to the repository, as `capture` does', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: bench}\n',
+        'a',
+        verbs: {
+          'bench': (context) async {
+            await context.tee(['bench'], workingDirectory: '../elsewhere');
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(starter.captured, isEmpty);
+    });
+
     test('`which` is the lookup a start would make', () async {
       final found = <String?>[];
       await runFile(
@@ -2286,6 +2475,26 @@ void main() {
       },
     );
 
+    test(
+      r'a line ended with CRLF reaches the log without its `\r`',
+      () async {
+        await runFile(
+          'version: 1\ntasks:\n  a: {desc: x, do: talk}\n',
+          'a',
+          verbs: {
+            'talk': (context) async {
+              context.out
+                ..write('one\r\ntwo\r\n')
+                ..write('tail\r');
+              return ExitCode.success;
+            },
+          },
+        );
+        expect(logged, containsAllInOrder(['one', 'two', 'tail']));
+        expect(logged.where((line) => line.contains('\r')), isEmpty);
+      },
+    );
+
     test('a hand-built context says what it lacks rather than "absent"', () {
       final context = VerbContext(
         args: const [],
@@ -2297,6 +2506,86 @@ void main() {
       );
       expect(() => context.which('x'), throwsStateError);
       expect(() => context.capture(['x']), throwsStateError);
+      expect(() => context.tee(['x']), throwsStateError);
+    });
+  });
+
+  group('a verb reads and writes inside the repository', () {
+    VerbContext context() => VerbContext(
+      args: const [],
+      env: const {},
+      root: root.path,
+      workingDirectory: p.join(root.path, 'sub'),
+      log: (_) {},
+      start: (_, {workingDirectory}) async => 0,
+    );
+
+    Matcher refusedWith2() => throwsA(
+      isA<RunFailure>().having((f) => f.code, 'code', ExitCode.invalidFile),
+    );
+
+    test('a path is read from the root, written with `/`', () {
+      expect(
+        context().file('packages/a/x.dart').path,
+        p.join(root.path, 'packages', 'a', 'x.dart'),
+        reason: 'from the root, not the working directory, as a member is',
+      );
+      expect(
+        context().directory('packages').path,
+        p.join(root.path, 'packages'),
+      );
+      expect(
+        context().file(p.join(root.path, 'a.txt')).path,
+        p.join(root.path, 'a.txt'),
+        reason: 'an absolute path inside the root is allowed',
+      );
+    });
+
+    test('one that climbs or starts outside is a 2', () {
+      expect(() => context().file('../x'), refusedWith2());
+      expect(() => context().file('a/../../x'), refusedWith2());
+      expect(() => context().directory(p.dirname(root.path)), refusedWith2());
+    });
+
+    test('and so is one that leads out through a link, there or not', () {
+      final outside = Directory.systemTemp.createTempSync('xtask_out');
+      addTearDown(() => outside.deleteSync(recursive: true));
+      Link(p.join(root.path, 'out')).createSync(outside.path);
+      Link(p.join(root.path, 'gone')).createSync(p.join(outside.path, 'nope'));
+      expect(() => context().file('out/new.txt'), refusedWith2());
+      expect(() => context().directory('out/a/b'), refusedWith2());
+      expect(() => context().file('gone'), refusedWith2());
+      expect(
+        context().file('in/new.txt').path,
+        p.join(root.path, 'in', 'new.txt'),
+      );
+    }, testOn: '!windows');
+
+    test('a directory it cannot search is not called outside', () {
+      final locked = Directory(p.join(root.path, 'locked'))..createSync();
+      Directory(p.join(locked.path, 'in')).createSync();
+      Process.runSync('chmod', ['000', locked.path]);
+      addTearDown(() => Process.runSync('chmod', ['755', locked.path]));
+      expect(
+        context().file('locked/in/x.txt').path,
+        p.join(root.path, 'locked', 'in', 'x.txt'),
+        reason: 'the write will say it is denied; the boundary has no say',
+      );
+    }, testOn: '!windows');
+
+    test('and the run answers 2 for it', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: write}\n',
+        'a',
+        verbs: {
+          'write': (context) async {
+            context.file('../elsewhere.txt').writeAsStringSync('x');
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(logged.join('\n'), contains('reaches outside the repository'));
     });
   });
 
@@ -2698,6 +2987,43 @@ void main() {
         runInShell: false,
       );
       expect(answered, (exitCode: 3, stdout: 'out', stderr: 'err'));
+    }, testOn: '!windows');
+
+    test('`capture` with an echo shows each line and keeps the text', () async {
+      final shown = <String>[];
+      final answered =
+          await SystemProcessStarter(
+            grace: const Duration(milliseconds: 200),
+          ).capture(
+            '/bin/sh',
+            ['-c', r'printf "one\r\ntw"; printf "o\nthree"; printf "e\n" >&2'],
+            workingDirectory: Directory.current.path,
+            environment: const {},
+            runInShell: false,
+            echo: shown.add,
+          );
+      expect(answered.stdout, 'one\r\ntwo\nthree', reason: 'as written');
+      expect(answered.stderr, 'e\n');
+      expect(shown, containsAll(['one', 'two', 'three', 'e']));
+      expect(shown, hasLength(4), reason: 'a chunk boundary splits no line');
+    }, testOn: '!windows');
+
+    test('`capture` with an echo still stops at its timeout', () async {
+      final shown = <String>[];
+      final answered =
+          await SystemProcessStarter(
+            grace: const Duration(milliseconds: 200),
+          ).capture(
+            '/bin/sh',
+            ['-c', 'echo started; sleep 30'],
+            workingDirectory: Directory.current.path,
+            environment: const {},
+            runInShell: false,
+            timeout: const Duration(milliseconds: 300),
+            echo: shown.add,
+          );
+      expect(answered.exitCode, SystemProcessStarter.timedOut);
+      expect(shown, ['started']);
     }, testOn: '!windows');
 
     test('a flush that never answers does not end the run', () async {

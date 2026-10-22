@@ -274,6 +274,10 @@
             },
             "description": "Tokens this task holds alone while it runs. Two tasks the graph calls independent may still share a port or a browser; naming what they share is what keeps them apart."
           },
+          "alone": {
+            "type": "boolean",
+            "description": "Whether this task runs with nothing else running at all. Under `-j` the run waits for what it has started to end, runs this, and starts nothing until it has ended — a benchmark, which shares the machine rather than one nameable thing. Its `each:` members run one at a time."
+          },
           "timeout": {
             "type": "integer",
             "minimum": 1,

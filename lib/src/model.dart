@@ -31,6 +31,7 @@ const taskKeys = <String>{
   'serial',
   'interruptible',
   'exclusive',
+  'alone',
   'timeout',
 };
 
@@ -257,6 +258,7 @@ final class Task with Located {
     this.serial = false,
     this.interruptible = false,
     this.exclusive = const [],
+    this.alone = false,
     this.timeout,
   });
 
@@ -338,6 +340,18 @@ final class Task with Located {
   /// name is something `--validate` can cross-check and a count is one
   /// machine's width written into a file every other machine reads.
   final List<String> exclusive;
+
+  /// Whether this task runs with nothing else running at all.
+  ///
+  /// [exclusive] said it between the tasks that name one token, and a
+  /// benchmark shares nothing nameable with what it must not overlap — it
+  /// shares the machine. The way to say that with tokens was to list every
+  /// task of the gate in its `needs:`, and the next task added to the gate
+  /// ran beside the benchmark with nothing to say it should not. Under `-j`
+  /// the run waits for everything already started to end, runs this, and
+  /// starts nothing else until it has ended; its own `each:` members run one
+  /// at a time, for the same reason.
+  final bool alone;
 
   /// The gate sets this task belongs to.
   final List<String> gate;

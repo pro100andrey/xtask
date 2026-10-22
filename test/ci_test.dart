@@ -201,6 +201,51 @@ jobs:
       expect(problem, contains('run nothing of it'));
     });
 
+    test('a run narrowed by `--only` is part of the gate, not it', () {
+      steps('''
+      - run: dart run :xtask ci-analyze --only packages=packages/twk
+''');
+      final found = check();
+      expect(found.invocations, isEmpty, reason: 'the gate is not run whole');
+      expect(found.problems.single, isA<RunsPartOfAGate>());
+      expect(said().single, contains('with `--only` over `packages`'));
+    });
+
+    test('and is still asked what any gate step is asked', () {
+      steps('''
+      - run: dart run :xtask ci-analyse --only packages=a
+      - run: dart run :xtask analyze --only packages=a
+      - run: dart run :xtask ci-analyze --only packages=a
+        continue-on-error: true
+''');
+      expect(check().problems.map((p) => p.runtimeType), [
+        RunsAnUndeclaredGate,
+        RunsATaskNotAGate,
+        RunsAGateThatCannotFail,
+        RunsPartOfAGate,
+      ]);
+    });
+
+    test('and the marker excuses the narrowing, not the name', () {
+      steps('''
+      - run: dart run :xtask ci-analyze
+      - run: dart run :xtask ci-analyse --only p=a # xtask: not a gate — one
+      - run: dart run :xtask analyze --only p=a # xtask: not a gate — two
+''');
+      expect(check().problems.map((p) => p.runtimeType), [
+        RunsAnUndeclaredGate,
+        RunsATaskNotAGate,
+      ]);
+    });
+
+    test('and one that says why it is not the gate is excused', () {
+      steps('''
+      - run: dart run :xtask ci-analyze
+      - run: dart run :xtask ci-analyze --only p=a # xtask: not a gate — smoke
+''');
+      expect(check().problems, isEmpty, reason: '${refusals(check())}');
+    });
+
     test('but a mode that names nothing is a question, not a problem', () {
       steps('''
       - run: dart run :xtask ci-analyze

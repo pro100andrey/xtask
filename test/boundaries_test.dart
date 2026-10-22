@@ -65,8 +65,12 @@ void main() {
         //
         // `stdout` and `stderr` are only the terminal where `dart:io` is
         // imported; elsewhere they are names — `Captured`'s fields, which a
-        // verb reads off a program it ran — and `print` needs no import.
-        if ((source.contains("import 'dart:io'") &&
+        // verb reads off a program it ran — and `print` needs no import. Nor
+        // where the import shows only other names: `context.dart` takes
+        // `File` and `Directory` from it, and its `stdout` is `Captured`'s.
+        if ((RegExp(
+                  r"import 'dart:io'(;|\s+show[^;]*\b(stdout|stderr)\b)",
+                ).hasMatch(source) &&
                 RegExp(r'\b(stdout|stderr)[.,)]').hasMatch(source)) ||
             RegExp(r'(?<![.\w])print\(').hasMatch(source))
           file,

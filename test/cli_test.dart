@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/cli.dart';
+import 'package:xtask/src/completion.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
@@ -50,6 +51,7 @@ final class FakeStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    void Function(String line)? echo,
   }) async {
     started.add(Started(executable, arguments, workingDirectory));
     return (
@@ -259,6 +261,122 @@ void main() {
         for (final mode in ['--list', '--validate', '--dry-run']) {
           final usage = parseArguments([mode, 'x', '--keep-going']);
           expect(usage, isA<ShowUsage>(), reason: '$mode accepted it');
+        }
+      });
+    });
+
+    group('--only', () {
+      test('a set and its patterns, in either spelling, adding up', () {
+        final request =
+            parseArguments([
+                  'pkg-test',
+                  '--only',
+                  'packages=packages/twk,packages/twk_rich',
+                  '--only=flavours=dev',
+                  '--only',
+                  'packages=tools/*',
+                ])
+                as RunTask;
+        expect(request.only, {
+          'packages': ['packages/twk', 'packages/twk_rich', 'tools/*'],
+          'flavours': ['dev'],
+        });
+        expect((parseArguments(['check']) as RunTask).only, isEmpty);
+        expect(
+          (parseArguments(['a', '--only', 'p=packages/{core,cli},tools/*'])
+                  as RunTask)
+              .only,
+          {
+            'p': ['packages/{core,cli}', 'tools/*'],
+          },
+          reason: 'a comma inside braces belongs to the glob',
+        );
+      });
+
+      test('and a dry run is narrowed as the run would be', () {
+        final request =
+            parseArguments(['--dry-run', 'a', '--only', 's=x']) as DryRunTask;
+        expect(request.only, {
+          's': ['x'],
+        });
+      });
+
+      test('what is not a set and its members is refused', () {
+        for (final written in [
+          ['--only'],
+          ['--only', 'packages'],
+          ['--only', '=x'],
+          ['--only', 'packages='],
+          ['--only', 'packages=a,,b'],
+          ['--only='],
+        ]) {
+          expect(
+            parseArguments(['a', ...written]),
+            isA<ShowUsage>(),
+            reason: written.join(' '),
+          );
+        }
+      });
+
+      test('a mode that expands no set has nothing for it to narrow', () {
+        for (final mode in ['--why', '--list', '--validate']) {
+          final usage = parseArguments([
+            mode,
+            if (mode == '--why') 'a',
+            '--only',
+            's=x',
+          ]);
+          expect(usage, isA<ShowUsage>(), reason: '$mode accepted it');
+          expect((usage as ShowUsage).problem, contains('expands none'));
+        }
+      });
+    });
+
+    group('--names and --completion', () {
+      test('the one lists, the other is for one shell', () {
+        expect(parseArguments(['--names']), isA<ListNames>());
+        expect(parseArguments(['--names', 'x']), isA<ShowUsage>());
+        expect(
+          (parseArguments(['--completion', 'zsh']) as ShowCompletion).shell,
+          'zsh',
+        );
+        expect(
+          (parseArguments(['--completion=fish']) as ShowCompletion).shell,
+          'fish',
+        );
+        for (final written in [
+          ['--completion'],
+          ['--completion', 'tcsh'],
+          ['--completion', 'bash', 'zsh'],
+        ]) {
+          expect(
+            parseArguments(written),
+            isA<ShowUsage>(),
+            reason: written.join(' '),
+          );
+        }
+      });
+
+      test('a script offers every option the usage names', () {
+        // The scripts carry the flags, so a flag added to the grammar and
+        // not to them is one TAB never offers.
+        final named = {
+          for (final line in usage)
+            ...RegExp(r'(?<![\w-])--[a-z][a-z-]*')
+                .allMatches(line)
+                .map(
+                  (m) => m[0]!,
+                ),
+        };
+        expect(named.difference(completedOptions.toSet()), isEmpty);
+        for (final shell in completionShells) {
+          for (final option in completedOptions) {
+            expect(
+              completionScript(shell),
+              contains(shell == 'fish' ? '-l ${option.substring(2)}' : option),
+              reason: '$shell does not offer $option',
+            );
+          }
         }
       });
     });
@@ -983,7 +1101,235 @@ tasks:
 ''');
         expect(await run(['chekc']), ExitCode.invalidFile);
         expect(complained(), contains('there is no task called `chekc`'));
+        expect(complained(), contains('did you mean `check`?'));
       });
+
+      test('and so is a gate set, near or not', () async {
+        writeFile('''
+version: 1
+gates: [check, release]
+tasks:
+  a: {desc: x, gate: [check, release], run: [ruff]}
+''');
+        expect(await run(['--gate-members', 'chek']), ExitCode.invalidFile);
+        expect(complained(), contains('did you mean `check`?'));
+        expect(await run(['--gate-members', 'deploy']), ExitCode.invalidFile);
+        expect(complained(), contains('this file has `check`, `release`'));
+      });
+    });
+
+    group('--only', () {
+      const packages = r'''
+version: 1
+sets:
+  pkgs: [packages/twk, packages/twk_rich, packages/lake]
+  flavours: {values: [dev, prod]}
+tasks:
+  pkg-test: {desc: x, each: pkgs, in: $each, run: [dart, test]}
+  docs: {desc: y, all: pkgs, run: [dart, doc, $all]}
+  other: {desc: z, run: [dart, format]}
+  check: {desc: w, needs: [pkg-test, docs]}
+''';
+
+      setUp(() {
+        writeFile(packages);
+        for (final member in ['twk', 'twk_rich', 'lake']) {
+          Directory(
+            p.join(root.path, 'packages', member),
+          ).createSync(recursive: true);
+        }
+      });
+
+      test('narrows every `each:` and `all:` over the set', () async {
+        final code = await run([
+          'check',
+          '--only',
+          'pkgs=packages/twk,packages/twk_rich',
+        ]);
+        expect(code, ExitCode.success, reason: complained());
+        expect(
+          starter.started.map((s) => p.basename(s.workingDirectory)),
+          // `docs` is one invocation, at the root.
+          ['twk', 'twk_rich', p.basename(root.path)],
+        );
+        expect(starter.started.last.arguments, [
+          'doc',
+          'packages/twk',
+          'packages/twk_rich',
+        ]);
+        expect(
+          out.where((line) => line.endsWith('of 3 members')),
+          [
+            matches(RegExp(r'^pkg-test .* over 2 of 3 members$')),
+            matches(RegExp(r'^docs .*s  2 of 3 members$')),
+          ],
+          reason: printed(),
+        );
+      });
+
+      test('a pattern is a glob, read against the member', () async {
+        expect(
+          await run(['pkg-test', '--only', 'pkgs=packages/twk*']),
+          ExitCode.success,
+        );
+        expect(starter.started, hasLength(2));
+      });
+
+      test('and one that matches nothing is a 2, naming it', () async {
+        final code = await run([
+          'pkg-test',
+          '--only',
+          'pkgs=packages/twk,packages/twq',
+        ]);
+        expect(code, ExitCode.invalidFile);
+        expect(starter.started, isEmpty);
+        expect(printed(), contains('`packages/twq`, which no member'));
+      });
+
+      test('a set the file has not got is a 2 before anything runs', () async {
+        expect(
+          await run(['check', '--only', 'pkg=packages/twk']),
+          ExitCode.invalidFile,
+        );
+        expect(complained(), contains('no set called `pkg`'));
+        expect(starter.started, isEmpty);
+      });
+
+      test('and so is a set nothing in the plan expands', () async {
+        expect(
+          await run(['other', '--only', 'flavours=dev']),
+          ExitCode.invalidFile,
+        );
+        expect(complained(), contains('nothing `other` runs has it'));
+        expect(starter.started, isEmpty);
+      });
+
+      test('and a pattern that is not one', () async {
+        expect(
+          await run(['check', '--only', 'pkgs=[']),
+          ExitCode.invalidFile,
+        );
+        expect(complained(), contains('is not a valid pattern'));
+      });
+
+      test('`--dry-run` prints the narrowed plan', () async {
+        expect(
+          await run(['--dry-run', 'pkg-test', '--only', 'pkgs=packages/lake']),
+          ExitCode.success,
+        );
+        expect(printed(), contains(p.join(root.path, 'packages', 'lake')));
+        expect(printed(), isNot(contains('twk')));
+      });
+    });
+
+    group('--names', () {
+      test('every gate set, task and set, by kind', () async {
+        writeFile(r'''
+version: 1
+gates: [check]
+sets:
+  flavours: {values: [dev]}
+  pkgs: [packages/a]
+tasks:
+  format: {desc: fail if unformatted, gate: [check], run: [dart, format]}
+  test: {desc: run the suite, gate: [check], run: [dart, test]}
+  pub: {desc: get packages, each: pkgs, in: $each, run: [dart, pub, get]}
+''');
+        expect(await run(['--names']), ExitCode.success);
+        expect(out, [
+          'gate\tcheck\tformat, test',
+          'task\tformat\tfail if unformatted',
+          'task\ttest\trun the suite',
+          'task\tpub\tget packages',
+          'set\tflavours\tset of values',
+          'set\tpkgs\tset of paths',
+        ]);
+      });
+
+      test('--completion needs no file', () async {
+        expect(await run(['--completion', 'bash']), ExitCode.success);
+        expect(printed(), contains('complete -F _xtask xtask'));
+      });
+
+      test('the bash script completes from what --names says', () async {
+        // The script itself, run by bash, with `xtask` standing for the
+        // engine: what reaches COMPREPLY is what a person sees.
+        final script = File(p.join(root.path, 'completion.bash'))
+          ..writeAsStringSync(completionScript('bash'));
+        Future<List<String>> complete(
+          String line, {
+          // Bash's own default.
+          String breaks = ' \t\n"\'@><=;|&(:',
+        }) async {
+          final result = await Process.run(
+            'bash',
+            [
+              '-c',
+              '''
+xtask() { printf 'gate\\tcheck\\tformat\\ntask\\tformat\\tf\\ntask\\tfix\\tx\\ntask\\tweb:build\\tw\\nset\\tpkgs\\tp\\n'; }
+compopt() { :; }
+source ${script.path}
+COMP_WORDBREAKS=\$BREAKS
+COMP_LINE=\$LINE
+COMP_POINT=\${#LINE}
+_xtask
+printf '%s\\n' "\${COMPREPLY[@]}"
+''',
+            ],
+            environment: {'LINE': line, 'BREAKS': breaks},
+          );
+          expect(result.exitCode, 0, reason: '${result.stderr}');
+          return '${result.stdout}'.trim().split('\n');
+        }
+
+        expect(await complete('xtask f'), ['format', 'fix']);
+        expect(await complete('xtask '), [
+          'check',
+          'format',
+          'fix',
+          'web:build',
+        ]);
+        expect(await complete('xtask --gate '), ['check']);
+        expect(await complete('xtask --why f'), ['format', 'fix']);
+        expect(await complete('xtask check --only '), ['pkgs=']);
+        expect(await complete('xtask -j '), ['auto']);
+        expect(await complete('xtask --keep'), ['--keep-going']);
+        // Bash replaces only what follows the `:`, so that is the answer.
+        expect(await complete('xtask web:bu'), ['build']);
+        expect(await complete('xtask --dry-run web:'), ['build']);
+        // The option and its value in one word.
+        expect(await complete('xtask --gate=ch'), ['check']);
+        expect(await complete('xtask --dry-run=web:b'), ['build']);
+        expect(await complete('xtask check --only=p'), ['pkgs=']);
+        // Where `:` and `=` do not break words, bash replaces all of it.
+        expect(await complete('xtask web:bu', breaks: ' '), ['web:build']);
+        expect(
+          await complete('xtask --gate=ch', breaks: ' '),
+          ['--gate=check'],
+        );
+        // After `--`, the task's own arguments: files.
+        File(p.join(root.path, 'fixture.txt')).writeAsStringSync('');
+        expect(
+          await complete('xtask format -- ${p.join(root.path, 'fixt')}'),
+          [p.join(root.path, 'fixture.txt')],
+        );
+      }, testOn: '!windows');
+
+      test('the zsh and fish scripts are scripts their shells read', () async {
+        for (final (shell, check) in [
+          ('zsh', ['-n']),
+          ('fish', ['--no-execute']),
+        ]) {
+          final found = await Process.run('which', [shell]);
+          if (found.exitCode != 0) {
+            continue;
+          }
+          final script = File(p.join(root.path, 'completion.$shell'))
+            ..writeAsStringSync(completionScript(shell));
+          final result = await Process.run(shell, [...check, script.path]);
+          expect(result.exitCode, 0, reason: '$shell: ${result.stderr}');
+        }
+      }, testOn: '!windows');
     });
 
     group('--why', () {

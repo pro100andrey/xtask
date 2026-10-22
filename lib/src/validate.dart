@@ -70,6 +70,9 @@ ValidationReport validateFile(
   _checkDeclaredGates(file, problems);
   _checkNoNameCollision(file, problems);
   _checkExclusive(file, problems);
+  for (final task in file.tasks.values) {
+    _checkAlone(task, problems);
+  }
   if (sets != null) {
     _checkSetsExpand(file, sets, problems);
   }
@@ -533,6 +536,54 @@ void _checkExclusive(XtaskFile file, List<XtaskFormatException> problems) {
         'so nothing is being kept apart. Name it in the other task too, or '
         'drop it',
         only.span,
+      ),
+    );
+  }
+}
+
+/// An `alone:` beside a key it leaves with nothing to do.
+///
+/// **The same refusal `serial:` without `each:` gets: a key that does nothing,
+/// said out loud.** Nothing runs beside a task that runs alone, so a token it
+/// holds keeps it apart from nobody, its members are already one at a time,
+/// and there is nothing whose failure could stop it where it stands. Each of
+/// those reads in the file as a guarantee being made, and the next person to
+/// delete `alone:` would believe the one left behind still made it. A task
+/// with no body has nothing of its own to run alone.
+void _checkAlone(Task task, List<XtaskFormatException> problems) {
+  if (!task.alone) {
+    return;
+  }
+  final idle = <String>[];
+  if (task.body == null) {
+    idle.add(
+      'has no body, so there is nothing of its own to run with nothing beside '
+      'it. Drop `alone:`',
+    );
+  }
+  if (task.exclusive.isNotEmpty) {
+    idle.add(
+      'holds `exclusive:` tokens, which keep it apart from tasks that already '
+      'cannot run beside it. Drop the tokens',
+    );
+  }
+  if (task.serial) {
+    idle.add(
+      'is `serial:`, which orders members that already run one at a time. '
+      'Drop `serial:`',
+    );
+  }
+  if (task.interruptible) {
+    idle.add(
+      'is `interruptible:`, which lets a failure elsewhere stop it — and '
+      'nothing else is running to fail. Drop `interruptible:`',
+    );
+  }
+  for (final reason in idle) {
+    problems.add(
+      XtaskFormatException(
+        'task `${task.name}` is `alone:` and $reason',
+        task.span,
       ),
     );
   }

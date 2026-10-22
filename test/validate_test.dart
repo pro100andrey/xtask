@@ -233,6 +233,33 @@ void main() {
       );
       expect(report.toString(), contains('nothing for it to be in order'));
     });
+
+    test('`alone:` beside a key it leaves nothing to do', () {
+      final report = check(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, alone: true, exclusive: [b, c], run: [dart]}\n'
+        '  b: {desc: y, exclusive: [b], run: [dart]}\n'
+        '  c: {desc: y, exclusive: [c], run: [dart]}\n'
+        '  d: {desc: z, alone: true, serial: true, interruptible: true, '
+        r'each: s, run: [dart, $each]}'
+        '\n'
+        '  e: {desc: w, alone: true, needs: [a]}\n'
+        'sets:\n  s: {values: [one]}\n',
+      );
+      final said = report.toString();
+      expect(said, contains('task `a` is `alone:` and holds `exclusive:`'));
+      expect(said, contains('task `d` is `alone:` and is `serial:`'));
+      expect(said, contains('task `d` is `alone:` and is `interruptible:`'));
+      expect(said, contains('task `e` is `alone:` and has no body'));
+    });
+
+    test('and on its own it is clean', () {
+      final report = check(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, alone: true, run: [dart]}\n',
+      );
+      expect(report.ok, isTrue, reason: report.toString());
+    });
   });
 
   group('a set another task produces is not judged before it runs', () {

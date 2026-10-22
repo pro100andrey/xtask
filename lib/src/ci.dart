@@ -187,6 +187,21 @@ final class NamesAGateWithoutRunningIt extends CiProblem {
   final String named;
 }
 
+/// A step that runs a gate set narrowed by `--only`.
+///
+/// `xtask ci --only packages=packages/a` runs the gate over one package of
+/// however many there are, in a job that reads as the gate. Every package
+/// added after it is one no job checks.
+final class RunsPartOfAGate extends CiProblem {
+  const RunsPartOfAGate(super.step, this.gate, this.sets);
+
+  /// The gate set or task the step names.
+  final String gate;
+
+  /// The sets the step narrows, in the order it wrote them.
+  final List<String> sets;
+}
+
 /// An exemption marker with nothing after it.
 final class ExemptsWithoutSaying extends CiProblem {
   const ExemptsWithoutSaying(super.step);
@@ -372,7 +387,7 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
         problems.add(ExemptsNothing(step, 'a step the command line refuses'));
       }
       return verdict();
-    case _Gate(:final gate):
+    case _Gate(:final gate, :final narrowed):
       // **Two questions about one step: is the name right, and does this
       // invocation ENFORCE the gate here?** The second is what
       // `working-directory:` and `continue-on-error:` answer, and neither is
@@ -399,6 +414,13 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
               : RunsAnUndeclaredGate(step, gate, declared),
         );
       }
+      // A step narrowed by `--only` and marked is a job per package on
+      // purpose, which is what an exemption is for — and it excuses the
+      // narrowing, not the name: `chek --only …` under a marker still runs
+      // nothing of `check`.
+      if (reason != null && narrowed.isNotEmpty) {
+        return problems.isEmpty ? verdict(exempted: true) : verdict();
+      }
       if (elsewhere != null) {
         problems.add(RunsSomewhereElse(step, gate, elsewhere));
       }
@@ -414,6 +436,14 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
       }
       if (reason != null) {
         problems.add(ExemptsNothing(step, gate));
+      }
+      if (narrowed.isNotEmpty) {
+        // Said only of a declared gate set: of a task or a misspelling, the
+        // sentence above is the one that is true, and this one would not be.
+        if (!undeclared) {
+          problems.add(RunsPartOfAGate(step, gate, narrowed));
+        }
+        return verdict();
       }
       if (!enforces) {
         return verdict();
@@ -610,9 +640,12 @@ final class _GateWithArguments extends _Reading {
 
 /// One invocation of the gate set (or task) [gate].
 final class _Gate extends _Reading {
-  const _Gate(this.gate);
+  const _Gate(this.gate, [this.narrowed = const []]);
 
   final String gate;
+
+  /// The sets `--only` narrowed, which makes it a run of part of [gate].
+  final List<String> narrowed;
 }
 
 /// An invocation the command line refuses, in its own words.
@@ -750,7 +783,12 @@ _Reading _readWords(List<String> arguments) {
     processors: () => 1,
   );
   return switch (request) {
-    RunTask(:final task, arguments: []) => _Gate(task),
+    // Read as the gate it names, so every question asked of a gate step is
+    // asked of it too — and then it is not the gate running.
+    RunTask(:final task, arguments: [], :final only) => _Gate(
+      task,
+      only.keys.toList(),
+    ),
     // A gate set has no body, so the arguments reach nothing and the step
     // exits 2. The command line does not refuse this — only the file can say
     // whether the name has a body — so the sentence is written here.
@@ -772,6 +810,8 @@ _Reading _readWords(List<String> arguments) {
     Validate() => const _Question('--validate'),
     CheckCi() => const _Question('--check-ci'),
     ShowVersion() => const _Question('--version'),
+    ListNames() => const _Question('--names'),
+    ShowCompletion() => const _Question('--completion'),
     EmitSchema() => const _Question('--emit-schema'),
     CheckSchema() => const _Question('--check-schema'),
   };

@@ -300,7 +300,11 @@ bool _existsOnWindows(String path) =>
     FileStat.statSync(path).type == FileSystemEntityType.file;
 
 /// Characters `cmd.exe` acts on rather than passes along.
-const _cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"'};
+///
+/// `%` among them: `%PATH%` in an argument reaches a batch file as whatever
+/// this machine's `PATH` is, expanded on the command line before the file
+/// sees it.
+const _cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"', '%'};
 
 /// Refuses an argument the shell would reinterpret, when the shell is
 /// unavoidable — the batch-shim rule.
@@ -328,8 +332,10 @@ void refuseShellMetacharacters(
         ExitCode.invalidFile,
         'task `$task` passes `$argument` to `$executable`, which is '
         'a batch file. Windows starts one through the shell whatever the '
-        'caller asks for, so `$character` in that argument would be read as '
-        'a shell operator rather than as text. Point the task at a real '
+        'caller asks for, so `$character` in that argument would be '
+        '${character == '%' ? 'read as the start of a `%NAME%` the shell '
+                  'replaces with a variable' : 'read as a shell operator'} '
+        'rather than as text. Point the task at a real '
         'executable, or make it a verb — a Dart function is where logic '
         'belongs anyway',
       );
