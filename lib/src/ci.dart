@@ -810,6 +810,8 @@ _Reading _readWords(List<String> arguments) {
     Validate() => const _Question('--validate'),
     CheckCi() => const _Question('--check-ci'),
     ShowVersion() => const _Question('--version'),
+    ListNames() => const _Question('--names'),
+    ShowCompletion() => const _Question('--completion'),
     EmitSchema() => const _Question('--emit-schema'),
     CheckSchema() => const _Question('--check-schema'),
   };

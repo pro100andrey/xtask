@@ -2448,6 +2448,73 @@ void main() {
     });
   });
 
+  group('a verb reads and writes inside the repository', () {
+    VerbContext context() => VerbContext(
+      args: const [],
+      env: const {},
+      root: root.path,
+      workingDirectory: p.join(root.path, 'sub'),
+      log: (_) {},
+      start: (_, {workingDirectory}) async => 0,
+    );
+
+    Matcher refusedWith2() => throwsA(
+      isA<RunFailure>().having((f) => f.code, 'code', ExitCode.invalidFile),
+    );
+
+    test('a path is read from the root, written with `/`', () {
+      expect(
+        context().file('packages/a/x.dart').path,
+        p.join(root.path, 'packages', 'a', 'x.dart'),
+        reason: 'from the root, not the working directory, as a member is',
+      );
+      expect(
+        context().directory('packages').path,
+        p.join(root.path, 'packages'),
+      );
+      expect(
+        context().file(p.join(root.path, 'a.txt')).path,
+        p.join(root.path, 'a.txt'),
+        reason: 'an absolute path inside the root is allowed',
+      );
+    });
+
+    test('one that climbs or starts outside is a 2', () {
+      expect(() => context().file('../x'), refusedWith2());
+      expect(() => context().file('a/../../x'), refusedWith2());
+      expect(() => context().directory(p.dirname(root.path)), refusedWith2());
+    });
+
+    test('and so is one that leads out through a link, there or not', () {
+      final outside = Directory.systemTemp.createTempSync('xtask_out');
+      addTearDown(() => outside.deleteSync(recursive: true));
+      Link(p.join(root.path, 'out')).createSync(outside.path);
+      Link(p.join(root.path, 'gone')).createSync(p.join(outside.path, 'nope'));
+      expect(() => context().file('out/new.txt'), refusedWith2());
+      expect(() => context().directory('out/a/b'), refusedWith2());
+      expect(() => context().file('gone'), refusedWith2());
+      expect(
+        context().file('in/new.txt').path,
+        p.join(root.path, 'in', 'new.txt'),
+      );
+    }, testOn: '!windows');
+
+    test('and the run answers 2 for it', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, do: write}\n',
+        'a',
+        verbs: {
+          'write': (context) async {
+            context.file('../elsewhere.txt').writeAsStringSync('x');
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(logged.join('\n'), contains('reaches outside the repository'));
+    });
+  });
+
   group('a verb is given what it needs to be the escape hatch it is', () {
     test('it knows which member it is', () async {
       // It ran once per member with the same arguments and a different

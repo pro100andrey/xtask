@@ -13,6 +13,7 @@ import 'package:path/path.dart' as p;
 
 import 'bodies.dart';
 import 'ci.dart';
+import 'completion.dart';
 import 'context.dart';
 import 'dry_run.dart';
 import 'errors.dart';
@@ -138,6 +139,11 @@ Future<int> runCli(
     return ExitCode.success;
   }
 
+  if (request is ShowCompletion) {
+    out(completionScript(request.shell).trimRight());
+    return ExitCode.success;
+  }
+
   if (request is ShowVersion) {
     out('xtask $packageVersion');
     return ExitCode.success;
@@ -217,7 +223,11 @@ Future<int> runCli(
 
   try {
     switch (request) {
-      case ShowUsage() || EmitSchema() || CheckSchema() || ShowVersion():
+      case ShowUsage() ||
+          EmitSchema() ||
+          CheckSchema() ||
+          ShowVersion() ||
+          ShowCompletion():
         throw StateError('answered above');
 
       case Validate():
@@ -261,6 +271,10 @@ Future<int> runCli(
       case WhyTask(:final task):
         refuseUnlessATask(file, task);
         report.why(task, routesTo(file, task)).forEach(out);
+        return ExitCode.success;
+
+      case ListNames():
+        names(file).forEach(out);
         return ExitCode.success;
 
       case GateMembers(:final gate):

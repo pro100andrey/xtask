@@ -2,6 +2,12 @@
 /// is built on.
 library;
 
+import 'dart:io' show Directory, File;
+
+import 'boundary.dart';
+import 'errors.dart';
+import 'exit_codes.dart';
+
 /// A job the project implements in Dart, named by a task's `do:` key.
 ///
 /// The file cannot branch, which pushes logic here deliberately: the file
@@ -91,6 +97,25 @@ final class VerbContext {
   /// Where the task runs, absolute: [root], or the `in:` under it — under
   /// `each:` with `in: \$each`, the member's own directory.
   final String workingDirectory;
+
+  /// The file at [path] under [root], refused if the repository does not own
+  /// it.
+  ///
+  /// **What every verb that touched a set's members wrote for itself**, and
+  /// mostly wrote half of: joined onto [root] with the host's separator and
+  /// nothing asked. [path] is read the way the file writes one — relative to
+  /// the root, with `/` on every platform, so a member passes as it is — and
+  /// an absolute path is allowed where it lands inside the root. A path that
+  /// climbs out, or leads out through a link, ends the task with `2`, as
+  /// `remove` answers on the same question.
+  File file(String path) => File(_owned(path));
+
+  /// The directory at [path] under [root], under [file]'s rules.
+  Directory directory(String path) => Directory(_owned(path));
+
+  String _owned(String path) =>
+      verbPathUnderRoot(root, path) ??
+      (throw RunFailure(ExitCode.invalidFile, verbPathLeavesRoot(path)));
 
   /// Where to write. A verb writing to `stdout` directly would bypass the
   /// grouping markers a folded CI log needs, so it is given a sink instead

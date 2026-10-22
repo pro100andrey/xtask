@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/cli.dart';
+import 'package:xtask/src/completion.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
@@ -318,6 +319,55 @@ void main() {
           ]);
           expect(usage, isA<ShowUsage>(), reason: '$mode accepted it');
           expect((usage as ShowUsage).problem, contains('expands none'));
+        }
+      });
+    });
+
+    group('--names and --completion', () {
+      test('the one lists, the other is for one shell', () {
+        expect(parseArguments(['--names']), isA<ListNames>());
+        expect(parseArguments(['--names', 'x']), isA<ShowUsage>());
+        expect(
+          (parseArguments(['--completion', 'zsh']) as ShowCompletion).shell,
+          'zsh',
+        );
+        expect(
+          (parseArguments(['--completion=fish']) as ShowCompletion).shell,
+          'fish',
+        );
+        for (final written in [
+          ['--completion'],
+          ['--completion', 'tcsh'],
+          ['--completion', 'bash', 'zsh'],
+        ]) {
+          expect(
+            parseArguments(written),
+            isA<ShowUsage>(),
+            reason: written.join(' '),
+          );
+        }
+      });
+
+      test('a script offers every option the usage names', () {
+        // The scripts carry the flags, so a flag added to the grammar and
+        // not to them is one TAB never offers.
+        final named = {
+          for (final line in usage)
+            ...RegExp(r'(?<![\w-])--[a-z][a-z-]*')
+                .allMatches(line)
+                .map(
+                  (m) => m[0]!,
+                ),
+        };
+        expect(named.difference(completedOptions.toSet()), isEmpty);
+        for (final shell in completionShells) {
+          for (final option in completedOptions) {
+            expect(
+              completionScript(shell),
+              contains(shell == 'fish' ? '-l ${option.substring(2)}' : option),
+              reason: '$shell does not offer $option',
+            );
+          }
         }
       });
     });
@@ -1147,6 +1197,83 @@ tasks:
         expect(printed(), contains(p.join(root.path, 'packages', 'lake')));
         expect(printed(), isNot(contains('twk')));
       });
+    });
+
+    group('--names', () {
+      test('every gate set, task and set, by kind', () async {
+        writeFile(r'''
+version: 1
+gates: [check]
+sets:
+  flavours: {values: [dev]}
+  pkgs: [packages/a]
+tasks:
+  format: {desc: fail if unformatted, gate: [check], run: [dart, format]}
+  test: {desc: run the suite, gate: [check], run: [dart, test]}
+  pub: {desc: get packages, each: pkgs, in: $each, run: [dart, pub, get]}
+''');
+        expect(await run(['--names']), ExitCode.success);
+        expect(out, [
+          'gate\tcheck\tformat, test',
+          'task\tformat\tfail if unformatted',
+          'task\ttest\trun the suite',
+          'task\tpub\tget packages',
+          'set\tflavours\tset of values',
+          'set\tpkgs\tset of paths',
+        ]);
+      });
+
+      test('--completion needs no file', () async {
+        expect(await run(['--completion', 'bash']), ExitCode.success);
+        expect(printed(), contains('complete -F _xtask xtask'));
+      });
+
+      test('the bash script completes from what --names says', () async {
+        // The script itself, run by bash, with `xtask` standing for the
+        // engine: what reaches COMPREPLY is what a person sees.
+        final script = File(p.join(root.path, 'completion.bash'))
+          ..writeAsStringSync(completionScript('bash'));
+        Future<List<String>> complete(String line) async {
+          final words = line.split(' ');
+          final result = await Process.run('bash', [
+            '-c',
+            '''
+xtask() { printf 'gate\\tcheck\\tformat\\ntask\\tformat\\tf\\ntask\\tfix\\tx\\nset\\tpkgs\\tp\\n'; }
+compopt() { :; }
+source ${script.path}
+COMP_WORDS=(${words.map((w) => "'$w'").join(' ')})
+COMP_CWORD=${words.length - 1}
+_xtask
+printf '%s\\n' "\${COMPREPLY[@]}"
+''',
+          ]);
+          expect(result.exitCode, 0, reason: '${result.stderr}');
+          return '${result.stdout}'.trim().split('\n');
+        }
+
+        expect(await complete('xtask f'), ['format', 'fix']);
+        expect(await complete('xtask '), ['check', 'format', 'fix']);
+        expect(await complete('xtask --gate '), ['check']);
+        expect(await complete('xtask --why '), ['format', 'fix']);
+        expect(await complete('xtask check --only '), ['pkgs=']);
+        expect(await complete('xtask --keep'), ['--keep-going']);
+      }, testOn: '!windows');
+
+      test('the zsh and fish scripts are scripts their shells read', () async {
+        for (final (shell, check) in [
+          ('zsh', ['-n']),
+          ('fish', ['--no-execute']),
+        ]) {
+          final found = await Process.run('which', [shell]);
+          if (found.exitCode != 0) {
+            continue;
+          }
+          final script = File(p.join(root.path, 'completion.$shell'))
+            ..writeAsStringSync(completionScript(shell));
+          final result = await Process.run(shell, [...check, script.path]);
+          expect(result.exitCode, 0, reason: '$shell: ${result.stderr}');
+        }
+      }, testOn: '!windows');
     });
 
     group('--why', () {

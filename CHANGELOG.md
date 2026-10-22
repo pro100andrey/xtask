@@ -17,6 +17,11 @@
 - For verbs: `context.tee(argv, workingDirectory:, timeout:)`, which is
   `capture` with the output shown as it arrives. A hand-built `VerbContext`
   gives it through `relay:`.
+- For verbs: `context.file(path)` and `context.directory(path)`, a path from
+  the repository root written with `/`, ending the task with `2` when it
+  climbs out of the root or leads out through a link.
+- `--completion bash|zsh|fish` prints a completion script, which reads task,
+  gate set and set names from `--names` when TAB is pressed.
 
 ## 0.3.0
 

@@ -91,25 +91,60 @@ String workingDirectoryLeavesRoot({
 /// platform's notation, because it is about to be joined with the platform's
 /// own `p.join`.
 String? verbDirectoryUnderRoot(String root, String written) {
-  final String resolved;
-  if (p.isAbsolute(written)) {
-    resolved = p.normalize(written);
-    if (!p.equals(root, resolved) && !p.isWithin(root, resolved)) {
-      return null;
-    }
-  } else {
-    if (leavesRoot(written)) {
-      return null;
-    }
-    resolved = underRoot(root, written);
-  }
+  final resolved = _verbWrittenUnderRoot(root, written);
   // **And the machine's half, which `in:` was already asked and this was
   // not.** The two say the same sentence about the same fence, so a directory
   // inside the root that links outside it was refused for `in: linked` and
   // handed to `context.run(workingDirectory: 'linked')` — the seam whose whole
   // promise is that a verb starts a program the way a `run:` body does.
-  return staysUnder(root, resolved) ? resolved : null;
+  return resolved != null && staysUnder(root, resolved) ? resolved : null;
 }
+
+/// [written] as a path a verb may read or write under [root], or null when
+/// the root does not own it.
+///
+/// [verbDirectoryUnderRoot]'s fence, for a path that may not exist yet. That
+/// one is asked of a directory a program starts in, which is there or the
+/// start fails; this one is asked of a file the verb is about to create, and
+/// [staysUnder] answers "not there, so nowhere" about it — while the
+/// directory it would be created in may be a link out of the repository. So
+/// the machine is asked about the nearest part of the path that IS there,
+/// and a link that leads nowhere is refused: writing through it creates
+/// whatever it names, wherever that is.
+String? verbPathUnderRoot(String root, String written) {
+  final resolved = _verbWrittenUnderRoot(root, written);
+  if (resolved == null) {
+    return null;
+  }
+  var there = resolved;
+  while (FileSystemEntity.typeSync(there, followLinks: false) ==
+          FileSystemEntityType.notFound &&
+      !p.equals(there, root)) {
+    there = p.dirname(there);
+  }
+  if (_real(there) == null) {
+    return null;
+  }
+  return staysUnder(root, there) ? resolved : null;
+}
+
+/// What [written] names under [root] as the file or a verb wrote it, before
+/// the machine is asked anything.
+String? _verbWrittenUnderRoot(String root, String written) {
+  if (p.isAbsolute(written)) {
+    final resolved = p.normalize(written);
+    return p.equals(root, resolved) || p.isWithin(root, resolved)
+        ? resolved
+        : null;
+  }
+  return leavesRoot(written) ? null : underRoot(root, written);
+}
+
+/// Why a verb's path [written] is refused: it is outside the repository.
+String verbPathLeavesRoot(String written) =>
+    'a verb asked for `$written`, which reaches outside the repository. A '
+    'path a verb reads or writes through its context is relative to the root '
+    'and stays there, as one the file writes does';
 
 /// Why a verb's own working directory is refused on task [task].
 ///

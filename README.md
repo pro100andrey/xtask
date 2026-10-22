@@ -153,10 +153,13 @@ Future<int> regen(VerbContext context) async {
   // context.env      this machine's environment, with `env:` winning a clash
   // context.root     the repository root, absolute — what a set's members
   //                  and `in:` are relative to
+  // context.file('packages/a/x.dart'), context.directory(...)
+  //                  a path from the root, written with `/` — a member as it
+  //                  is — and a 2 for one that climbs or links out of it
   // context.workingDirectory
   //                  where the task runs: the root, or its `in:` under it —
-  //                  what a `remove` argument is read from. Join a set's
-  //                  member onto `root`, never onto this
+  //                  what a `remove` argument is read from. A set's member
+  //                  is `context.file(member)`, never joined onto this
   return 0;
 }
 ```
@@ -252,6 +255,9 @@ xtask --check-ci             does the CI file still run the gate sets?
 xtask --dry-run <task>       print the resolved plan; run nothing
 xtask --emit-schema          print the JSON Schema for this file format
 xtask --check-schema <path>  does that file match --emit-schema?
+xtask --names                every gate set, task and set, one per line
+                             and tab-separated — what completion reads
+xtask --completion <shell>   a completion script for bash, zsh or fish
 xtask --version              print which engine this is
 ```
 
@@ -260,6 +266,19 @@ xtask --version              print which engine this is
 three. The file is looked for from the current directory **upwards**, so the
 command works from a subdirectory and every path inside the file stays relative
 to the repository root.
+
+A shell completes task, gate set and set names from the file, read when TAB
+is pressed, so nothing is regenerated after the file changes:
+
+```shell
+source <(xtask --completion bash)    # in ~/.bashrc
+source <(xtask --completion zsh)     # in ~/.zshrc, after compinit
+xtask --completion fish | source     # or save it under completions/
+```
+
+The script completes the command `xtask`, and each TAB starts it — so it is
+the installed or compiled one that makes this pleasant: `dart run` spends
+half a second starting before it can answer.
 
 Everything after `--` reaches the body of the **named** task, after its `args:`
 and its expanded `all:`, and nothing else in the plan sees it — so

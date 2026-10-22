@@ -149,6 +149,27 @@ final class CheckSchema extends Request {
   final String path;
 }
 
+/// `xtask --names` — every gate set, task and set the file declares, one per
+/// line, for a completion script to read.
+///
+/// **A window on the file for a program, where `--list` is one for a
+/// person.** Tab-separated and unaligned, with the kind first, so a script
+/// can tell a gate set from a task without knowing the file.
+final class ListNames extends Request {
+  const ListNames();
+}
+
+/// `xtask --completion <shell>` — print a completion script for [shell].
+///
+/// Answered without a file, as `--emit-schema` is: the script is the same
+/// for every repository and asks `--names` for what this one declares.
+final class ShowCompletion extends Request {
+  const ShowCompletion(this.shell);
+
+  /// One of `completionShells`.
+  final String shell;
+}
+
 /// The usage text, printed on request and as the error message.
 final class ShowUsage extends Request {
   const ShowUsage([this.problem]);
@@ -172,8 +193,17 @@ const modes = {
   '--dry-run',
   '--emit-schema',
   '--check-schema',
+  '--names',
+  '--completion',
   '--version',
 };
+
+/// The options that are not modes: how a run happens, or what `--list`
+/// narrows to. With [modes], every option the usage names.
+const runOptions = {'--gate', '--keep-going', '--jobs', '--only'};
+
+/// The shells `--completion` writes a script for.
+const completionShells = ['bash', 'zsh', 'fish'];
 
 /// The modes that want a name after them, and refuse an empty one.
 ///
@@ -183,6 +213,7 @@ const _modesTakingAName = {
   '--gate-members',
   '--dry-run',
   '--check-schema',
+  '--completion',
 };
 
 /// How wide `-j auto` may go, whatever the machine is.
@@ -460,6 +491,31 @@ Request parseArguments(
           );
   }
 
+  if (mode == '--names') {
+    return operands.isEmpty
+        ? const ListNames()
+        : ShowUsage(
+            '`--names` lists the whole file and takes no name, and it was '
+            'given `${operands.first}`',
+          );
+  }
+
+  if (mode == '--completion') {
+    if (operands.length != 1) {
+      return ShowUsage(
+        '`--completion` writes the script for one shell — '
+        '${_shells()}',
+      );
+    }
+    final shell = operands.single;
+    return completionShells.contains(shell)
+        ? ShowCompletion(shell)
+        : ShowUsage(
+            '`--completion $shell` is not a shell it writes for — '
+            '${_shells()}',
+          );
+  }
+
   if (mode == '--check-ci') {
     return operands.isEmpty
         ? const CheckCi()
@@ -546,6 +602,8 @@ String? _narrowingRefusal(String? written) {
   return null;
 }
 
+String _shells() => 'write one of ${completionShells.join(', ')}';
+
 /// Whether [written] is a number of jobs this parser would accept.
 bool isAJobCount(String written) =>
     written == 'auto' || (int.tryParse(written) ?? 0) >= 1;
@@ -574,6 +632,9 @@ const usage = [
   '  xtask --dry-run <task>       print the resolved plan; run nothing',
   '  xtask --emit-schema          print the JSON Schema for this file format',
   '  xtask --check-schema <path>  does that file match --emit-schema?',
+  '  xtask --names                every gate set, task and set, one per line',
+  '                               and tab-separated — what completion reads',
+  '  xtask --completion <shell>   a completion script for bash, zsh or fish',
   '  xtask --version              print which engine this is',
   '',
   'the file is `$xtaskFileName`, at the repository root.',
