@@ -122,10 +122,21 @@ String? verbPathUnderRoot(String root, String written) {
       !p.equals(there, root)) {
     there = p.dirname(there);
   }
-  if (_real(there) == null) {
-    return null;
+  final real = _real(there);
+  if (real == null) {
+    // Only a link that leads nowhere is refused for it. A directory that is
+    // there and cannot be resolved — not searchable, say — is a fact about
+    // permissions, and calling it outside the repository would send the
+    // reader after a boundary that is not the problem; the write itself will
+    // say what is.
+    return FileSystemEntity.isLinkSync(there) ? null : resolved;
   }
-  return staysUnder(root, there) ? resolved : null;
+  final realRoot = _real(root);
+  return realRoot == null ||
+          p.equals(realRoot, real) ||
+          p.isWithin(realRoot, real)
+      ? resolved
+      : null;
 }
 
 /// What [written] names under [root] as the file or a verb wrote it, before

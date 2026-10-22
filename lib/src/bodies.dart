@@ -12,6 +12,8 @@
 /// nothing on `PATH` answers to, an argument `cmd.exe` would reinterpret.
 library;
 
+import 'package:glob/glob.dart';
+
 import 'boundary.dart';
 import 'context.dart';
 import 'errors.dart';
@@ -127,20 +129,12 @@ final class ResolvedVerb extends Resolved {
   final Verb implementation;
 }
 
-/// What [patterns] keep of set [name]'s [members], in the set's order, and
-/// which of them kept nothing.
-///
-/// Throws [XtaskFormatException] for a pattern that is not one — which the
-/// command line asks before anything runs, so that a typo in `--only` is not
-/// found half-way through a gate.
+/// What [globs] keep of [members], in the set's order, and which of the
+/// patterns they were compiled from kept nothing.
 ({List<String> members, List<String> unmatched}) narrowed(
-  String name,
   List<String> members,
-  List<String> patterns,
+  Map<String, Glob> globs,
 ) {
-  final globs = {
-    for (final pattern in patterns) pattern: memberPattern(name, pattern),
-  };
   final matched = <String>{};
   final kept = <String>[];
   for (final member in members) {
@@ -158,7 +152,7 @@ final class ResolvedVerb extends Resolved {
   return (
     members: List.unmodifiable(kept),
     unmatched: [
-      for (final pattern in patterns)
+      for (final pattern in globs.keys)
         if (!matched.contains(pattern)) pattern,
     ],
   );
@@ -244,6 +238,14 @@ final class BodyResolver {
   final _expanded = <String, List<String>>{};
 
   final _narrowings = <String, ({int kept, int of})>{};
+
+  /// [only], compiled once for the run rather than once per expansion.
+  late final Map<String, Map<String, Glob>> _onlyGlobs = {
+    for (final MapEntry(key: name, value: patterns) in only.entries)
+      name: {
+        for (final pattern in patterns) pattern: memberPattern(name, pattern),
+      },
+  };
 
   /// How many members `--only` kept of set [name], and of how many — or null
   /// when it was not narrowed or has not been expanded yet.
@@ -477,11 +479,11 @@ final class BodyResolver {
   /// after it into a task that had already stopped.
   List<String> _expand(Task task, String name) {
     final members = _whole(task, name);
-    final patterns = only[name];
+    final patterns = _onlyGlobs[name];
     if (patterns == null) {
       return members;
     }
-    final kept = narrowed(name, members, patterns);
+    final kept = narrowed(members, patterns);
     if (kept.unmatched.isNotEmpty) {
       // Code 2, as a set that expands to nothing is: a pattern that matched
       // nothing ran less than was asked for, and a green run that skipped the

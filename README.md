@@ -296,7 +296,8 @@ xtask pkg-test --only packages=packages/twk,packages/twk_rich
 Every `each:` and `all:` in the plan that names the set gets only the members
 a pattern matches, in the set's order. A pattern is a glob, read against the
 member as text: `packages/twk` keeps that one and not `packages/twk_rich`, and
-`packages/twk*` keeps both. Written again for the same set, the patterns add
+`packages/twk*` keeps both, as does `packages/{twk,twk_rich}`: a comma inside
+braces is the pattern's, not a separator. Written again for the same set, the patterns add
 up. `--dry-run` prints the narrowed plan, and the summary says how much of the
 set ran — `over 2 of 17 members`. Each of these is a `2` rather than a smaller
 run: a set the file has not got, a set nothing in the plan expands, a pattern
@@ -629,9 +630,10 @@ way to say that with tokens was to list every task of the gate in its
 `needs:`, so the next task added to the gate ran beside it. Under `-j` the run
 waits for what it has started to end, runs the task, and starts nothing else
 until it has ended; its `each:` members run one at a time, and its output is
-shown as it arrives, because nothing can write beside it. A ready task that
-runs alone is not overtaken by tasks behind it in the plan, or a steady supply
-of them would keep it waiting.
+shown as it arrives, because nothing can write beside it. Once it is ready and
+waiting, nothing else starts — not a task behind it in the plan, and not one
+ahead of it that becomes ready later — or a steady supply of them would keep it
+waiting.
 
 ## Exit codes
 

@@ -282,6 +282,15 @@ void main() {
           'flavours': ['dev'],
         });
         expect((parseArguments(['check']) as RunTask).only, isEmpty);
+        expect(
+          (parseArguments(['a', '--only', 'p=packages/{core,cli},tools/*'])
+                  as RunTask)
+              .only,
+          {
+            'p': ['packages/{core,cli}', 'tools/*'],
+          },
+          reason: 'a comma inside braces belongs to the glob',
+        );
       });
 
       test('and a dry run is narrowed as the run would be', () {
@@ -1234,29 +1243,47 @@ tasks:
         final script = File(p.join(root.path, 'completion.bash'))
           ..writeAsStringSync(completionScript('bash'));
         Future<List<String>> complete(String line) async {
-          final words = line.split(' ');
-          final result = await Process.run('bash', [
-            '-c',
-            '''
-xtask() { printf 'gate\\tcheck\\tformat\\ntask\\tformat\\tf\\ntask\\tfix\\tx\\nset\\tpkgs\\tp\\n'; }
+          final result = await Process.run(
+            'bash',
+            [
+              '-c',
+              '''
+xtask() { printf 'gate\\tcheck\\tformat\\ntask\\tformat\\tf\\ntask\\tfix\\tx\\ntask\\tweb:build\\tw\\nset\\tpkgs\\tp\\n'; }
 compopt() { :; }
 source ${script.path}
-COMP_WORDS=(${words.map((w) => "'$w'").join(' ')})
-COMP_CWORD=${words.length - 1}
+COMP_LINE=\$LINE
+COMP_POINT=\${#LINE}
 _xtask
 printf '%s\\n' "\${COMPREPLY[@]}"
 ''',
-          ]);
+            ],
+            environment: {'LINE': line},
+          );
           expect(result.exitCode, 0, reason: '${result.stderr}');
           return '${result.stdout}'.trim().split('\n');
         }
 
         expect(await complete('xtask f'), ['format', 'fix']);
-        expect(await complete('xtask '), ['check', 'format', 'fix']);
+        expect(await complete('xtask '), [
+          'check',
+          'format',
+          'fix',
+          'web:build',
+        ]);
         expect(await complete('xtask --gate '), ['check']);
-        expect(await complete('xtask --why '), ['format', 'fix']);
+        expect(await complete('xtask --why f'), ['format', 'fix']);
         expect(await complete('xtask check --only '), ['pkgs=']);
+        expect(await complete('xtask -j '), ['auto']);
         expect(await complete('xtask --keep'), ['--keep-going']);
+        // Bash replaces only what follows the `:`, so that is the answer.
+        expect(await complete('xtask web:bu'), ['build']);
+        expect(await complete('xtask --dry-run web:'), ['build']);
+        // After `--`, the task's own arguments: files.
+        File(p.join(root.path, 'fixture.txt')).writeAsStringSync('');
+        expect(
+          await complete('xtask format -- ${p.join(root.path, 'fixt')}'),
+          [p.join(root.path, 'fixture.txt')],
+        );
       }, testOn: '!windows');
 
       test('the zsh and fish scripts are scripts their shells read', () async {

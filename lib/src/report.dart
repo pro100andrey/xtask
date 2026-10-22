@@ -199,7 +199,10 @@ List<String> timing(
       // One member is the row already, said twice — and `over 1 members` is
       // not a sentence. A task whose first member failed without
       // `--keep-going` has exactly one attempted.
-      return part == null ? '' : '  ${part.kept}$of members';
+      // How many RAN, where that is known: `--only` keeping five and the
+      // first failing is one of seventeen, not five. Without `each:` the
+      // kept members went to one invocation, and all of them reached it.
+      return part == null ? '' : '  ${done?.members ?? part.kept}$of members';
     }
     return '  ${asTime(done.spent)} over ${done.members}$of members';
   }

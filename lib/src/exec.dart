@@ -306,6 +306,12 @@ final class Executor {
     // admitted, whatever is ready and whatever places are free.
     String? alone;
 
+    // Whether a task that runs alone has been found ready while others ran,
+    // and is waiting for them. From then on it is the next thing to start,
+    // wherever it sits in the plan: a task ahead of it that becomes ready
+    // later is still behind it.
+    var aloneWaits = false;
+
     while (waiting.isNotEmpty || running.isNotEmpty) {
       var began = false;
       for (var at = 0; at < waiting.length; at++) {
@@ -327,13 +333,21 @@ final class Executor {
         if (verdict is NotYet) {
           continue;
         }
-        // **Waited for in the queue, and nothing behind it overtakes.** A
-        // task that runs alone and is ready while others run holds the walk
-        // here until they have ended; letting the next ready task start in
-        // the meantime would let a steady stream of them keep it waiting for
-        // ever, which is the guarantee kept by never running at all.
-        if (alone != null || (step.task.alone && running.isNotEmpty)) {
+        // **Waited for, and nothing overtakes it.** A task that runs alone
+        // and is ready while others run holds the walk until they have
+        // ended; letting another ready task start in the meantime — behind
+        // it in the plan or ahead of it — would let a steady stream of them
+        // keep it waiting for ever, which is the guarantee kept by never
+        // running at all.
+        if (alone != null) {
           break;
+        }
+        if (step.task.alone && running.isNotEmpty) {
+          aloneWaits = true;
+          break;
+        }
+        if (aloneWaits && !step.task.alone) {
+          continue;
         }
         if (!_slots.hasFree) {
           // Nothing can begin until something ends.
@@ -370,6 +384,7 @@ final class Executor {
             });
         if (step.task.alone) {
           alone = name;
+          aloneWaits = false;
           break;
         }
       }

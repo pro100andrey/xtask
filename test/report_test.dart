@@ -430,6 +430,29 @@ tasks:
       );
       expect(lines, ['', 'a  1.0s']);
     });
+
+    test('and under `--only` it says how much of the set that was', () {
+      const narrowed = {'a': (kept: 5, of: 17), 'b': (kept: 2, of: 9)};
+      final lines = timing(
+        {'a': const Duration(seconds: 1), 'b': const Duration(seconds: 1)},
+        const Duration(seconds: 2),
+        const {
+          'a': (spent: Duration(seconds: 1), members: 1),
+        },
+        concurrent: false,
+        narrowed: narrowed,
+      );
+      expect(
+        lines[1],
+        endsWith('  1 of 17 members'),
+        reason: 'five were kept and the first failed: one ran',
+      );
+      expect(
+        lines[2],
+        endsWith('  2 of 9 members'),
+        reason: 'without `each:`, the kept members went to one invocation',
+      );
+    });
   });
 
   test(

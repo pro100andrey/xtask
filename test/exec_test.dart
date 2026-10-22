@@ -2089,6 +2089,31 @@ void main() {
       },
     );
 
+    test('and a task ahead of it that becomes ready waits too', () async {
+      // `b` is ahead of `bench` in the plan and becomes ready only when `a`
+      // ends — the moment `bench` was waiting for.
+      starter = FakeStarter()
+        ..holds['ruff'] = Completer<void>()
+        ..holds['bench'] = Completer<void>();
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [ruff]}\n'
+            '  b: {desc: y, needs: [a], run: [mypy]}\n'
+            '  bench: {desc: z, alone: true, run: [bench]}\n'
+            '  all: {desc: w, needs: [a, b, bench]}\n',
+        'all',
+        concurrency: 3,
+      );
+      await pumpEventQueue();
+      expect(names(), ['ruff']);
+      starter.holds['ruff']!.complete();
+      await pumpEventQueue();
+      expect(names(), ['ruff', 'bench'], reason: '`b` did not overtake it');
+      starter.holds['bench']!.complete();
+      expect(await running, ExitCode.success);
+      expect(names(), ['ruff', 'bench', 'mypy']);
+    });
+
     test('its members run one at a time, and stream', () async {
       given(['pkg/a/x', 'pkg/b/x']);
       starter = FakeStarter()..holds['bench'] = Completer<void>();
@@ -2496,6 +2521,18 @@ void main() {
       expect(
         context().file('in/new.txt').path,
         p.join(root.path, 'in', 'new.txt'),
+      );
+    }, testOn: '!windows');
+
+    test('a directory it cannot search is not called outside', () {
+      final locked = Directory(p.join(root.path, 'locked'))..createSync();
+      Directory(p.join(locked.path, 'in')).createSync();
+      Process.runSync('chmod', ['000', locked.path]);
+      addTearDown(() => Process.runSync('chmod', ['755', locked.path]));
+      expect(
+        context().file('locked/in/x.txt').path,
+        p.join(root.path, 'locked', 'in', 'x.txt'),
+        reason: 'the write will say it is denied; the boundary has no say',
       );
     }, testOn: '!windows');
 

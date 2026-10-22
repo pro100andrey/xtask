@@ -211,6 +211,21 @@ jobs:
       expect(said().single, contains('with `--only` over `packages`'));
     });
 
+    test('and is still asked what any gate step is asked', () {
+      steps('''
+      - run: dart run :xtask ci-analyse --only packages=a
+      - run: dart run :xtask analyze --only packages=a
+      - run: dart run :xtask ci-analyze --only packages=a
+        continue-on-error: true
+''');
+      expect(check().problems.map((p) => p.runtimeType), [
+        RunsAnUndeclaredGate,
+        RunsATaskNotAGate,
+        RunsAGateThatCannotFail,
+        RunsPartOfAGate,
+      ]);
+    });
+
     test('and one that says why it is not the gate is excused', () {
       steps('''
       - run: dart run :xtask ci-analyze

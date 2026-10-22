@@ -387,7 +387,7 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
         problems.add(ExemptsNothing(step, 'a step the command line refuses'));
       }
       return verdict();
-    case _Gate(:final gate):
+    case _Gate(:final gate, :final narrowed):
       // **Two questions about one step: is the name right, and does this
       // invocation ENFORCE the gate here?** The second is what
       // `working-directory:` and `continue-on-error:` answer, and neither is
@@ -400,7 +400,10 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
       // to be soft — which is exactly what an exemption is for. A step that
       // DOES enforce the gate is not excused by it: it runs, and saying it is
       // not a gate set would be untrue.
-      if (reason != null && !enforces) {
+      //
+      // A step narrowed by `--only` is the second kind as well: one job per
+      // package, deliberately, is what an exemption is for, and it says why.
+      if (reason != null && (!enforces || narrowed.isNotEmpty)) {
         return verdict(exempted: true);
       }
 
@@ -430,6 +433,14 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
       if (reason != null) {
         problems.add(ExemptsNothing(step, gate));
       }
+      if (narrowed.isNotEmpty) {
+        // Said only of a declared gate set: of a task or a misspelling, the
+        // sentence above is the one that is true, and this one would not be.
+        if (!undeclared) {
+          problems.add(RunsPartOfAGate(step, gate, narrowed));
+        }
+        return verdict();
+      }
       if (!enforces) {
         return verdict();
       }
@@ -453,15 +464,6 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
       if (reason != null) {
         problems.add(ExemptsNothing(step, 'a step the command line refuses'));
       }
-      return verdict();
-    case _Narrowed(:final gate, :final sets):
-      // Named as a run of part of the gate, and excused like a step that is
-      // not this file's gate at all: one job per package, deliberately, is
-      // what an exemption is for, and it says why.
-      if (reason != null) {
-        return verdict(exempted: true);
-      }
-      problems.add(RunsPartOfAGate(step, gate, sets));
       return verdict();
     case _Names(:final mode, :final named):
       problems.add(NamesAGateWithoutRunningIt(step, mode, named));
@@ -634,17 +636,12 @@ final class _GateWithArguments extends _Reading {
 
 /// One invocation of the gate set (or task) [gate].
 final class _Gate extends _Reading {
-  const _Gate(this.gate);
+  const _Gate(this.gate, [this.narrowed = const []]);
 
   final String gate;
-}
 
-/// A run of [gate] over part of [sets], by `--only`.
-final class _Narrowed extends _Reading {
-  const _Narrowed(this.gate, this.sets);
-
-  final String gate;
-  final List<String> sets;
+  /// The sets `--only` narrowed, which makes it a run of part of [gate].
+  final List<String> narrowed;
 }
 
 /// An invocation the command line refuses, in its own words.
@@ -782,13 +779,12 @@ _Reading _readWords(List<String> arguments) {
     processors: () => 1,
   );
   return switch (request) {
-    // Before the two readings of a run below: whatever else it is, a run
-    // narrowed to part of a set is not the gate running.
-    RunTask(:final task, :final only) when only.isNotEmpty => _Narrowed(
+    // Read as the gate it names, so every question asked of a gate step is
+    // asked of it too — and then it is not the gate running.
+    RunTask(:final task, arguments: [], :final only) => _Gate(
       task,
       only.keys.toList(),
     ),
-    RunTask(:final task, arguments: []) => _Gate(task),
     // A gate set has no body, so the arguments reach nothing and the step
     // exits 2. The command line does not refuse this — only the file can say
     // whether the name has a body — so the sentence is written here.

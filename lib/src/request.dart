@@ -202,13 +202,17 @@ const modes = {
 /// narrows to. With [modes], every option the usage names.
 const runOptions = {'--gate', '--keep-going', '--jobs', '--only'};
 
+/// The options in [runOptions] that take a value after them.
+const runOptionsTakingAValue = {'--gate', '--jobs', '--only'};
+
 /// The shells `--completion` writes a script for.
 const completionShells = ['bash', 'zsh', 'fish'];
 
 /// The modes that want a name after them, and refuse an empty one.
 ///
 /// The rest take none, and the sentence for those is that they take none.
-const _modesTakingAName = {
+/// Public because a completion script has to know what follows each one.
+const modesTakingAName = {
   '--why',
   '--gate-members',
   '--dry-run',
@@ -306,7 +310,7 @@ Request parseArguments(
       // which more members to keep, never which of the first to drop.
       only
           .putIfAbsent(asked.substring(0, at), () => [])
-          .addAll(asked.substring(at + 1).split(','));
+          .addAll(_patterns(asked.substring(at + 1)));
       continue;
     }
 
@@ -378,7 +382,7 @@ Request parseArguments(
       // mistake, and neither is "there is no task called ``".
       if (value.isEmpty) {
         return ShowUsage(
-          _modesTakingAName.contains(joined)
+          modesTakingAName.contains(joined)
               ? '`$joined` needs a name after it, and there is nothing after '
                     'the `=`'
               : '`$joined` takes no name, so there is nothing for the `=` to '
@@ -581,6 +585,29 @@ Request parseArguments(
         );
 }
 
+/// [written] split into patterns at each comma outside braces.
+///
+/// **Not at every comma**, because a glob set's own patterns take braces and
+/// `--only` reads the same patterns: `packages/{core,cli}` is one pattern
+/// for two packages, and split at its comma it was two broken ones.
+List<String> _patterns(String written) {
+  final patterns = <String>[];
+  var depth = 0;
+  var start = 0;
+  for (var at = 0; at < written.length; at++) {
+    switch (written[at]) {
+      case '{':
+        depth++;
+      case '}' when depth > 0:
+        depth--;
+      case ',' when depth == 0:
+        patterns.add(written.substring(start, at));
+        start = at + 1;
+    }
+  }
+  return patterns..add(written.substring(start));
+}
+
 /// Why [written] is not `<set>=<pattern>[,<pattern>…]`, or null when it is.
 String? _narrowingRefusal(String? written) {
   const shape = 'write `--only <set>=<pattern>,<pattern>`';
@@ -596,7 +623,7 @@ String? _narrowingRefusal(String? written) {
   }
   // An empty pattern would keep nothing, which is either a typo or a run
   // that does nothing on purpose; neither is something to guess between.
-  if (written.substring(at + 1).split(',').any((p) => p.isEmpty)) {
+  if (_patterns(written.substring(at + 1)).any((p) => p.isEmpty)) {
     return '`--only $written` has an empty pattern — $shape';
   }
   return null;
