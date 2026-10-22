@@ -117,7 +117,9 @@ String _bash() {
     };
     return [
       '    ${_pattern(option)})',
-      if (value == _Value.sets) '      compopt -o nospace',
+      // `compopt` is bash 4's, and macOS ships 3.2: there the `=` is
+      // followed by a space, which is all that is lost.
+      if (value == _Value.sets) '      compopt -o nospace 2>/dev/null',
       '      COMPREPLY=($reply) ;;',
     ].join('\n');
   }
