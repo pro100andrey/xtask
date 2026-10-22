@@ -400,10 +400,7 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
       // to be soft — which is exactly what an exemption is for. A step that
       // DOES enforce the gate is not excused by it: it runs, and saying it is
       // not a gate set would be untrue.
-      //
-      // A step narrowed by `--only` is the second kind as well: one job per
-      // package, deliberately, is what an exemption is for, and it says why.
-      if (reason != null && (!enforces || narrowed.isNotEmpty)) {
+      if (reason != null && !enforces) {
         return verdict(exempted: true);
       }
 
@@ -416,6 +413,13 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
               ? RunsATaskNotAGate(step, gate, declared)
               : RunsAnUndeclaredGate(step, gate, declared),
         );
+      }
+      // A step narrowed by `--only` and marked is a job per package on
+      // purpose, which is what an exemption is for — and it excuses the
+      // narrowing, not the name: `chek --only …` under a marker still runs
+      // nothing of `check`.
+      if (reason != null && narrowed.isNotEmpty) {
+        return problems.isEmpty ? verdict(exempted: true) : verdict();
       }
       if (elsewhere != null) {
         problems.add(RunsSomewhereElse(step, gate, elsewhere));

@@ -1103,6 +1103,19 @@ tasks:
         expect(complained(), contains('there is no task called `chekc`'));
         expect(complained(), contains('did you mean `check`?'));
       });
+
+      test('and so is a gate set, near or not', () async {
+        writeFile('''
+version: 1
+gates: [check, release]
+tasks:
+  a: {desc: x, gate: [check, release], run: [ruff]}
+''');
+        expect(await run(['--gate-members', 'chek']), ExitCode.invalidFile);
+        expect(complained(), contains('did you mean `check`?'));
+        expect(await run(['--gate-members', 'deploy']), ExitCode.invalidFile);
+        expect(complained(), contains('this file has `check`, `release`'));
+      });
     });
 
     group('--only', () {
@@ -1243,7 +1256,11 @@ tasks:
         // engine: what reaches COMPREPLY is what a person sees.
         final script = File(p.join(root.path, 'completion.bash'))
           ..writeAsStringSync(completionScript('bash'));
-        Future<List<String>> complete(String line) async {
+        Future<List<String>> complete(
+          String line, {
+          // Bash's own default.
+          String breaks = ' \t\n"\'@><=;|&(:',
+        }) async {
           final result = await Process.run(
             'bash',
             [
@@ -1252,13 +1269,14 @@ tasks:
 xtask() { printf 'gate\\tcheck\\tformat\\ntask\\tformat\\tf\\ntask\\tfix\\tx\\ntask\\tweb:build\\tw\\nset\\tpkgs\\tp\\n'; }
 compopt() { :; }
 source ${script.path}
+COMP_WORDBREAKS=\$BREAKS
 COMP_LINE=\$LINE
 COMP_POINT=\${#LINE}
 _xtask
 printf '%s\\n' "\${COMPREPLY[@]}"
 ''',
             ],
-            environment: {'LINE': line},
+            environment: {'LINE': line, 'BREAKS': breaks},
           );
           expect(result.exitCode, 0, reason: '${result.stderr}');
           return '${result.stdout}'.trim().split('\n');
@@ -1283,6 +1301,12 @@ printf '%s\\n' "\${COMPREPLY[@]}"
         expect(await complete('xtask --gate=ch'), ['check']);
         expect(await complete('xtask --dry-run=web:b'), ['build']);
         expect(await complete('xtask check --only=p'), ['pkgs=']);
+        // Where `:` and `=` do not break words, bash replaces all of it.
+        expect(await complete('xtask web:bu', breaks: ' '), ['web:build']);
+        expect(
+          await complete('xtask --gate=ch', breaks: ' '),
+          ['--gate=check'],
+        );
         // After `--`, the task's own arguments: files.
         File(p.join(root.path, 'fixture.txt')).writeAsStringSync('');
         expect(

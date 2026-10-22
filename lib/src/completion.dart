@@ -157,10 +157,14 @@ _xtask() {
     fi
   done
   # `--gate=check` is the option and its value in one word: the value is
-  # completed as it would be after `--gate `.
+  # completed as it would be after `--gate `. Bash replaces the word from its
+  # last break character on, so where `=` is not one, the answer has to
+  # carry the option back with it.
+  local kept=
   if [[ $cur == --*=* ]]; then
     prev=${cur%%=*}
     cur=${cur#*=}
+    [[ $COMP_WORDBREAKS == *=* ]] || kept="$prev="
   fi
   case $prev in
 @ARMS@
@@ -172,11 +176,15 @@ _xtask() {
       fi
       ;;
   esac
-  # Bash replaces only what follows the last `:` of the word, so that is the
-  # part of each answer it is given.
-  if [[ $cur == *:* ]]; then
+  # Where `:` breaks words — it does unless somebody took it out — bash
+  # replaces only what follows the last one, so that is the part of each
+  # answer it is given.
+  if [[ $cur == *:* && $COMP_WORDBREAKS == *:* ]]; then
     local colon=${cur%"${cur##*:}"}
     COMPREPLY=("${COMPREPLY[@]#"$colon"}")
+  fi
+  if [[ -n $kept ]]; then
+    COMPREPLY=("${COMPREPLY[@]/#/$kept}")
   fi
 }
 complete -F _xtask xtask

@@ -226,6 +226,18 @@ jobs:
       ]);
     });
 
+    test('and the marker excuses the narrowing, not the name', () {
+      steps('''
+      - run: dart run :xtask ci-analyze
+      - run: dart run :xtask ci-analyse --only p=a # xtask: not a gate — one
+      - run: dart run :xtask analyze --only p=a # xtask: not a gate — two
+''');
+      expect(check().problems.map((p) => p.runtimeType), [
+        RunsAnUndeclaredGate,
+        RunsATaskNotAGate,
+      ]);
+    });
+
     test('and one that says why it is not the gate is excused', () {
       steps('''
       - run: dart run :xtask ci-analyze

@@ -332,8 +332,10 @@ void refuseShellMetacharacters(
         ExitCode.invalidFile,
         'task `$task` passes `$argument` to `$executable`, which is '
         'a batch file. Windows starts one through the shell whatever the '
-        'caller asks for, so `$character` in that argument would be read as '
-        'a shell operator rather than as text. Point the task at a real '
+        'caller asks for, so `$character` in that argument would be '
+        '${character == '%' ? 'read as the start of a `%NAME%` the shell '
+                  'replaces with a variable' : 'read as a shell operator'} '
+        'rather than as text. Point the task at a real '
         'executable, or make it a verb — a Dart function is where logic '
         'belongs anyway',
       );

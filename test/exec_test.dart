@@ -1620,6 +1620,14 @@ void main() {
           resolver: windowsShims(),
         );
         expect(code, ExitCode.invalidFile, reason: bad);
+        // `%` is not an operator, and the sentence says what it is.
+        expect(
+          logged.join('\n'),
+          bad.contains('%')
+              ? contains('replaces with a variable')
+              : contains('shell operator'),
+          reason: bad,
+        );
       }
     });
 

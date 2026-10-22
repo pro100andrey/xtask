@@ -169,6 +169,16 @@ void main() {
         ' — `xtask --list` shows what there is',
         reason: 'one letter is near too much to suggest anything',
       );
+      expect(
+        unknownNameHint('test', ['best', 'rust']),
+        ' — did you mean `best`?',
+        reason: 'two letters of four is not near',
+      );
+      expect(
+        unknownNameHint('docs', ['deps'], otherwise: ''),
+        '',
+        reason: 'what is said otherwise is up to the caller',
+      );
     });
 
     test('asked for on the command line', () {

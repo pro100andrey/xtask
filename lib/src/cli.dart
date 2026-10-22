@@ -370,11 +370,10 @@ void _refuseNarrowingNothing(
 ) {
   for (final MapEntry(key: name, value: patterns) in only.entries) {
     if (!file.sets.containsKey(name)) {
-      final known = file.sets.keys.toList()..sort();
+      final known = file.sets.keys;
       throw XtaskFormatException(
         '`--only $name=…` names a set, and there is no set called `$name`'
-        '${known.isEmpty ? '' : ' — this file has '
-                  '${known.map((s) => '`$s`').join(', ')}'}',
+        '${unknownNameHint(name, known, otherwise: _theFileHas(known))}',
       );
     }
     final reads = plan.steps.any(
@@ -393,6 +392,13 @@ void _refuseNarrowingNothing(
   }
 }
 
+/// What follows an unknown name when nothing is near it: every name there
+/// is, where the list is short enough to be the answer.
+String _theFileHas(Iterable<String> known) => known.isEmpty
+    ? ''
+    : ' — this file has '
+          '${(known.toList()..sort()).map((n) => '`$n`').join(', ')}';
+
 /// [gate], if the file knows the name.
 ///
 /// A gate set that is not declared is a typo, and the answer to a typo must
@@ -407,7 +413,6 @@ String _gate(XtaskFile file, String gate) {
   }
   throw XtaskFormatException(
     'there is no gate set called `$gate`'
-    '${known.isEmpty ? '' : ' — this file has '
-              '${(known.toList()..sort()).map((g) => '`$g`').join(', ')}'}',
+    '${unknownNameHint(gate, known, otherwise: _theFileHas(known))}',
   );
 }

@@ -477,25 +477,33 @@ void refuseUnlessATask(XtaskFile file, String name) {
 }
 
 /// What follows "there is no task called `[name]`": the names in [known] it
-/// is probably a misspelling of, or where the names are.
+/// is probably a misspelling of, or [otherwise].
 ///
 /// **A typo is the likeliest reason a name is unknown**, and `chek` is one
 /// letter from `check`; the sentence that leaves the reader to find that
-/// out from `--list` is the longer road to the same place. Near means a
-/// prefix of the name, or at most two edits, and never more than a third of
-/// what was typed — `a` is two edits from most short names, and suggesting
-/// all of them suggests nothing.
-String unknownNameHint(String name, Iterable<String> known) {
-  final limit = name.length < 3 ? 1 : (name.length / 3).ceil().clamp(1, 2);
+/// out from `--list` is the longer road to the same place. Near means the
+/// name is a prefix of it, or it is at most a third of what was typed away
+/// — rounded down, and never more than two: `test` is two letters from
+/// `rust`, and suggesting it suggests nothing.
+///
+/// Every lookup of a name somebody typed answers through this, so a gate
+/// set, a task and a set are not three different kinds of unknown.
+String unknownNameHint(
+  String name,
+  Iterable<String> known, {
+  String otherwise = ' — `xtask --list` shows what there is',
+}) {
+  final limit = (name.length ~/ 3).clamp(0, 2);
   final near = [
     for (final candidate in known)
       if (candidate.startsWith(name) && name.length > 1)
         (candidate, 0)
-      else if (_edits(name, candidate) case final edits when edits <= limit)
+      else if (_edits(name, candidate) case final edits
+          when edits > 0 && edits <= limit)
         (candidate, edits),
   ]..sort((a, b) => a.$2 != b.$2 ? a.$2 - b.$2 : a.$1.compareTo(b.$1));
   if (near.isEmpty) {
-    return ' — `xtask --list` shows what there is';
+    return otherwise;
   }
   final named = near.take(3).map((n) => '`${n.$1}`').join(' or ');
   return ' — did you mean $named?';
