@@ -187,6 +187,21 @@ final class NamesAGateWithoutRunningIt extends CiProblem {
   final String named;
 }
 
+/// A step that runs a gate set narrowed by `--only`.
+///
+/// `xtask ci --only packages=packages/a` runs the gate over one package of
+/// however many there are, in a job that reads as the gate. Every package
+/// added after it is one no job checks.
+final class RunsPartOfAGate extends CiProblem {
+  const RunsPartOfAGate(super.step, this.gate, this.sets);
+
+  /// The gate set or task the step names.
+  final String gate;
+
+  /// The sets the step narrows, in the order it wrote them.
+  final List<String> sets;
+}
+
 /// An exemption marker with nothing after it.
 final class ExemptsWithoutSaying extends CiProblem {
   const ExemptsWithoutSaying(super.step);
@@ -439,6 +454,15 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
         problems.add(ExemptsNothing(step, 'a step the command line refuses'));
       }
       return verdict();
+    case _Narrowed(:final gate, :final sets):
+      // Named as a run of part of the gate, and excused like a step that is
+      // not this file's gate at all: one job per package, deliberately, is
+      // what an exemption is for, and it says why.
+      if (reason != null) {
+        return verdict(exempted: true);
+      }
+      problems.add(RunsPartOfAGate(step, gate, sets));
+      return verdict();
     case _Names(:final mode, :final named):
       problems.add(NamesAGateWithoutRunningIt(step, mode, named));
       if (reason != null) {
@@ -615,6 +639,14 @@ final class _Gate extends _Reading {
   final String gate;
 }
 
+/// A run of [gate] over part of [sets], by `--only`.
+final class _Narrowed extends _Reading {
+  const _Narrowed(this.gate, this.sets);
+
+  final String gate;
+  final List<String> sets;
+}
+
 /// An invocation the command line refuses, in its own words.
 final class _Refused extends _Reading {
   const _Refused(this.refusal);
@@ -750,6 +782,12 @@ _Reading _readWords(List<String> arguments) {
     processors: () => 1,
   );
   return switch (request) {
+    // Before the two readings of a run below: whatever else it is, a run
+    // narrowed to part of a set is not the gate running.
+    RunTask(:final task, :final only) when only.isNotEmpty => _Narrowed(
+      task,
+      only.keys.toList(),
+    ),
     RunTask(:final task, arguments: []) => _Gate(task),
     // A gate set has no body, so the arguments reach nothing and the step
     // exits 2. The command line does not refuse this — only the file can say

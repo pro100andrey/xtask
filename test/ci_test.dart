@@ -201,6 +201,24 @@ jobs:
       expect(problem, contains('run nothing of it'));
     });
 
+    test('a run narrowed by `--only` is part of the gate, not it', () {
+      steps('''
+      - run: dart run :xtask ci-analyze --only packages=packages/twk
+''');
+      final found = check();
+      expect(found.invocations, isEmpty, reason: 'the gate is not run whole');
+      expect(found.problems.single, isA<RunsPartOfAGate>());
+      expect(said().single, contains('with `--only` over `packages`'));
+    });
+
+    test('and one that says why it is not the gate is excused', () {
+      steps('''
+      - run: dart run :xtask ci-analyze
+      - run: dart run :xtask ci-analyze --only p=a # xtask: not a gate — smoke
+''');
+      expect(check().problems, isEmpty, reason: '${refusals(check())}');
+    });
+
     test('but a mode that names nothing is a question, not a problem', () {
       steps('''
       - run: dart run :xtask ci-analyze

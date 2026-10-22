@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `--only <set>=<pattern>,…` narrows a set for one run: every `each:` and
+  `all:` in the plan that names it gets only the members a pattern matches,
+  and `--dry-run` takes it too. A set the file has not got, a set nothing in
+  the plan expands, and a pattern matching no member are each a `2`. The
+  summary says `over 2 of 17 members`, and `--check-ci` reports a step that
+  runs a gate set narrowed.
+- `alone: true`: under `-j` the run waits for what it has started, runs the
+  task, and starts nothing else until it has ended. `--validate` refuses it
+  beside `exclusive:`, `serial:` or `interruptible:`, and on a task with no
+  body.
+- For verbs: `context.tee(argv, workingDirectory:, timeout:)`, which is
+  `capture` with the output shown as it arrives. A hand-built `VerbContext`
+  gives it through `relay:`.
+
 ## 0.3.0
 
 ### Breaking

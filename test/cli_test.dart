@@ -50,6 +50,7 @@ final class FakeStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    void Function(String line)? echo,
   }) async {
     started.add(Started(executable, arguments, workingDirectory));
     return (
@@ -259,6 +260,64 @@ void main() {
         for (final mode in ['--list', '--validate', '--dry-run']) {
           final usage = parseArguments([mode, 'x', '--keep-going']);
           expect(usage, isA<ShowUsage>(), reason: '$mode accepted it');
+        }
+      });
+    });
+
+    group('--only', () {
+      test('a set and its patterns, in either spelling, adding up', () {
+        final request =
+            parseArguments([
+                  'pkg-test',
+                  '--only',
+                  'packages=packages/twk,packages/twk_rich',
+                  '--only=flavours=dev',
+                  '--only',
+                  'packages=tools/*',
+                ])
+                as RunTask;
+        expect(request.only, {
+          'packages': ['packages/twk', 'packages/twk_rich', 'tools/*'],
+          'flavours': ['dev'],
+        });
+        expect((parseArguments(['check']) as RunTask).only, isEmpty);
+      });
+
+      test('and a dry run is narrowed as the run would be', () {
+        final request =
+            parseArguments(['--dry-run', 'a', '--only', 's=x']) as DryRunTask;
+        expect(request.only, {
+          's': ['x'],
+        });
+      });
+
+      test('what is not a set and its members is refused', () {
+        for (final written in [
+          ['--only'],
+          ['--only', 'packages'],
+          ['--only', '=x'],
+          ['--only', 'packages='],
+          ['--only', 'packages=a,,b'],
+          ['--only='],
+        ]) {
+          expect(
+            parseArguments(['a', ...written]),
+            isA<ShowUsage>(),
+            reason: written.join(' '),
+          );
+        }
+      });
+
+      test('a mode that expands no set has nothing for it to narrow', () {
+        for (final mode in ['--why', '--list', '--validate']) {
+          final usage = parseArguments([
+            mode,
+            if (mode == '--why') 'a',
+            '--only',
+            's=x',
+          ]);
+          expect(usage, isA<ShowUsage>(), reason: '$mode accepted it');
+          expect((usage as ShowUsage).problem, contains('expands none'));
         }
       });
     });
@@ -983,6 +1042,110 @@ tasks:
 ''');
         expect(await run(['chekc']), ExitCode.invalidFile);
         expect(complained(), contains('there is no task called `chekc`'));
+      });
+    });
+
+    group('--only', () {
+      const packages = r'''
+version: 1
+sets:
+  pkgs: [packages/twk, packages/twk_rich, packages/lake]
+  flavours: {values: [dev, prod]}
+tasks:
+  pkg-test: {desc: x, each: pkgs, in: $each, run: [dart, test]}
+  docs: {desc: y, all: pkgs, run: [dart, doc, $all]}
+  other: {desc: z, run: [dart, format]}
+  check: {desc: w, needs: [pkg-test, docs]}
+''';
+
+      setUp(() {
+        writeFile(packages);
+        for (final member in ['twk', 'twk_rich', 'lake']) {
+          Directory(
+            p.join(root.path, 'packages', member),
+          ).createSync(recursive: true);
+        }
+      });
+
+      test('narrows every `each:` and `all:` over the set', () async {
+        final code = await run([
+          'check',
+          '--only',
+          'pkgs=packages/twk,packages/twk_rich',
+        ]);
+        expect(code, ExitCode.success, reason: complained());
+        expect(
+          starter.started.map((s) => p.basename(s.workingDirectory)),
+          // `docs` is one invocation, at the root.
+          ['twk', 'twk_rich', p.basename(root.path)],
+        );
+        expect(starter.started.last.arguments, [
+          'doc',
+          'packages/twk',
+          'packages/twk_rich',
+        ]);
+        expect(
+          out.where((line) => line.endsWith('of 3 members')),
+          [
+            matches(RegExp(r'^pkg-test .* over 2 of 3 members$')),
+            matches(RegExp(r'^docs .*s  2 of 3 members$')),
+          ],
+          reason: printed(),
+        );
+      });
+
+      test('a pattern is a glob, read against the member', () async {
+        expect(
+          await run(['pkg-test', '--only', 'pkgs=packages/twk*']),
+          ExitCode.success,
+        );
+        expect(starter.started, hasLength(2));
+      });
+
+      test('and one that matches nothing is a 2, naming it', () async {
+        final code = await run([
+          'pkg-test',
+          '--only',
+          'pkgs=packages/twk,packages/twq',
+        ]);
+        expect(code, ExitCode.invalidFile);
+        expect(starter.started, isEmpty);
+        expect(printed(), contains('`packages/twq`, which no member'));
+      });
+
+      test('a set the file has not got is a 2 before anything runs', () async {
+        expect(
+          await run(['check', '--only', 'pkg=packages/twk']),
+          ExitCode.invalidFile,
+        );
+        expect(complained(), contains('no set called `pkg`'));
+        expect(starter.started, isEmpty);
+      });
+
+      test('and so is a set nothing in the plan expands', () async {
+        expect(
+          await run(['other', '--only', 'flavours=dev']),
+          ExitCode.invalidFile,
+        );
+        expect(complained(), contains('nothing `other` runs has it'));
+        expect(starter.started, isEmpty);
+      });
+
+      test('and a pattern that is not one', () async {
+        expect(
+          await run(['check', '--only', 'pkgs=[']),
+          ExitCode.invalidFile,
+        );
+        expect(complained(), contains('is not a valid pattern'));
+      });
+
+      test('`--dry-run` prints the narrowed plan', () async {
+        expect(
+          await run(['--dry-run', 'pkg-test', '--only', 'pkgs=packages/lake']),
+          ExitCode.success,
+        );
+        expect(printed(), contains(p.join(root.path, 'packages', 'lake')));
+        expect(printed(), isNot(contains('twk')));
       });
     });
 

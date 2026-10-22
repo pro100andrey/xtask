@@ -148,6 +148,7 @@ List<String> timing(
   Duration wall,
   Map<String, ({Duration spent, int members})> work, {
   required bool concurrent,
+  Map<String, ({int kept, int of})> narrowed = const {},
 }) {
   if (took.isEmpty) {
     return const [];
@@ -189,13 +190,18 @@ List<String> timing(
   /// that had less to do.
   String over(String name) {
     final done = work[name];
+    // `--only` said which part of the set ran, and the row says how much of
+    // it that was: two packages of seventeen is not the gate, and a summary
+    // reading as though it were is the green nobody checked.
+    final part = narrowed[name];
+    final of = part == null ? '' : ' of ${part.of}';
     if (done == null || done.members < 2) {
       // One member is the row already, said twice — and `over 1 members` is
       // not a sentence. A task whose first member failed without
       // `--keep-going` has exactly one attempted.
-      return '';
+      return part == null ? '' : '  ${part.kept}$of members';
     }
-    return '  ${asTime(done.spent)} over ${done.members} members';
+    return '  ${asTime(done.spent)} over ${done.members}$of members';
   }
 
   return [
@@ -443,6 +449,11 @@ String _why(CiProblem problem) => switch (problem) {
         'only it: the next task added to the gate this one is in is a task no '
         'job runs, which is the drift a job naming a gate set cannot have'
         '${declared.isEmpty ? '' : '. Declared: ${_names(declared)}'}',
+  RunsPartOfAGate(:final gate, :final sets) =>
+    'runs `$gate` with `--only` over '
+        '${sets.map((set) => '`$set`').join(', ')}, so the job runs part '
+        'of it and reads as all of it — a member added later is one no job '
+        'checks. Drop `--only`, or say why this step is not the gate',
   NamesAGateWithoutRunningIt(:final mode, :final named) =>
     'names the gate set `$named` under `$mode`, which asks about it rather '
         'than running it — so the job passes having run nothing of it',

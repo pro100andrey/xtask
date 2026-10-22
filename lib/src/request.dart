@@ -30,12 +30,16 @@ final class RunTask extends Request {
     this.arguments = const [],
     this.keepGoing = false,
     this.concurrency = 1,
+    this.only = const {},
   });
 
   final String task;
 
   /// What followed `--`, for [task]'s body alone.
   final List<String> arguments;
+
+  /// `--only`: the members of each named set this run is narrowed to.
+  final Narrowing only;
 
   /// `--keep-going`: report every failure rather than the first.
   final bool keepGoing;
@@ -46,13 +50,30 @@ final class RunTask extends Request {
 
 /// `xtask --dry-run <task> [-- <args>]` — print what that would come to .
 final class DryRunTask extends Request {
-  const DryRunTask(this.task, [this.arguments = const []]);
+  const DryRunTask(
+    this.task, [
+    this.arguments = const [],
+    this.only = const {},
+  ]);
 
   final String task;
 
   /// What followed `--`, for [task]'s body alone.
   final List<String> arguments;
+
+  /// `--only`, as the run it describes would be narrowed.
+  final Narrowing only;
 }
+
+/// What `--only` asked for: per set, the patterns a member has to match to be
+/// kept, in the order they were written.
+///
+/// **On the command line, because the file is the wrong place for it.**
+/// Which packages a run reaches today is one person's question about one
+/// afternoon, and a set edited for it is a set somebody commits. Filtering
+/// in a verb from an environment variable was the other way, and then the
+/// run said `over 17 members` about two, and `--dry-run` printed seventeen.
+typedef Narrowing = Map<String, List<String>>;
 
 /// `xtask --list [--gate <name>]` — every task with its description.
 final class ListTasks extends Request {
@@ -202,6 +223,7 @@ Request parseArguments(
   var keepGoing = false;
   var concurrency = 1;
   var jobsWritten = false;
+  final only = <String, List<String>>{};
 
   final passed = <String>[];
   var separated = false;
@@ -235,6 +257,25 @@ Request parseArguments(
       if (gate == null || gate.isEmpty) {
         return const ShowUsage('`--gate` needs the name of a gate set');
       }
+      continue;
+    }
+
+    if (argument == '--only' || argument.startsWith('--only=')) {
+      final asked = argument == '--only'
+          ? rest.isNotEmpty && !rest.first.startsWith('-')
+                ? rest.removeAt(0)
+                : null
+          : argument.substring('--only='.length);
+      final refusal = _narrowingRefusal(asked);
+      if (refusal != null) {
+        return ShowUsage(refusal);
+      }
+      final at = asked!.indexOf('=');
+      // Written twice for one set, the patterns add up: the second says
+      // which more members to keep, never which of the first to drop.
+      only
+          .putIfAbsent(asked.substring(0, at), () => [])
+          .addAll(asked.substring(at + 1).split(','));
       continue;
     }
 
@@ -352,6 +393,15 @@ Request parseArguments(
     );
   }
 
+  if (only.isNotEmpty && mode != null && mode != '--dry-run') {
+    // A set is expanded by a run, and `--dry-run` is the same expansion
+    // printed. Every other mode answers from the file without expanding
+    // one — what `--why` says reaches a task does not depend on its members.
+    return ShowUsage(
+      '`--only` narrows the sets a run expands, and `$mode` expands none',
+    );
+  }
+
   if (keepGoing && mode != null) {
     // It changes what a RUN does when something fails, and none of the modes
     // run anything. `--validate` in particular already collects every problem
@@ -442,7 +492,7 @@ Request parseArguments(
 
   if (mode == '--dry-run') {
     return operands.length == 1
-        ? DryRunTask(operands.single, passed)
+        ? DryRunTask(operands.single, passed, Map.unmodifiable(only))
         : const ShowUsage('`--dry-run` needs one task to resolve');
   }
 
@@ -467,11 +517,33 @@ Request parseArguments(
           arguments: passed,
           keepGoing: keepGoing,
           concurrency: concurrency,
+          only: Map.unmodifiable(only),
         )
       : ShowUsage(
           'xtask runs one task at a time, and it was given '
           '${operands.map((o) => '`$o`').join(' and ')}',
         );
+}
+
+/// Why [written] is not `<set>=<pattern>[,<pattern>…]`, or null when it is.
+String? _narrowingRefusal(String? written) {
+  const shape = 'write `--only <set>=<pattern>,<pattern>`';
+  if (written == null || written.isEmpty) {
+    return '`--only` needs a set and the members to keep — $shape';
+  }
+  final at = written.indexOf('=');
+  if (at < 0) {
+    return '`--only $written` names no members to keep — $shape';
+  }
+  if (at == 0) {
+    return '`--only $written` names no set — $shape';
+  }
+  // An empty pattern would keep nothing, which is either a typo or a run
+  // that does nothing on purpose; neither is something to guess between.
+  if (written.substring(at + 1).split(',').any((p) => p.isEmpty)) {
+    return '`--only $written` has an empty pattern — $shape';
+  }
+  return null;
 }
 
 /// Whether [written] is a number of jobs this parser would accept.
@@ -487,6 +559,10 @@ const usage = [
   '                               across tasks and across an `each:`',
   '  xtask <task> -j <n>          run n at once — which costs seeing their',
   '                               output as it arrives. `-j auto` picks one',
+  '  xtask <task> --only <set>=<pattern>,…',
+  '                               only the members of that set a pattern',
+  '                               matches, wherever an `each:` or `all:`',
+  '                               names it; with --dry-run too',
   '  xtask --list                 every task, grouped under its gate set,',
   '                               in the order `gates:` declares',
   '  xtask --list --gate <name>   only the tasks in that gate set',

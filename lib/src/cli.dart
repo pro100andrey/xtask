@@ -201,7 +201,8 @@ Future<int> runCli(
   /// the one place whose job is to be checkable against what somebody meant.
   BodyResolver bodiesFor(
     String task,
-    List<String> arguments, {
+    List<String> arguments,
+    Narrowing only, {
     bool cacheSets = false,
   }) => BodyResolver(
     root: root,
@@ -211,6 +212,7 @@ Future<int> runCli(
     environment: environment,
     passedThrough: (task: task, arguments: arguments),
     cacheSets: cacheSets,
+    only: only,
   );
 
   try {
@@ -267,13 +269,15 @@ Future<int> runCli(
         }
         return ExitCode.success;
 
-      case DryRunTask(:final task, :final arguments):
+      case DryRunTask(:final task, :final arguments, :final only):
         _refuseArgumentsWithNowhereToGo(file, task, arguments);
+        final plan = planFor(file, task);
+        _refuseNarrowingNothing(file, plan, task, only);
         return await dryRun(
-          plan: planFor(file, task),
+          plan: plan,
           // Nothing runs, so nothing can change what a set expands to
           // between two steps of the plan.
-          bodies: bodiesFor(task, arguments, cacheSets: true),
+          bodies: bodiesFor(task, arguments, only, cacheSets: true),
           log: out,
         );
 
@@ -282,16 +286,19 @@ Future<int> runCli(
         :final arguments,
         :final keepGoing,
         :final concurrency,
+        :final only,
       ):
         _refuseArgumentsWithNowhereToGo(file, task, arguments);
+        final plan = planFor(file, task);
+        _refuseNarrowingNothing(file, plan, task, only);
         return await Executor(
-          bodies: bodiesFor(task, arguments),
+          bodies: bodiesFor(task, arguments, only),
           starter: starter,
           log: out,
           markers: LogMarkers.forHost(environment),
           keepGoing: keepGoing,
           concurrency: concurrency,
-        ).run(planFor(file, task));
+        ).run(plan);
     }
   } on XtaskFormatException catch (problem) {
     err('$problem');
@@ -331,6 +338,45 @@ void _refuseArgumentsWithNowhereToGo(
     'for $quoted to be an argument to. Name the task that takes them',
     task.span,
   );
+}
+
+/// Refuses an `--only` that could narrow nothing, before anything runs.
+///
+/// **Three ways for it to say less than it looks like it says**, and each one
+/// is the run going green over more than was meant: a set the file has not
+/// got, a set nothing in this plan expands, and a pattern that is not one.
+/// A pattern that matches no member is the fourth, and it is asked where the
+/// members are known — when the set is read, which a set produced by a task
+/// in the plan is not before that task has run.
+void _refuseNarrowingNothing(
+  XtaskFile file,
+  Plan plan,
+  String task,
+  Narrowing only,
+) {
+  for (final MapEntry(key: name, value: patterns) in only.entries) {
+    if (!file.sets.containsKey(name)) {
+      final known = file.sets.keys.toList()..sort();
+      throw XtaskFormatException(
+        '`--only $name=…` names a set, and there is no set called `$name`'
+        '${known.isEmpty ? '' : ' — this file has '
+                  '${known.map((s) => '`$s`').join(', ')}'}',
+      );
+    }
+    final reads = plan.steps.any(
+      (step) => step.task.each == name || step.task.all == name,
+    );
+    if (!reads) {
+      throw XtaskFormatException(
+        '`--only $name=…` narrows set `$name`, and nothing `$task` runs has '
+        'it as `each:` or `all:` — so the run would be the whole run, said '
+        'to be a part of one',
+      );
+    }
+    for (final pattern in patterns) {
+      memberPattern(name, pattern);
+    }
+  }
 }
 
 /// [gate], if the file knows the name.

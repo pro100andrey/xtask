@@ -252,6 +252,7 @@ final class SystemProcessStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    void Function(String line)? echo,
   }) async {
     final process = await Process.start(
       executable,
@@ -270,13 +271,24 @@ final class SystemProcessStarter implements ProcessStarter {
     // that is not UTF-8 must not turn a program's answer into an exception.
     final out = StringBuffer();
     final err = StringBuffer();
+    // Each stream keeps its own partial line, so a line is shown whole and
+    // a chunk boundary on one stream cannot splice it into the other's.
+    final shown = [
+      if (echo != null) ...[_Lines(echo), _Lines(echo)],
+    ];
+    void Function(String) keep(StringBuffer whole, int stream) => shown.isEmpty
+        ? whole.write
+        : (chunk) {
+            whole.write(chunk);
+            shown[stream].add(chunk);
+          };
     final reading = [
       process.stdout
           .transform(const Utf8Decoder(allowMalformed: true))
-          .listen(out.write),
+          .listen(keep(out, 0)),
       process.stderr
           .transform(const Utf8Decoder(allowMalformed: true))
-          .listen(err.write),
+          .listen(keep(err, 1)),
     ];
     // Watched from the start, as `start` watches them. A stream that has
     // already closed when the process is waited on never tells a later
@@ -306,6 +318,9 @@ final class SystemProcessStarter implements ProcessStarter {
     for (final subscription in reading) {
       await subscription.cancel();
     }
+    for (final lines in shown) {
+      lines.end();
+    }
     return (exitCode: code, stdout: '$out', stderr: '$err');
   }
 
@@ -318,6 +333,45 @@ final class SystemProcessStarter implements ProcessStarter {
   /// number for SIGINT. Distinct from [timedOut] so a report can say which
   /// happened, and never a task failure: it was not allowed to finish.
   static const interrupted = 130;
+}
+
+/// Text as it arrives, handed on a line at a time.
+///
+/// What a terminal would show, which is what [LineSplitter] makes of the
+/// streaming path — a `\r\n` ends a line as a `\n` does — while the text
+/// itself is kept elsewhere exactly as it was written.
+final class _Lines {
+  _Lines(this._show);
+
+  final void Function(String line) _show;
+  final _pending = StringBuffer();
+
+  void add(String chunk) {
+    var start = 0;
+    while (true) {
+      final newline = chunk.indexOf('\n', start);
+      if (newline < 0) {
+        _pending.write(chunk.substring(start));
+        return;
+      }
+      _pending.write(chunk.substring(start, newline));
+      _emit();
+      start = newline + 1;
+    }
+  }
+
+  /// Hands on a last line that ended without a newline.
+  void end() {
+    if (_pending.isNotEmpty) {
+      _emit();
+    }
+  }
+
+  void _emit() {
+    final line = '$_pending';
+    _pending.clear();
+    _show(line.endsWith('\r') ? line.substring(0, line.length - 1) : line);
+  }
 }
 
 /// Where the output of a child goes when nobody is reading this process.

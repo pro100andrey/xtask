@@ -127,6 +127,43 @@ final class ResolvedVerb extends Resolved {
   final Verb implementation;
 }
 
+/// What [patterns] keep of set [name]'s [members], in the set's order, and
+/// which of them kept nothing.
+///
+/// Throws [XtaskFormatException] for a pattern that is not one — which the
+/// command line asks before anything runs, so that a typo in `--only` is not
+/// found half-way through a gate.
+({List<String> members, List<String> unmatched}) narrowed(
+  String name,
+  List<String> members,
+  List<String> patterns,
+) {
+  final globs = {
+    for (final pattern in patterns) pattern: memberPattern(name, pattern),
+  };
+  final matched = <String>{};
+  final kept = <String>[];
+  for (final member in members) {
+    var keep = false;
+    for (final MapEntry(key: pattern, value: glob) in globs.entries) {
+      if (glob.matches(member)) {
+        matched.add(pattern);
+        keep = true;
+      }
+    }
+    if (keep) {
+      kept.add(member);
+    }
+  }
+  return (
+    members: List.unmodifiable(kept),
+    unmatched: [
+      for (final pattern in patterns)
+        if (!matched.contains(pattern)) pattern,
+    ],
+  );
+}
+
 /// What both kinds of body are resolved against.
 typedef _Shared = ({
   String? member,
@@ -148,6 +185,7 @@ final class BodyResolver {
     this.environment = const {},
     this.passedThrough,
     this.cacheSets = false,
+    this.only = const {},
   }) : _expander = SetExpander(root: root);
 
   /// The repository root. Every working directory is resolved against it.
@@ -192,9 +230,27 @@ final class BodyResolver {
   /// one glob set cost twenty identical walks and 553ms, against 36ms for one.
   final bool cacheSets;
 
+  /// `--only`: per set, the patterns a member must match to be kept.
+  ///
+  /// **Applied where a set is expanded, so every reader is narrowed at
+  /// once** — an `each:`, an `all:`, `--dry-run`, and the check for a member
+  /// a glob found that a program would read as an option. The patterns are
+  /// the ones a glob set is written with, read against the member as text,
+  /// so `packages/twk` keeps that member and not `packages/twk_rich`.
+  final Map<String, List<String>> only;
+
   final SetExpander _expander;
 
   final _expanded = <String, List<String>>{};
+
+  final _narrowings = <String, ({int kept, int of})>{};
+
+  /// How many members `--only` kept of set [name], and of how many — or null
+  /// when it was not narrowed or has not been expanded yet.
+  ///
+  /// For the summary: `over 2 members` about a set of seventeen reads as
+  /// the whole set, and the run was not.
+  ({int kept, int of})? narrowing(String name) => _narrowings[name];
 
   /// Everything [task] comes to, in order. Empty for a composite.
   ///
@@ -420,6 +476,38 @@ final class BodyResolver {
   /// has and with the task's section closed rather than folding everything
   /// after it into a task that had already stopped.
   List<String> _expand(Task task, String name) {
+    final members = _whole(task, name);
+    final patterns = only[name];
+    if (patterns == null) {
+      return members;
+    }
+    final kept = narrowed(name, members, patterns);
+    if (kept.unmatched.isNotEmpty) {
+      // Code 2, as a set that expands to nothing is: a pattern that matched
+      // nothing ran less than was asked for, and a green run that skipped the
+      // package somebody misspelled is the green nobody checked.
+      throw RunFailure(
+        ExitCode.invalidFile,
+        'task `${task.name}` cannot run: `--only $name=…` has '
+        '${kept.unmatched.map((p) => '`$p`').join(', ')}, which no member of '
+        'set `$name` matches. Its members: ${_sample(members)}',
+      );
+    }
+    _narrowings[name] = (kept: kept.members.length, of: members.length);
+    return kept.members;
+  }
+
+  /// [members], at most a handful of them, for a sentence.
+  static String _sample(List<String> members) {
+    const shown = 8;
+    return [
+      for (final member in members.take(shown)) '`$member`',
+      if (members.length > shown) 'and ${members.length - shown} more',
+    ].join(', ');
+  }
+
+  /// Every member of set [name], before `--only` has had its say.
+  List<String> _whole(Task task, String name) {
     final remembered = cacheSets ? _expanded[name] : null;
     if (remembered != null) {
       return remembered;

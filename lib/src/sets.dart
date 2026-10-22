@@ -18,6 +18,21 @@ String noSuchSet({
   required String name,
 }) => 'task `$task` has `$key: $name`, and there is no set called `$name`';
 
+/// [pattern] from `--only <name>=…`, as the glob it is read as.
+///
+/// Read as a glob set's own patterns are — POSIX, whatever the host — and
+/// matched against a member as text, so that one pattern means the same
+/// thing about `packages/twk` and about a `values:` member like `stable`.
+Glob memberPattern(String name, String pattern) {
+  try {
+    return Glob(pattern, context: p.posix);
+  } on FormatException catch (e) {
+    throw XtaskFormatException(
+      '`--only $name=$pattern` is not a valid pattern: ${e.message}',
+    );
+  }
+}
+
 /// Turning a named set into the strings a task is given.
 ///
 /// Sets exist so a task can iterate without a loop and pass file arguments
