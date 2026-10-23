@@ -27,6 +27,15 @@
   `--validate` too; a set the filter leaves empty is refused as any empty set
   is, saying that the patterns matched and the filter took them.
 
+- `unchanged: <set>` fails a task that changed the files a set of paths
+  reaches, naming each file changed, added or removed. Compared byte for byte,
+  not asked of git, so it answers the same in a dirty tree and outside a
+  repository; a directory member is every file beneath it. The set is first
+  read when the run begins — before every `needs:`, including one another
+  branch of the graph reaches first — and again when the task ends. A missing
+  set or a `values:` set is refused by `--validate`, `--dry-run` and the run,
+  before the body starts; `--dry-run` says which set a task holds.
+
 ### Changed
 
 - The package lives in `packages/xtask` of a workspace repository, and

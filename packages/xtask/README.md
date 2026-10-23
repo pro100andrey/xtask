@@ -742,6 +742,7 @@ registry will not accept that version again.
 | `alone` | nothing else runs while this task does, whatever `-j` says |
 | `interruptible` | a failure elsewhere may stop this task where it stands |
 | `timeout` | seconds a `run:` body may take before it is killed — per member under `each:` |
+| `unchanged` | a set of paths whose files this task must leave as the run found them — compared byte for byte |
 
 `timeout:` is asked of the process, not waited out by the engine: the body is
 sent SIGTERM, given a moment to write what it has, and then SIGKILL. What it
@@ -779,6 +780,11 @@ run; and `alone:` beside `exclusive:`, `serial:` or `interruptible:`, or on a
 task with no body — each of those keys keeps apart, orders or stops what
 running alone already leaves out. Put `--validate` in the gate a person runs
 to have them caught.
+
+`unchanged:` naming a set the file has not got, or a `values:` set — whose
+members are not files there is anything to compare — is refused by `--validate`
+and by `--dry-run`, and by a run when it reaches the task, before the body
+starts: a gate that cannot compare must not run the generator and say nothing.
 
 ### A fuller example
 
@@ -894,7 +900,7 @@ you can see it, and a `values:` set holding `-v` is somebody passing a flag on
 purpose.
 
 **A set is read when the task that names it is about to run**, and at no other
-time. `--validate` and `--dry-run` happen before that, so a set the run itself
+time — except by `unchanged:`, below, which reads its set twice and says why. `--validate` and `--dry-run` happen before that, so a set the run itself
 produces says so:
 
 ```yaml
@@ -920,6 +926,59 @@ yet.
 
 A set that expands to nothing is an **error**: a task given no files checked
 nothing, and a gate that examined nothing is worse than no gate.
+
+A task can say that it leaves a set's files as it found them, which is what a
+freshness gate over committed generated code asks:
+
+```yaml
+sets:
+  generated:
+    include: ['lib/l10n/gen/**', 'packages/*/lib/**.g.dart']
+
+tasks:
+  codegen:
+    desc: regenerate l10n and drift code; fail if that changed a file
+    needs: [l10n, build]
+    unchanged: generated
+
+  l10n:
+    desc: generate the localizations
+    run: [flutter, gen-l10n]
+
+  build:
+    desc: run the models package's build_runner
+    in: packages/models
+    run: [dart, run, build_runner, build, --delete-conflicting-outputs]
+```
+
+`unchanged:` reads every file the set reaches, byte for byte, and again when
+the task has ended; a file whose bytes changed, a file that appeared and a file
+that went away each fail the task, which names them — twenty at most, and how
+many more. A member that is a directory is every file beneath it, so a set can
+name generated trees as well as files. It is not `git status`: it answers the
+same in a dirty tree, in one whose fresh output is not committed yet, and in a
+directory that is no repository at all. The files are left as the task wrote
+them, because the regenerated ones are the fix.
+
+**The first reading is when the run begins**, not when the task is reached and
+not when its `needs:` begin. A generation is often several steps, so the task
+that holds the set is the one over them; and a `needs:` runs once per
+invocation, for whichever branch of the graph reaches it first. In a gate where
+`test` needs `build` and comes before `codegen`, `build` has regenerated
+everything before `codegen`'s steps would start, and a set read then would
+compare the regenerated files with themselves and pass stale code. Before the
+run is the one moment before every step of every branch. What that costs: any
+task in the run that writes the set before this one ends counts against it —
+which is the question being asked, whether the committed files are what this
+run leaves behind. A task meant to rewrite them is not one to hold them
+unchanged.
+
+`--only` does not narrow it: a generator run for one member can rewrite
+another's files. A run that has already given up does not compare, since what
+it stopped part-way is not the question; a body that failed has its own
+answer. A set that held nothing when the run began and holds nothing at the end
+is refused as an empty set is, since nothing was compared. `--dry-run` says
+which set a task holds, and when it is read.
 
 ## Editor support
 

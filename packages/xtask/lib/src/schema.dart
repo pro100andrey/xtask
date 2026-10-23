@@ -435,6 +435,16 @@ const _taskKeys = <String, Map<String, Object?>>{
         'one, so the limit would pass while the verb kept running. Under '
         '`each:` it is a limit per member.',
   },
+  'unchanged': {
+    // A set's name, as `all:` and `each:` are.
+    ..._name,
+    'description':
+        'A set of paths whose files this task must leave as the run found '
+        'them: read byte for byte when the run begins, before any `needs:`, '
+        'and again when the task ends. A file changed, added or removed fails '
+        'the task, naming it. Not git: it works in a dirty tree and without '
+        'one.',
+  },
 };
 
 /// [table] as JSON Schema properties, in [keys]' order, or nothing at all.

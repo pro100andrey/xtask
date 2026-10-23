@@ -12,6 +12,7 @@ import 'gates.dart';
 import 'graph.dart';
 import 'model.dart';
 import 'sets.dart';
+import 'unchanged.dart';
 
 /// Everything wrong with a file, rather than the first thing.
 ///
@@ -82,6 +83,11 @@ ValidationReport validateFile(
     _checkDoesSomething(task, problems);
     _checkVerb(task, knownVerbs, problems);
     _checkSetReferences(task, file, problems);
+    // The run's own sentence, asked of the file: the run refuses it before the
+    // body starts, and finding that out without running is this mode's job.
+    if (unchangedRefusal(task, file.sets) case final refusal?) {
+      problems.add(XtaskFormatException(refusal, task.span));
+    }
     _checkWorkingDirectory(task, file, problems, root);
     _checkRemoveArguments(task, file, problems, root);
   }

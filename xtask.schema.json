@@ -296,6 +296,12 @@
             "type": "integer",
             "minimum": 1,
             "description": "Seconds a `run:` body may take before it is killed. A `do:` cannot carry one: a verb is a Dart function and nothing outside it can stop one, so the limit would pass while the verb kept running. Under `each:` it is a limit per member."
+          },
+          "unchanged": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
+            "description": "A set of paths whose files this task must leave as the run found them: read byte for byte when the run begins, before any `needs:`, and again when the task ends. A file changed, added or removed fails the task, naming it. Not git: it works in a dirty tree and without one."
           }
         }
       }

@@ -511,6 +511,13 @@ String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
 /// home of what the tool says to a person.
 String nothingToRun(String task) => '$task: nothing of its own to run';
 
+/// What `--dry-run` says about a task's `unchanged:`.
+///
+/// When the set is read is the part a reader cannot guess, and the part that
+/// decides whether a change made by another task counts — so it is said.
+String keepsUnchanged(String task, String set) =>
+    '$task: same set `$set` at its end as when the run began, byte for byte';
+
 /// How a [Resolved] body is written down: what runs, where, and with what.
 ///
 /// Two callers need it: `--dry-run` prints it, and a failure prints it so that

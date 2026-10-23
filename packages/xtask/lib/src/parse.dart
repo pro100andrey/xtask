@@ -282,6 +282,7 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     interruptible: _flag(map, 'interruptible', 'task `$name`'),
     exclusive: _names(map, 'exclusive', name),
     alone: _flag(map, 'alone', 'task `$name`'),
+    unchanged: _optionalString(map, 'unchanged', name),
   );
   // The document is here and nowhere else, so this is where a rule whose
   // subject is a key can be told where that key is written.

@@ -8,6 +8,7 @@ import 'exit_codes.dart';
 import 'graph.dart';
 import 'primitives.dart';
 import 'report.dart';
+import 'unchanged.dart';
 
 /// Prints [plan] and everything in it, and runs nothing.
 ///
@@ -53,9 +54,17 @@ Future<int> dryRun({
       return step.isContinuation ? ExitCode.continuationFailed : failure.code;
     }
 
+    // Where the run refuses it: before the body, with the task's other
+    // refusals, and in the same words.
+    if (unchangedRefusal(step.task, bodies.sets) case final refusal?) {
+      log('error: $refusal');
+      return step.isContinuation
+          ? ExitCode.continuationFailed
+          : ExitCode.invalidFile;
+    }
+
     if (resolved.isEmpty) {
       log(nothingToRun(step.task.name));
-      continue;
     }
     for (final body in resolved) {
       describe(body).forEach(log);
@@ -74,6 +83,11 @@ Future<int> dryRun({
             ? ExitCode.continuationFailed
             : ExitCode.invalidFile;
       }
+    }
+    if (step.task.unchanged case final set?) {
+      // Under the task rather than under a body: the comparison is made once,
+      // when the task has ended, whatever its members were.
+      log(keepsUnchanged(step.task.name, set));
     }
   }
 

@@ -24,6 +24,8 @@ import 'markers.dart';
 import 'model.dart';
 import 'process.dart';
 import 'report.dart';
+import 'sets.dart';
+import 'unchanged.dart';
 
 // ── admission ───────────────────────────────────────────────────────────────
 
@@ -221,6 +223,20 @@ final class Executor {
   /// The run's budget, spent by units of work rather than by tasks.
   late final _slots = Slots(concurrency);
 
+  /// What each `unchanged:` task's set held when the run began, by task.
+  final _found = <String, Holding>{};
+
+  /// Why a task's `unchanged:` could not be read when the run began, by task.
+  /// Said when the run reaches the task, as any refusal of its own is.
+  final _unreadable = <String, RunFailure>{};
+
+  /// What an `unchanged:` set is expanded with, under the resolver's rules.
+  ///
+  /// Its own rather than the resolver's, because `--only` narrows what the
+  /// resolver hands a body and must not narrow this: a generator run for one
+  /// member can still rewrite another's files, and that is a change too.
+  late final _expander = SetExpander(root: bodies.root);
+
   /// Runs every step, and answers with the code the exit code table gives the
   /// outcome.
   Future<int> run(Plan plan) async {
@@ -235,6 +251,8 @@ final class Executor {
     if (concurrent) {
       starting(plan.steps.length, concurrency).forEach(log);
     }
+
+    _holdUnchanged(plan);
 
     final outcomes = _Outcomes();
     final began = now();
@@ -257,6 +275,97 @@ final class Executor {
       summary(outcomes.failed, outcomes.skipped).forEach(log);
     }
     return code;
+  }
+
+  /// Reads every `unchanged:` set in [plan], before anything has run.
+  ///
+  /// **When the run begins, not when the task is reached, and not when its
+  /// `needs:` begin.** A generation is often several steps — `gen-l10n`, then
+  /// `build_runner` — and the task that holds the set is the composite over
+  /// them, so the set has to be read before its `needs:`. And a `needs:` runs
+  /// once per invocation, for whichever branch of the graph reaches it first:
+  /// in a gate where `test` needs `build` and is listed ahead of `codegen`,
+  /// `build` has regenerated everything before `codegen`'s own steps would
+  /// begin, and a set read then compares the regenerated files with
+  /// themselves — stale committed code, passed. Before the walk is the one
+  /// moment that is before every step of every branch.
+  ///
+  /// The price is said in the README: anything in the run that writes the
+  /// set before the task ends counts against it. That is the question asked —
+  /// whether the committed files are what this run leaves — and a task that
+  /// is to write them is not one to hold them unchanged.
+  void _holdUnchanged(Plan plan) {
+    // Per set, so two tasks holding one set read it once: both are read at
+    // the same moment, so they would read the same thing.
+    final read = <String, Holding>{};
+    for (final step in plan.steps) {
+      final task = step.task;
+      final name = task.unchanged;
+      if (name == null) {
+        continue;
+      }
+      if (unchangedRefusal(task, bodies.sets) case final refusal?) {
+        _unreadable[task.name] = RunFailure(ExitCode.invalidFile, refusal);
+        continue;
+      }
+      try {
+        _found[task.name] = read[name] ??= holding(
+          _expander,
+          task,
+          name,
+          bodies.sets[name]!,
+        );
+      } on RunFailure catch (failure) {
+        _unreadable[task.name] = failure;
+      }
+    }
+  }
+
+  /// Refuses [task] if its set changed since the run began.
+  ///
+  /// Only for a task whose body finished: a body that failed has already
+  /// answered, and a run that has given up stopped generators part-way, whose
+  /// half-written output is not the question.
+  void _refuseChanged(Task task, _Outcomes outcomes) {
+    final before = _found[task.name];
+    if (before == null ||
+        _givenUp.already ||
+        outcomes.skipped.containsKey(task.name)) {
+      return;
+    }
+    final failure = _changedSince(task, before);
+    if (failure == null) {
+      return;
+    }
+    // Said here, as a failed member says it: a task that fails after its body
+    // has finished is a failure like any other, and without `--keep-going`
+    // nothing more may start.
+    if (!keepGoing) {
+      _givenUp.now();
+    }
+    throw failure;
+  }
+
+  /// Why [task] fails, measured against what its set held [before], or null.
+  RunFailure? _changedSince(Task task, Holding before) {
+    final name = task.unchanged!;
+    final Holding after;
+    try {
+      after = holding(_expander, task, name, bodies.sets[name]!);
+    } on RunFailure catch (failure) {
+      return failure;
+    }
+    if ((before.empty, after.empty) case (_?, final empty?)) {
+      // Empty then and empty now: nothing was compared, and a check that
+      // compared nothing is the green result nobody checked. A set the run
+      // filled, or emptied, is a change and is said as one below.
+      return RunFailure(
+        ExitCode.invalidFile,
+        'task `${task.name}` has nothing to compare:\n$empty',
+      );
+    }
+    final changed = changes(before, after);
+    return changed.isEmpty ? null : changedASet(task, name, changed);
   }
 
   /// Whether [task]'s members may run together at this width.
@@ -511,6 +620,11 @@ final class Executor {
     final List<Resolved> resolved;
     try {
       resolved = bodies.resolveTask(task);
+      // Before the body, with the task's other refusals: a gate that cannot
+      // compare must not run the generator and then say nothing about it.
+      if (_unreadable[task.name] case final failure?) {
+        throw failure;
+      }
     } on Object catch (thrown) {
       // **Said before the place is given back, for the reason `_runMembers`
       // gives when a member fails:** whoever is waiting for the place must
@@ -539,11 +653,12 @@ final class Executor {
       // its own to do, and saying so is more useful than silence.
       place.release();
       lines(nothingToRun(task.name));
-      markers.close().forEach(lines.call);
-      return;
+    } else {
+      await _runMembers(task, resolved, place, outcomes, lines);
     }
-
-    await _runMembers(task, resolved, place, outcomes, lines);
+    // A composite too: over a generation of several steps, it is the task
+    // that holds the set, and its `needs:` are what wrote it.
+    _refuseChanged(task, outcomes);
     markers.close().forEach(lines.call);
   }
 

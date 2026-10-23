@@ -33,6 +33,7 @@ const taskKeys = <String>{
   'exclusive',
   'alone',
   'timeout',
+  'unchanged',
 };
 
 /// The one word that stands for every member of an `all:` set.
@@ -286,6 +287,7 @@ final class Task with Located {
     this.exclusive = const [],
     this.alone = false,
     this.timeout,
+    this.unchanged,
   });
 
   @override
@@ -390,6 +392,18 @@ final class Task with Located {
   /// carried on writing to the disk, which is worse than no deadline at all.
   /// `parse` refuses the combination rather than letting it half-work.
   final int? timeout;
+
+  /// A set whose files this task must leave as the run found them, or null.
+  ///
+  /// **Compared by content, not asked of git.** Generated code is committed,
+  /// and the question a freshness gate asks is whether regenerating it
+  /// changed anything: byte for byte, before and after, which is the same
+  /// answer in a dirty tree, in a tree whose fresh output is not committed
+  /// yet, and in a directory that is not a repository at all.
+  ///
+  /// "Before" is when the run began, not when this task was reached — the
+  /// executor says why, where it reads the set.
+  final String? unchanged;
 }
 
 /// Why [task] would hand a member its glob FOUND to [program] as an option,
