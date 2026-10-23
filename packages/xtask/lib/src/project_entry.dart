@@ -18,6 +18,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
+import 'boundary.dart';
 import 'cli.dart';
 import 'errors.dart';
 import 'executables.dart';
@@ -43,26 +44,41 @@ const handOverLimit = 8;
 
 /// How the project's entry point is started: `dart` with `arguments`, in
 /// `workingDirectory` where it is not this process's own, for the project
-/// at `root`.
+/// at `root` whose entry point is `entry` (from the root, with `/`). Where
+/// `resolveIn` is set, the package there has no resolution yet, and `dart
+/// pub get` is run in it first.
 typedef ProjectEntry = ({
   String root,
+  String entry,
   List<String> arguments,
   String? workingDirectory,
+  String? resolveIn,
 });
+
+/// Where an entry point is when `xtask.yaml` does not say: the file `dart run
+/// :xtask` reaches in the root's own package.
+const defaultEntry = 'bin/xtask.dart';
 
 /// The run [args] handed to the entry point of the project around
 /// [workingDirectory], or null where this engine answers it itself.
 ///
+/// The entry point is the file `entry:` names in `xtask.yaml`, from the
+/// root, and [defaultEntry] where it names none. Its package is the nearest
+/// `pubspec.yaml` at or above it, inside the root — not the root's, which a
+/// tool kept in a package of its own (`tools/bin/xtask.dart`) does not
+/// share.
+///
 /// Null where there is no `xtask.yaml` above [workingDirectory] (the engine
-/// says so in its own words), where its directory has no `bin/xtask.dart`,
-/// and where that directory is this package itself, whose entry point is
-/// this one. And for completion: `--completion` prints a script
-/// that is the same whoever prints it, and `--names`, asked on every TAB,
-/// is answered here while this engine can read the file — a hand-over would
-/// put a Dart start-up behind each keypress — and handed over only where it
-/// cannot, a file written for a newer `xtask` than the installed one. Only
-/// what comes before `--` is the engine's to read: after it, the arguments
-/// are a task's.
+/// says so in its own words), where the entry point is not there or is in no
+/// package, and where it is this package's own, whose entry point is this
+/// one. Null as well where `entry:` is not a path this engine accepts: the
+/// engine reads the file next, and refuses it with the line it is on. And for
+/// completion: `--completion` prints a script that is the same whoever
+/// prints it, and `--names`, asked on every TAB, is answered here while this
+/// engine can read the file — a hand-over would put a Dart start-up behind
+/// each keypress — and handed over only where it cannot, a file written for
+/// a newer `xtask` than the installed one. Only what comes before `--` is the
+/// engine's to read: after it, the arguments are a task's.
 ///
 /// **The project is started where the person is standing.** Its entry looks
 /// for `xtask.yaml` from its own working directory and reads relative paths
@@ -70,20 +86,23 @@ typedef ProjectEntry = ({
 /// against it, so the run is started in [workingDirectory] whenever it can
 /// be:
 ///
-/// - `dart run <package>:xtask` where the package resolution nearest to
-///   [workingDirectory] has the root's package in it at the root. It is
-///   `dart run :xtask` by name, with the snapshot `dart run` keeps — a
-///   third of a second — and it works from any package of a workspace, where
-///   `:xtask` means the package the person is in.
-/// - `dart run <path>/bin/xtask.dart` where it does not: a package of its
-///   own below the root, which resolves its own packages. Correct, and about
-///   a second and a half, since a file is compiled on every run. The path is
-///   relative to [workingDirectory], so the names of the directories above
-///   the root are not on the command line — `cmd.exe` would read a `&` or a
-///   `%` in them, which nobody typed.
-/// - `dart run :xtask` in the root where the root has no resolution yet:
-///   `dart run` resolves one there first, which a file cannot have done for
-///   it. The one form that moves the run, and only until the first `pub get`.
+/// - `dart run <package>:xtask` where the entry point is its package's
+///   `bin/xtask.dart` and the package resolution nearest to
+///   [workingDirectory] has that package in it, there. It is `dart run
+///   :xtask` by name, with the snapshot `dart run` keeps — a third of a
+///   second — and it works from any package of a workspace, where `:xtask`
+///   means the package the person is in.
+/// - `dart run <path to the entry point>` where it does not, or where the
+///   entry point is any other file: `dart` resolves a file's packages from
+///   where the file is. Correct, and about a second and a half, since a file
+///   is compiled on every run. The path is relative to [workingDirectory], so
+///   the names of the directories above the root are not on the command line
+///   — `cmd.exe` would read a `&` or a `%` in them, which nobody typed.
+/// - Where the package has no resolution yet: `dart run :xtask` in it for a
+///   `bin/xtask.dart` — `dart run` resolves one there first, the one form that
+///   moves the run, and only until the first `pub get` — and for any other
+///   file, `dart pub get` in it before the file form, which cannot resolve
+///   anything itself.
 ProjectEntry? projectEntry(
   List<String> args, {
   required String workingDirectory,
@@ -93,39 +112,84 @@ ProjectEntry? projectEntry(
     return null;
   }
   final root = findRoot(workingDirectory);
-  if (root == null || !File(p.join(root, 'bin', 'xtask.dart')).existsSync()) {
+  if (root == null) {
+    return null;
+  }
+  final entry = _entryOf(root);
+  if (entry == null) {
+    return null;
+  }
+  final file = p.joinAll([root, ...p.posix.split(entry)]);
+  if (!File(file).existsSync()) {
+    return null;
+  }
+  final package = packageOf(file, root: root);
+  if (package == null) {
     return null;
   }
   if (engines.contains('--names') && _readable(root)) {
     return null;
   }
-  final name = _packageName(root);
-  if (name == null || name == 'xtask') {
+  final name = _packageName(package);
+  if (name == null) {
     return null;
   }
-  if (_resolves(name, root, from: workingDirectory)) {
+  final named = p.equals(file, p.join(package, 'bin', 'xtask.dart'));
+  if (named && name == 'xtask') {
+    return null;
+  }
+  if (named && _resolves(name, package, from: workingDirectory)) {
     return (
       root: root,
+      entry: entry,
       arguments: ['run', '$name:xtask', ...args],
       workingDirectory: null,
+      resolveIn: null,
     );
   }
-  if (File(p.join(root, '.dart_tool', 'package_config.json')).existsSync()) {
+  final resolved = _resolves(name, package, from: package);
+  if (named && !resolved) {
     return (
       root: root,
-      arguments: [
-        'run',
-        p.relative(p.join(root, 'bin', 'xtask.dart'), from: workingDirectory),
-        ...args,
-      ],
-      workingDirectory: null,
+      entry: entry,
+      arguments: ['run', ':xtask', ...args],
+      workingDirectory: package,
+      resolveIn: null,
     );
   }
   return (
     root: root,
-    arguments: ['run', ':xtask', ...args],
-    workingDirectory: root,
+    entry: entry,
+    arguments: [
+      'run',
+      p.relative(file, from: workingDirectory),
+      ...args,
+    ],
+    workingDirectory: null,
+    resolveIn: resolved ? null : package,
   );
+}
+
+/// The entry point `xtask.yaml` at [root] names, [defaultEntry] where it
+/// names none, and null where what it names is not a path from the root.
+///
+/// Read here rather than by the parser, so that a file this engine cannot
+/// otherwise read — written for a newer `xtask` — is still handed to the
+/// project that can.
+String? _entryOf(String root) {
+  final Object? document;
+  try {
+    document = loadYaml(
+      File(p.join(root, xtaskFileName)).readAsStringSync(),
+    );
+  } on Exception {
+    return defaultEntry;
+  }
+  return switch (document) {
+    {'entry': final String entry} when entryProblem(entry) == null => entry,
+    {'entry': _} => null,
+    _ => defaultEntry,
+  };
 }
 
 /// Starts [entry] on this process's own three descriptors, and answers with
@@ -163,12 +227,39 @@ Future<int> runProjectEntry(
   if (dart == null) {
     err(
       'xtask: `${entry.root}` has an entry point of its own, '
-      '`bin/xtask.dart`, where its verbs are, and it takes `dart` to run it. '
+      '`${entry.entry}`, where its verbs are, and it takes `dart` to run it. '
       '${paths.missingToolMessage('dart', from: from)}',
     );
     return ExitCode.missingTool;
   }
   final shell = paths.needsShell(dart);
+  if (entry.resolveIn case final package?) {
+    // Collected rather than inherited: what `pub get` says on success is
+    // noise on the stdout of a run that may be `--list` piped somewhere, and
+    // what it says on failure is the only thing worth reading.
+    final ProcessResult got;
+    try {
+      got = await Process.run(
+        dart,
+        const ['pub', 'get'],
+        workingDirectory: package,
+        environment: environment,
+        includeParentEnvironment: false,
+        runInShell: shell,
+      );
+    } on ProcessException catch (failure) {
+      err('xtask: `$dart pub get` could not be started: ${failure.message}');
+      return ExitCode.taskFailed;
+    }
+    if (got.exitCode != ExitCode.success) {
+      err(
+        'xtask: the entry point `${entry.entry}` is in a package with no '
+        'resolution, and `dart pub get` in `$package` exited with '
+        '${got.exitCode}:\n${got.stdout}${got.stderr}',
+      );
+      return ExitCode.taskFailed;
+    }
+  }
   if (shell) {
     // The batch-shim rule, for the person's own command line this time:
     // `cmd.exe` reads it before `dart.bat` does.

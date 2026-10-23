@@ -12,6 +12,14 @@
   file; a task's own `xtask` hands over again; `XTASK_HAND_OVERS` stops a loop
   at eight; no `dart` on `PATH` is a `3`.
 
+- `entry:` names the project's entry point, from the root, where it is not
+  `bin/xtask.dart` — `tools/bin/xtask.dart` in a tools package of its own, or
+  `tool/xtask.dart`. The installed `xtask` hands runs to it, from its own
+  package (the nearest `pubspec.yaml`), getting that package a resolution
+  first where it has none; `--validate` says when the file is missing or in
+  no package, and `--check-ci` reads a step running it as `xtask`. An
+  absolute path, `..`, `\` or a file that is not `.dart` is refused.
+
 ### Changed
 
 - The package lives in `packages/xtask` of a workspace repository, and

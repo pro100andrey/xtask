@@ -812,6 +812,27 @@ void _judgeTable() {
     CiStep step(String command, {String? exemption}) =>
         CiStep('ci.yml', 'job', command, exemption: exemption);
 
+    test('a file `entry:` names runs xtask, by its file name', () {
+      expect(
+        judge(
+          step('dart run tool/tasks.dart check'),
+          declared,
+          const {},
+          entry: 'tool/tasks.dart',
+        ).gate,
+        'check',
+      );
+      expect(
+        judge(
+          step('dart run tool/tasks.dart check'),
+          declared,
+          const {},
+        ).problems.single,
+        isA<RunsACommand>(),
+        reason: 'without `entry:` it is any other program',
+      );
+    });
+
     test('the readings', () {
       expect(judge(step('xtask check'), declared, const {}).gate, 'check');
       expect(

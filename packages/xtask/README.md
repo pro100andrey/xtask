@@ -189,18 +189,35 @@ cannot contain a Dart function of your repository. So the installed `xtask`
 looks for one. Where the directory holding `xtask.yaml` has a `bin/xtask.dart`,
 it hands the whole run to it and answers with its exit code — `xtask install`
 then means exactly what `dart run :xtask install` means, verbs, pinned version
-and all. It starts the project's entry where you are standing, so relative
+and all.
+
+An entry point kept anywhere else is named in the file, from the root:
+
+```yaml
+version: 1
+entry: tools/bin/xtask.dart   # a tools package of its own
+```
+
+Its package is the nearest `pubspec.yaml` at or above it — `tools/` here, not
+the root — and `--validate` says so when the file is not there or is in no
+package. The project's entry is started where you are standing, so relative
 paths on the command line keep meaning what they meant:
 
-- `dart run <package>:xtask`, when the package resolution nearest to you has
-  the root's package in it — from the root or any package of its workspace. It
-  costs what `dart run :xtask` costs, about a third of a second, on top of
-  the installed binary's start.
-- `dart run <root>/bin/xtask.dart`, from a package below the root that
-  resolves its own packages. Correct, and slower: a file is compiled every
-  time.
-- `dart run :xtask` in the root, when the root has never been resolved, so
-  that `dart run` resolves it first.
+- `dart run <package>:xtask`, when the entry point is its package's
+  `bin/xtask.dart` and the package resolution nearest to you has that package
+  in it — from the package or any other of its workspace. It costs what
+  `dart run :xtask` costs, about a third of a second, on top of the installed
+  binary's start.
+- `dart run <path>/<entry>`, otherwise: from outside that resolution, or for
+  an entry point that is any other file. Correct, and slower: a file is
+  compiled every time.
+- When the package has never been resolved: `dart run :xtask` in it for a
+  `bin/xtask.dart`, so that `dart run` resolves it first, and `dart pub get`
+  in it before the file for anything else.
+
+A workflow step running that file — `dart run tools/bin/xtask.dart check`, or
+an entry point with a name of its own — is a gate set's invocation to
+`--check-ci`, as `xtask check` is.
 
 `--completion` is not handed over, and neither is `--names`, which a
 completion script asks on every TAB, while the installed engine can read the
@@ -209,9 +226,8 @@ Arguments after `--` are a task's and decide nothing here. A task that runs
 `xtask` hands over again, as the person typing it would; a run handed over
 eight times deep is taken for a loop (`XTASK_HAND_OVERS` counts) and refused
 with `2`. Without `dart` on `PATH` the installed `xtask` says so and answers
-`3`. In this package's own
-repository there is nothing to hand over to: its `bin/xtask.dart` is the
-installed one.
+`3`. In this package itself there is nothing to hand over to: its
+`bin/xtask.dart` is the installed one.
 
 `dart run` pays the JIT's start-up — around half a second, every invocation. It
 is nothing against a gate that spends seconds inside a test runner, and it is

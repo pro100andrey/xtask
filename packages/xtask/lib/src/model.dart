@@ -91,7 +91,7 @@ List<String> substituted(
 ];
 
 /// Every key the document may carry at the top level (the top level).
-const topLevelKeys = <String>{'version', 'gates', 'sets', 'tasks'};
+const topLevelKeys = <String>{'version', 'entry', 'gates', 'sets', 'tasks'};
 
 /// Every key a glob set may carry (sets).
 ///
@@ -131,7 +131,17 @@ final class XtaskFile {
     required this.gates,
     required this.sets,
     required this.tasks,
+    this.entry,
+    this.entrySpan,
   });
+
+  /// The project's entry point, from the root, where `entry:` names one —
+  /// the file the installed `xtask` hands a run to, in place of
+  /// `bin/xtask.dart`. Null where the file leaves it out.
+  final String? entry;
+
+  /// Where [entry] is written.
+  final SourceSpan? entrySpan;
 
   /// Always [supportedVersion] — parsing refuses anything else rather than
   /// carrying the number forward for somebody downstream to check.

@@ -279,4 +279,109 @@ void main() {
     expect(code, ExitCode.invalidFile);
     expect(said.single, contains('`a&b`'));
   });
+
+  group('`entry:`', () {
+    /// [file] under [root], with `entry:` naming it, and a package with
+    /// [name] at [package] (from the root).
+    void declared(String file, {required String package, String? name}) {
+      File(p.join(root, 'xtask.yaml')).writeAsStringSync(
+        'version: 1\nentry: $file\n',
+      );
+      File(p.joinAll([root, ...p.posix.split(file)]))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('void main() {}\n');
+      if (name != null) {
+        File(p.join(root, package, 'pubspec.yaml'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('name: $name\n');
+      }
+    }
+
+    test("a package's own bin/xtask.dart below the root is run by that "
+        "package's name where its resolution reaches", () {
+      declared('tools/bin/xtask.dart', package: 'tools', name: 'tasks');
+      final tools = p.join(root, 'tools');
+      resolution(tools, {'tasks': ''});
+
+      final entry = entryFrom(tools)!;
+      expect(entry.arguments, ['run', 'tasks:xtask', 'check']);
+      expect(entry.entry, 'tools/bin/xtask.dart');
+      expect(entry.resolveIn, isNull);
+
+      expect(
+        entryFrom(root)!.arguments,
+        ['run', p.join('tools', 'bin', 'xtask.dart'), 'check'],
+        reason: 'from the root, outside its resolution: the file',
+      );
+    });
+
+    test('any other file is run as a file, from where the person stands', () {
+      repository();
+      resolution(root, {'shop': ''});
+      declared('tool/xtask.dart', package: '');
+      final lib = Directory(p.join(root, 'lib'))..createSync();
+
+      final entry = entryFrom(lib.path)!;
+      expect(entry.arguments, [
+        'run',
+        p.join('..', 'tool', 'xtask.dart'),
+        'check',
+      ]);
+      expect(entry.workingDirectory, isNull);
+      expect(entry.resolveIn, isNull);
+    });
+
+    test('a file in a package with no resolution has one got first', () {
+      declared('tools/run.dart', package: 'tools', name: 'tasks');
+
+      final entry = entryFrom(root)!;
+      expect(entry.arguments.take(2), ['run', p.join('tools', 'run.dart')]);
+      expect(entry.resolveIn, p.join(root, 'tools'));
+    });
+
+    test('a bin/xtask.dart with no resolution is run by `dart run :xtask` '
+        'in its package', () {
+      declared('tools/bin/xtask.dart', package: 'tools', name: 'tasks');
+
+      expect(fields(entryFrom(root)), [
+        root,
+        ['run', ':xtask', 'check'],
+        p.join(root, 'tools'),
+      ]);
+    });
+
+    test('the engine answers itself where the file is not there, is in no '
+        'package, or is no path it accepts', () {
+      File(p.join(root, 'xtask.yaml')).writeAsStringSync(
+        'version: 1\nentry: tool/xtask.dart\n',
+      );
+      expect(entryFrom(root), isNull, reason: 'no such file');
+
+      declared('tool/xtask.dart', package: 'tool');
+      expect(entryFrom(root), isNull, reason: 'no pubspec.yaml above it');
+
+      File(p.join(root, 'pubspec.yaml')).writeAsStringSync('name: shop\n');
+      File(p.join(root, 'xtask.yaml')).writeAsStringSync(
+        'version: 1\nentry: ../tool/xtask.dart\n',
+      );
+      expect(entryFrom(root), isNull, reason: 'left for the parser to refuse');
+    });
+
+    test('a missing `dart` names the entry point the file names', () async {
+      declared('tools/run.dart', package: 'tools', name: 'tasks');
+      final said = <String>[];
+
+      await runProjectEntry(
+        entryFrom(root)!,
+        environment: const {},
+        err: said.add,
+        resolver: ExecutableResolver(
+          environment: const {'PATH': ''},
+          windows: false,
+          isRunnable: (_) => false,
+        ),
+      );
+      expect(said.single, contains('`tools/run.dart`'));
+    });
+  });
 }

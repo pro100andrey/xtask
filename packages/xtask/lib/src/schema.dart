@@ -76,6 +76,14 @@ Map<String, Map<String, Object?>> get _topLevel => {
         'Required. The only version this engine reads; an unknown one is '
         'refused rather than read as best it can.',
   },
+  'entry': {
+    'type': 'string',
+    'pattern': r'^[^\\]+\.dart$',
+    'description':
+        "The project's entry point — the Dart file calling `runXtask` with "
+        "this project's verbs — from the root, with `/`. The installed "
+        '`xtask` hands a run to it. Leave it out for `bin/xtask.dart`.',
+  },
   'gates': {
     'type': 'array',
     'items': _name,

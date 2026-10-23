@@ -1,6 +1,7 @@
 import 'package:source_span/source_span.dart';
 import 'package:yaml/yaml.dart';
 
+import 'boundary.dart';
 import 'coherence.dart';
 import 'errors.dart';
 import 'model.dart';
@@ -57,8 +58,11 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
   final version = _version(root);
   _refuseUnknownKeys(root, topLevelKeys, 'top-level key');
 
+  final entry = root.nodes['entry'];
   return XtaskFile(
     version: version,
+    entry: entry == null ? null : _entry(entry),
+    entrySpan: entry?.span,
     gates: Map.unmodifiable(_gates(root)),
     // Unmodifiable, and the order of `tasks` is why: its ORDER is load-bearing
     // — a gate set runs its tasks in the order they appear — and a map anybody
@@ -69,6 +73,17 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
 }
 
 // ── top level ───────────────────────────────────────────────────────────────
+
+/// `entry:`, refused here when it is no path to an entry point: the rule is
+/// about the string, so a file that breaks it is refused by every command,
+/// as a misspelled key is, rather than by the hand-over alone.
+String _entry(YamlNode node) {
+  final entry = _string(node, '`entry:`');
+  if (entryProblem(entry) case final problem?) {
+    throw XtaskFormatException(problem, node.span);
+  }
+  return entry;
+}
 
 int _version(YamlMap root) {
   final node = root.nodes['version'];

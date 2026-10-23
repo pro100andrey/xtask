@@ -782,4 +782,37 @@ void main() {
       );
     });
   }, testOn: 'posix');
+
+  group('`entry:`', () {
+    late Directory root;
+
+    setUp(() => root = tempRepo('entry'));
+
+    ValidationReport check() => validateFile(
+      parseXtaskFile('version: 1\nentry: tools/bin/xtask.dart\n'),
+      knownVerbs: const {},
+      sets: SetExpander(root: root.path),
+    );
+
+    test('names a file in a package: nothing wrong', () {
+      File(p.join(root.path, 'tools', 'bin', 'xtask.dart'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('void main() {}\n');
+      File(p.join(root.path, 'tools', 'pubspec.yaml')).writeAsStringSync(
+        'name: tools\n',
+      );
+      expect(check().ok, isTrue, reason: '${check()}');
+    });
+
+    test('names no file: said', () {
+      expect('${check()}', contains('names no file'));
+    });
+
+    test('names a file in no package: said', () {
+      File(p.join(root.path, 'tools', 'bin', 'xtask.dart'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('void main() {}\n');
+      expect('${check()}', contains('is in no package'));
+    });
+  });
 }

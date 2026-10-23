@@ -1,6 +1,10 @@
 /// `--validate` — the first gate any project should adopt.
 library;
 
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+
 import 'boundary.dart';
 import 'context.dart';
 import 'errors.dart';
@@ -56,6 +60,23 @@ ValidationReport validateFile(
   // than left for `--dry-run` to find. Where the filesystem was withheld it
   // is not asked, which is what the parameter has always meant.
   final root = sets?.root;
+
+  // Whether `entry:` names a file there is, in a package: what the hand-over
+  // needs to start it, asked here so that a misspelled path is a finding
+  // rather than an installed `xtask` that quietly runs without the verbs.
+  if ((file.entry, root) case (final entry?, final root?)) {
+    final path = p.joinAll([root, ...p.posix.split(entry)]);
+    final problem = !File(path).existsSync()
+        ? '`entry: $entry` names no file. The installed `xtask` hands a run '
+              'to it, and without it runs without the verbs it registers'
+        : packageOf(path, root: root) == null
+        ? '`entry: $entry` is in no package: there is no `pubspec.yaml` at or '
+              'above it inside the root, so nothing resolves what it imports'
+        : null;
+    if (problem != null) {
+      problems.add(XtaskFormatException(problem, file.entrySpan));
+    }
+  }
 
   for (final task in file.tasks.values) {
     _checkDoesSomething(task, problems);

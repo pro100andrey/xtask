@@ -356,7 +356,12 @@ typedef StepVerdict = ({
 /// stands over is another — a misspelled gate set under an exemption is both
 /// a job that runs nothing and a marker that excuses nothing — and reporting
 /// one instead of the other is how a silent green gets in.
-StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
+StepVerdict judge(
+  CiStep step,
+  Set<String> declared,
+  Set<String> tasks, {
+  String? entry,
+}) {
   final problems = <CiProblem>[];
   final written = step.exemption;
   if (written != null && written.isEmpty) {
@@ -380,7 +385,7 @@ StepVerdict judge(CiStep step, Set<String> declared, Set<String> tasks) {
   // The marker is weighed last, and only against a step that would otherwise
   // be reported as a command. What it says is "this step is not a gate set",
   // which is a sentence about exactly one of the readings below.
-  switch (_readStep(step.command)) {
+  switch (_readStep(step.command, entry: entry)) {
     case _Refused(:final refusal):
       problems.add(RunsSomethingRefused(step, refusal));
       if (reason != null) {
@@ -558,7 +563,12 @@ CiReport checkCi(XtaskFile file, {required String root}) {
   final problems = <CiProblem>[];
 
   for (final step in workflowSteps(root)) {
-    final verdict = judge(step, declared, file.tasks.keys.toSet());
+    final verdict = judge(
+      step,
+      declared,
+      file.tasks.keys.toSet(),
+      entry: file.entry,
+    );
     problems.addAll(verdict.problems);
     if (verdict.gate case final gate?) {
       invocations.add((step: step, gate: gate));
@@ -692,7 +702,7 @@ final class _Expression extends _Reading {
 /// One command line, split on whitespace. The words after xtask are handed to
 /// the command line's own parser, so `--check-ci` and `xtask` cannot disagree
 /// about what a step would do — and nothing else about the line is read.
-_Reading _readStep(String command) {
+_Reading _readStep(String command, {String? entry}) {
   if (command.contains('\n')) {
     return _Script(command.split('\n').length);
   }
@@ -700,7 +710,7 @@ _Reading _readStep(String command) {
     return const _Expression();
   }
   final words = command.split(RegExp(r'\s+'));
-  final arguments = _argumentsToXtask(words);
+  final arguments = _argumentsToXtask(words, entry: entry);
   if (arguments == null || words.any(_endsACommand)) {
     return const _Command();
   }
@@ -725,8 +735,8 @@ bool _endsACommand(String word) =>
 /// means knowing what every program does with its arguments, and that list is
 /// never finished. A step that needs a prefix has a key for it: `timeout:` on
 /// the task, `working-directory:` on the step.
-List<String>? _argumentsToXtask(List<String> words) {
-  if (_namesXtask(words.first)) {
+List<String>? _argumentsToXtask(List<String> words, {String? entry}) {
+  if (_namesXtask(words.first, entry: entry)) {
     return words.skip(1).toList();
   }
   if (words.first != 'dart') {
@@ -737,7 +747,7 @@ List<String>? _argumentsToXtask(List<String> words) {
     if (word == 'run' || word.startsWith('-')) {
       continue;
     }
-    return _namesXtask(word) ? words.skip(at + 1).toList() : null;
+    return _namesXtask(word, entry: entry) ? words.skip(at + 1).toList() : null;
   }
   return null;
 }
@@ -747,11 +757,15 @@ List<String>? _argumentsToXtask(List<String> words) {
 /// Loose about the path and the platform — `xtask`, `./xtask`, `:xtask`,
 /// `xtask:xtask`, `bin/xtask.dart`, `.\xtask.exe` — because the entry point
 /// is the project's, and a checker that only recognised one spelling would
-/// report a working workflow as broken.
-bool _namesXtask(String word) {
+/// report a working workflow as broken. A file named by `entry:` is one
+/// more, by its file name: `dart run tool/tasks.dart check` runs a gate set
+/// in a project whose entry point is that file.
+bool _namesXtask(String word, {String? entry}) {
   final name = word.replaceAll(r'\', '/');
   final base = name.substring(name.lastIndexOf('/') + 1);
-  return base == 'xtask' ||
+  return (entry != null &&
+          base == entry.substring(entry.lastIndexOf('/') + 1)) ||
+      base == 'xtask' ||
       base == 'xtask.exe' ||
       base == 'xtask.bat' ||
       base == 'xtask.dart' ||

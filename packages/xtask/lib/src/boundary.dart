@@ -32,6 +32,33 @@ bool leavesRoot(String path) =>
     p.posix.split(path).contains('..') ||
     p.windows.split(path).contains('..');
 
+/// Why [entry], as `entry:` writes it, is not a project's entry point, or
+/// null where it can be one.
+///
+/// A Dart file, from the root, with `/` — the one separator every machine
+/// that checks the file out reads the same — and never outside the root: the
+/// hand-over starts it with the person's own `dart`, and a path that leaves
+/// the repository is a program nobody reviewed with it.
+String? entryProblem(String entry) {
+  if (entry.isEmpty) {
+    return '`entry:` is empty. Leave it out for `bin/xtask.dart`';
+  }
+  if (leavesRoot(entry)) {
+    return '`entry: $entry` is not under the root. It is a path from the '
+        'directory holding `xtask.yaml`, and cannot be absolute or climb '
+        'through `..`';
+  }
+  if (entry.contains(r'\')) {
+    return '`entry: $entry` is written with `\\`. Write it with `/`, which '
+        'every machine reads the same';
+  }
+  if (!entry.endsWith('.dart')) {
+    return '`entry: $entry` is not a Dart file. It names the file `dart run` '
+        'is given — `tool/xtask.dart`';
+  }
+  return null;
+}
+
 /// Whether [path] is under [root] on this machine, with every link followed.
 ///
 /// [leavesRoot] is asked of what the file WROTE, on every machine alike. This
@@ -277,4 +304,17 @@ String relativePosix(String path, {required String root}) {
   return p.style == p.Style.posix
       ? relative
       : p.posix.joinAll(p.split(relative));
+}
+
+/// The directory of the package [file] is in — the nearest one at or above
+/// it holding a `pubspec.yaml` — or null where there is none up to [root].
+String? packageOf(String file, {required String root}) {
+  for (var directory = p.dirname(file); ; directory = p.dirname(directory)) {
+    if (File(p.join(directory, 'pubspec.yaml')).existsSync()) {
+      return directory;
+    }
+    if (p.equals(directory, root) || p.dirname(directory) == directory) {
+      return null;
+    }
+  }
 }

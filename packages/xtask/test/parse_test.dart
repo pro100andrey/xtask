@@ -372,6 +372,33 @@ tasks: {}
     });
   });
 
+  group('`entry:`', () {
+    test('names the entry point, from the root', () {
+      final file = parseXtaskFile('version: 1\nentry: tools/bin/xtask.dart\n');
+      expect(file.entry, 'tools/bin/xtask.dart');
+      expect(file.entrySpan?.start.line, 1);
+      expect(parseXtaskFile('version: 1\n').entry, isNull);
+    });
+
+    test('is refused where it is no path to a Dart file under the root', () {
+      for (final (written, said) in [
+        ('/opt/xtask.dart', 'not under the root'),
+        ('../shared/xtask.dart', 'not under the root'),
+        (r'C:\\x\\xtask.dart', 'not under the root'),
+        (r'tool\\xtask.dart', 'Write it with `/`'),
+        ('tool/xtask', 'not a Dart file'),
+        ('""', 'is empty'),
+        ('[a]', 'must be a string'),
+      ]) {
+        expect(
+          refusalOf(() => parseXtaskFile('version: 1\nentry: $written\n')),
+          contains(said),
+          reason: written,
+        );
+      }
+    });
+  });
+
   group('unknown keys', () {
     test('at the top level', () {
       final message = refusalOf(
