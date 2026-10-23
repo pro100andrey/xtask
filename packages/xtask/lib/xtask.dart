@@ -14,6 +14,7 @@ import 'src/cli.dart';
 import 'src/context.dart';
 import 'src/executables.dart';
 import 'src/process.dart';
+import 'src/style.dart';
 
 // Re-exported rather than restated. A second declaration of `Verb` or of what
 // a verb is handed would be two lists of the same thing, which is the defect
@@ -149,6 +150,16 @@ Future<int> _run(
     ),
     verbs: verbs,
     interruption: interruption,
+    // **Asked here because the terminal is here**, once, of the stream the
+    // engine's lines go to. Nothing below asks again: a renderer that looked
+    // at stdout itself would be a second answer to whether it is a terminal,
+    // and one no test could set.
+    style: Style.choose(
+      environment: Platform.environment,
+      terminal: stdout.hasTerminal,
+      ansiEscapes: stdout.supportsAnsiEscapes,
+      windows: Platform.isWindows,
+    ),
   );
 }
 

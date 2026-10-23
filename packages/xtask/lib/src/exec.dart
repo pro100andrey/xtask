@@ -25,6 +25,7 @@ import 'model.dart';
 import 'process.dart';
 import 'report.dart';
 import 'sets.dart';
+import 'style.dart';
 import 'unchanged.dart';
 
 // ── admission ───────────────────────────────────────────────────────────────
@@ -240,6 +241,7 @@ final class Executor {
     this.concurrency = 1,
     this.reportTo,
     this.interruption,
+    this.style = Style.plain,
   }) : relay = relay ?? log;
 
   /// What each task comes to on this machine.
@@ -306,6 +308,10 @@ final class Executor {
   /// is waited for, and the run answers [bySignal]. Without this the
   /// process died where it stood and left them all running, orphaned.
   final Interruption? interruption;
+
+  /// How the summary is drawn. The headings are [markers]'s, which carry
+  /// their own.
+  final Style style;
 
   /// Whether this run has decided the answer is known.
   final _givenUp = GivenUp();
@@ -378,6 +384,7 @@ final class Executor {
         ),
         concurrent: concurrent,
         narrowed: outcomes.narrowed,
+        style: style,
       ).forEach(log);
     }
     // Whatever the tasks came to: the run ended because it was told to, and

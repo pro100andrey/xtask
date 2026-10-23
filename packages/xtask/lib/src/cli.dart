@@ -33,6 +33,7 @@ import 'request.dart';
 import 'schema.dart';
 import 'secrets.dart';
 import 'sets.dart';
+import 'style.dart';
 import 'validate.dart';
 import 'version.dart';
 
@@ -43,6 +44,9 @@ import 'version.dart';
 /// process is started. Not for purity — it is what lets the surface be
 /// asserted without a toolchain, and what lets the GitHub markers be
 /// tested from a machine that is not a runner.
+///
+/// [style] is how the lines a person reads are drawn, chosen by the caller
+/// that has the terminal; plain where nothing says otherwise.
 Future<int> runCli(
   List<String> args, {
   required String workingDirectory,
@@ -53,6 +57,7 @@ Future<int> runCli(
   required ProcessStarter starter,
   Map<String, Verb> verbs = const {},
   Interruption? interruption,
+  Style style = Style.plain,
 }) {
   final request = parseArguments(args);
 
@@ -91,6 +96,7 @@ Future<int> runCli(
     verbs: verbs,
     reportTo: reportTo,
     interruption: interruption,
+    style: style,
   );
 
   if (request case RunTask(:final task, report: final path?)) {
@@ -212,6 +218,7 @@ Future<int> _answer(
   required Map<String, Verb> verbs,
   void Function(report.RunSoFar run)? reportTo,
   Interruption? interruption,
+  Style style = Style.plain,
 }) async {
   if (request is ShowUsage) {
     final problem = request.problem;
@@ -423,6 +430,7 @@ Future<int> _answer(
               name: name,
               host: resolver.os,
               fanOf: (task) => _fanOf(file, sets, task),
+              style: style,
             )
             .forEach(out);
         return ExitCode.success;
@@ -458,11 +466,12 @@ Future<int> _answer(
           starter: starter,
           log: out,
           relay: relay,
-          markers: LogMarkers.forHost(environment),
+          markers: LogMarkers.forHost(environment, style: style),
           keepGoing: keepGoing,
           concurrency: concurrency,
           reportTo: reportTo,
           interruption: interruption,
+          style: style,
         ).run(plan);
     }
   } on XtaskFormatException catch (problem) {

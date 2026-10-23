@@ -749,6 +749,37 @@ waiting, nothing else starts — not a task behind it in the plan, and not one
 ahead of it that becomes ready later — or a steady supply of them would keep it
 waiting.
 
+### Colour, and ASCII
+
+On a terminal the lines a person reads are drawn in colour: in the summary
+`✓` green, `✗` and the code a task failed with red, `⊘` and `⏹` yellow, `·`,
+the times and the reasons faint; a task's heading `── name ──` bold, because a
+body's own output is never coloured and the heading is the line that says
+where the next task begins; `--graph`'s `⊘` yellow and what it says beside a
+task faint. Names are never coloured — they are what you copy into the next
+command.
+
+Whether there is colour is decided once, about stdout, in this order:
+
+1. `NO_COLOR` set to anything but the empty string: no colour.
+2. `FORCE_COLOR` set to anything but the empty string or `0`: colour, into a
+   pipe or a file too — a CI log that renders escapes, or `less -R`.
+3. Otherwise colour exactly when stdout is a terminal that draws ANSI escapes.
+
+So **a pipe or a file gets, byte for byte, what it always got**. And what a
+program reads is never coloured, whatever the variables say: `--report`,
+`--names`, `--gate-members`, `--check-ci`, `--emit-schema`, and GitHub's
+`::group::`, `::error::` and `::add-mask::` lines. A `secret-env:` value is
+masked in a coloured line as in a plain one: colour goes around a whole
+fragment, never through one.
+
+On a Windows console that draws no ANSI escapes — the legacy console, whose
+fonts have no `✓` or `├` — the glyphs are ASCII instead, marks and branches
+together: `ok`, `FAIL`, `skip`, `stop` and `-` for the marks, `+-`, `` `- ``
+and `|` for the tree, `--` around a heading and `x` before a member count.
+Nowhere else: a POSIX terminal with no escapes (`TERM=dumb`) still draws
+UTF-8, and a pipe on any platform is a file, whose bytes do not change.
+
 ### A run as JSON
 
 What a person reads at the end of a run, a program has had to parse — and a

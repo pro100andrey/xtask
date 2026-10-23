@@ -1,6 +1,8 @@
 /// Making a run readable on the host it runs on.
 library;
 
+import 'style.dart';
+
 /// How a host wants a section of output marked.
 ///
 /// What makes one invocation per job acceptable: each task is a
@@ -19,10 +21,16 @@ sealed class LogMarkers {
   /// Detected rather than configured. A flag would be a second place to say
   /// where the run is happening, and it would be wrong on the day somebody
   /// copies a workflow.
-  factory LogMarkers.forHost(Map<String, String> environment) =>
-      environment['GITHUB_ACTIONS'] == 'true'
+  ///
+  /// [style] reaches the plain heading only. GitHub's markers are commands
+  /// the runner reads to the end of the line, and a colour code in one is
+  /// part of the group's name or the annotation's text.
+  factory LogMarkers.forHost(
+    Map<String, String> environment, {
+    Style style = Style.plain,
+  }) => environment['GITHUB_ACTIONS'] == 'true'
       ? const GitHubMarkers()
-      : const PlainMarkers();
+      : PlainMarkers(style);
 
   /// Opens a section for [task].
   List<String> open(String task);
@@ -40,10 +48,22 @@ sealed class LogMarkers {
 /// the next hundred lines belong to, and that is worth having with or without
 /// a fold.
 final class PlainMarkers extends LogMarkers {
-  const PlainMarkers();
+  const PlainMarkers([this.style = Style.plain]);
 
+  /// How the heading is drawn.
+  final Style style;
+
+  /// **Bold, rule and name together.** A body's own output is never
+  /// coloured, so in a long transcript the heading is the one line that says
+  /// where the next task begins; bold makes it findable at a glance without
+  /// a colour that would read as a verdict before the task has one.
   @override
-  List<String> open(String task) => ['── $task ──'];
+  List<String> open(String task) => [
+    style.paint(
+      '${style.glyphs.rule} $task ${style.glyphs.rule}',
+      Tint.heading,
+    ),
+  ];
 
   @override
   List<String> close() => const [];

@@ -11,6 +11,7 @@ import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/project_entry.dart';
 import 'package:xtask/src/request.dart';
 import 'package:xtask/src/secrets.dart';
+import 'package:xtask/src/style.dart';
 
 import 'helpers.dart';
 
@@ -191,6 +192,7 @@ tasks:
       Map<String, String> environment = const {'TOKEN': _token},
       int code = ExitCode.success,
       Map<String, Verb> verbs = const {},
+      Style style = Style.plain,
     }) => runCli(
       args,
       workingDirectory: root.path,
@@ -204,6 +206,7 @@ tasks:
       ),
       starter: _Starter(code),
       verbs: verbs,
+      style: style,
     );
 
     String all() => [...out, ...err].join('\n');
@@ -239,6 +242,31 @@ tasks:
       expect(await run(['--dry-run', 'deploy']), ExitCode.success);
       expect(all(), isNot(contains(p.join('keys', 'signing'))));
       expect(all(), contains('env  SIGNING=***'));
+    });
+
+    test('a value inside a coloured fragment is masked all the same', () async {
+      // **Colour is drawn around a whole fragment, never through one**, so
+      // the line the exit masks holds the value in one piece. A heading, and
+      // the faint list of a set's members, each with the value as all of it.
+      writeFile('''
+version: 1
+secret-env: [TOKEN]
+sets:
+  keys: {values: [$_token]}
+tasks:
+  $_token: {desc: x, run: [dart]}
+  sign: {desc: x, each: keys, run: [dart, \$each]}
+''');
+      for (final args in [
+        [_token],
+        ['--graph', 'sign'],
+      ]) {
+        expect(await run(args, style: Style.ansi), ExitCode.success);
+      }
+      final printed = all();
+      expect(printed, isNot(contains(_token)));
+      expect(printed, contains('\x1B[1m── *** ──\x1B[0m'));
+      expect(printed, contains('\x1B[2m***\x1B[0m'));
     });
 
     test('the reproduction line and the annotation are masked', () async {

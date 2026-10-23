@@ -12,6 +12,7 @@ import 'gates.dart';
 import 'graph.dart';
 import 'model.dart';
 import 'request.dart';
+import 'style.dart';
 
 /// Why a task in the plan did not run.
 ///
@@ -205,10 +206,16 @@ Result resultOf(Skipped why) => switch (why) {
 ///
 /// [narrowed] is what `--only` left of each narrowed task's set, which no
 /// [Ended] carries; [concurrent] is whether two units could have run at once.
+///
+/// **Drawn in [style], and coloured only by what the row already says**: the
+/// mark by its result, the code a task failed with in red, the times and the
+/// reasons faint. The name is left as it is, because it is what a reader
+/// copies into the next command.
 List<String> summary(
   RunSoFar run, {
   required bool concurrent,
   Map<String, ({int kept, int of})> narrowed = const {},
+  Style style = Style.plain,
 }) {
   if (run.tasks.isEmpty) {
     return const [];
@@ -277,12 +284,19 @@ List<String> summary(
     Result.skipped || Result.notRun => ended.why ?? '',
   };
 
-  final rows = <({String label, String? time, String detail})>[];
+  final rows = <_Row>[];
   void add(Ended ended, {required String indent, String note = ''}) {
+    final why = reason(ended);
     rows.add((
-      label: '$indent${_mark(ended)} ${ended.name}',
+      indent: indent,
+      mark: _mark(ended, style.glyphs),
+      name: ended.name,
       time: ended.took == null ? null : asTime(ended.took!),
-      detail: [note, reason(ended)].where((s) => s.isNotEmpty).join('  '),
+      detail: [
+        if (note.isNotEmpty) (note, Tint.faint),
+        if (why.isNotEmpty)
+          (why, ended.result == Result.failed ? Tint.failed : Tint.faint),
+      ],
     ));
   }
 
@@ -301,15 +315,17 @@ List<String> summary(
   // one timed task gets none.
   if (timed.length > 1) {
     rows.add((
-      label: '  total',
+      indent: '  ',
+      mark: null,
+      name: 'total',
       time: asTime(timed.map(workOf).reduce((a, b) => a + b)),
-      detail: '',
+      detail: const [],
     ));
   }
 
   // One column for every name, the members' and the total's with them, so
   // each time sits under the one above it whatever depth it is at.
-  final width = _widest(rows.map((row) => row.label));
+  final width = _widest(rows.map(_label));
   final column = _widest(rows.map((row) => row.time ?? ''));
   // **Two numbers, and only where they differ**, after the total's own.
   // Sequentially the sum of the tasks IS how long the run took. Run together
@@ -322,16 +338,37 @@ List<String> summary(
   return [
     '',
     for (final (at, row) in rows.indexed)
-      [
-        row.label.padRight(width),
+      render([
+        (row.indent, null),
+        if (row.mark case (final mark, final tint)) ...[
+          (mark, tint),
+          (' ', null),
+        ],
+        (row.name.padRight(width - _label(row).length + row.name.length), null),
         // No column at all where nothing has a time — a run of tasks that
         // are all for other platforms — rather than a gap with nothing in it.
-        if (column > 0) '  ${(row.time ?? '').padLeft(column)}',
-        if (at == rows.length - 1) sum,
-        if (row.detail.isNotEmpty) '  ${row.detail}',
-      ].join().trimRight(),
+        if (column > 0) ...[
+          ('  '.padRight(2 + column - (row.time ?? '').length), null),
+          (row.time ?? '', Tint.faint),
+        ],
+        if (at == rows.length - 1) (sum, Tint.faint),
+        for (final (text, tint) in row.detail) ...[('  ', null), (text, tint)],
+      ], style),
   ];
 }
+
+/// One row of the summary, in the parts it is drawn in.
+typedef _Row = ({
+  String indent,
+  (String, Tint)? mark,
+  String name,
+  String? time,
+  List<(String, Tint)> detail,
+});
+
+/// [row]'s first column as a reader sees it, which is what it is padded by.
+String _label(_Row row) =>
+    '${row.indent}${row.mark == null ? '' : '${row.mark!.$1} '}${row.name}';
 
 /// The mark a row begins with: the report's [Result], and for `not-run`
 /// whether it began.
@@ -341,11 +378,18 @@ List<String> summary(
 /// done; one never begun has neither, and the two are read differently by
 /// whoever looks for what to rerun. Whether it began is whether it has a
 /// time — nothing new is reckoned to tell them apart.
-String _mark(Ended ended) => switch (ended.result) {
-  Result.passed => '✓',
-  Result.failed => '✗',
-  Result.skipped => '⊘',
-  Result.notRun => ended.took == null ? '·' : '⏹',
+///
+/// The tint goes with it: a task stopped part-way is yellow as a skipped one
+/// is, since both are work still to do, and one never begun is faint, since
+/// nothing about it happened.
+(String, Tint) _mark(Ended ended, Glyphs glyphs) => switch (ended.result) {
+  Result.passed => (glyphs.passed, Tint.passed),
+  Result.failed => (glyphs.failed, Tint.failed),
+  Result.skipped => (glyphs.skipped, Tint.warned),
+  Result.notRun =>
+    ended.took == null
+        ? (glyphs.notBegun, Tint.faint)
+        : (glyphs.stopped, Tint.warned),
 };
 
 // ── --report ────────────────────────────────────────────────────────────────
@@ -650,18 +694,24 @@ const graphMembersNamed = 3;
 /// the summary's mark and sentence for it; its set is not expanded, since
 /// the run would not expand it here. Every other `each:` task is asked
 /// [fanOf] for its members.
+///
+/// Drawn in [style]: its branches are its glyphs, and what is said beside a
+/// task is coloured as the summary colours it — `⊘` yellow, the rest faint,
+/// a name with no task red.
 List<String> graph(
   XtaskFile file, {
   required OperatingSystem host,
   required Fan Function(Task task) fanOf,
   String? name,
+  Style style = Style.plain,
 }) {
+  final glyphs = style.glyphs;
   final drawn = <String>{};
 
   /// [at] and everything below it, onto [rows]. [lead] begins its own line
   /// and [under] the lines of what it names.
   void draw(
-    List<({String label, String detail})> rows,
+    List<_Drawn> rows,
     String at, {
     required String lead,
     required String under,
@@ -675,25 +725,35 @@ List<String> graph(
       // A dangling name is `--validate`'s to report, and a named graph has
       // been planned first, so only the picture of a whole broken file
       // meets one. Drawn, because leaving it out draws a file that is fine.
-      rows.add((label: label, detail: 'there is no such task'));
+      rows.add((label: label, detail: ('there is no such task', Tint.failed)));
       return;
     }
     if (!drawn.add(at)) {
-      rows.add((label: label, detail: '(see above)'));
+      rows.add((label: label, detail: ('(see above)', Tint.faint)));
       return;
     }
     final (count, detail) = !task.isFor(host)
-        ? ('', '⊘ ${OffPlatform(task.platforms).sentence}')
+        ? (
+            '',
+            (
+              '${glyphs.skipped.trimRight()} '
+                  '${OffPlatform(task.platforms).sentence}',
+              Tint.warned,
+            ),
+          )
         : task.each == null
-        ? ('', '')
+        ? ('', ('', Tint.faint))
         : switch (fanOf(task)) {
             Members(:final members) => (
-              ' ×${members.length}',
-              _named(members),
+              ' ${glyphs.times}${members.length}',
+              (_named(members), Tint.faint),
             ),
             MembersNotYet(:final producer) => (
               '',
-              'cannot be resolved yet — task `$producer` makes its members',
+              (
+                'cannot be resolved yet — task `$producer` makes its members',
+                Tint.faint,
+              ),
             ),
           };
     rows.add((label: '$label$count', detail: detail));
@@ -706,8 +766,8 @@ List<String> graph(
       draw(
         rows,
         next,
-        lead: '$under${last ? '└─ ' : '├─ '}',
-        under: '$under${last ? '   ' : '│  '}',
+        lead: '$under${last ? glyphs.lastBranch : glyphs.branch}',
+        under: '$under${last ? '   ' : glyphs.through}',
         edge: kind,
       );
     }
@@ -716,25 +776,27 @@ List<String> graph(
   /// A tree whose first line is [heading] rather than a task, with
   /// [roots] under it and no edge word: a gate set runs its members, and
   /// nothing about that is a `needs:` or a `then:`.
-  List<({String label, String detail})> grouped(
+  List<_Drawn> grouped(
     String heading,
     List<String> roots, {
     String empty = '',
   }) {
-    final rows = [(label: heading, detail: roots.isEmpty ? empty : '')];
+    final rows = <_Drawn>[
+      (label: heading, detail: (roots.isEmpty ? empty : '', Tint.faint)),
+    ];
     for (final (index, root) in roots.indexed) {
       final last = index == roots.length - 1;
       draw(
         rows,
         root,
-        lead: last ? '└─ ' : '├─ ',
-        under: last ? '   ' : '│  ',
+        lead: last ? glyphs.lastBranch : glyphs.branch,
+        under: last ? '   ' : glyphs.through,
       );
     }
     return rows;
   }
 
-  List<({String label, String detail})> gateTree(String gate) => grouped(
+  List<_Drawn> gateTree(String gate) => grouped(
     'gate $gate',
     [for (final task in tasksInGate(file, gate)) task.name],
     // Only in the picture of the whole file: named, an empty gate set is
@@ -742,13 +804,13 @@ List<String> graph(
     empty: 'no task is in it',
   );
 
-  List<({String label, String detail})> taskTree(String at) {
-    final rows = <({String label, String detail})>[];
+  List<_Drawn> taskTree(String at) {
+    final rows = <_Drawn>[];
     draw(rows, at, lead: '', under: '');
     return rows;
   }
 
-  final List<List<({String label, String detail})>> trees;
+  final List<List<_Drawn>> trees;
   if (name != null) {
     trees = [
       if (file.gates.containsKey(name)) gateTree(name) else taskTree(name),
@@ -779,7 +841,7 @@ List<String> graph(
   return [
     for (final (index, rows) in trees.indexed) ...[
       if (index > 0) '',
-      ..._columns(rows),
+      ..._columns(rows, style),
     ],
   ];
 }
@@ -814,15 +876,18 @@ String _named(List<String> members) {
       '${members.length - graphMembersNamed} more';
 }
 
+/// One line of `--graph`: the tree and the task, and what is said beside it.
+typedef _Drawn = ({String label, (String, Tint) detail});
+
 /// [rows], each detail in one column past the widest label of its tree.
-List<String> _columns(List<({String label, String detail})> rows) {
+List<String> _columns(List<_Drawn> rows, Style style) {
   final width = _widest(rows.map((row) => row.label));
   return [
     for (final row in rows)
-      [
-        row.label.padRight(width),
-        if (row.detail.isNotEmpty) '  ${row.detail}',
-      ].join().trimRight(),
+      render([
+        (row.label.padRight(width), null),
+        if (row.detail.$1.isNotEmpty) ...[('  ', null), row.detail],
+      ], style),
   ];
 }
 
