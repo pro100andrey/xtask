@@ -42,16 +42,18 @@ const handOverVariable = 'XTASK_HAND_OVERS';
 /// How many hand-overs deep a run may go before it is taken for a loop.
 const handOverLimit = 8;
 
-/// How the project's entry point is started: `dart` with `arguments`, in
-/// `workingDirectory` where it is not this process's own, for the project
-/// at `root` whose entry point is `entry` (from the root, with `/`). Where
-/// `resolveIn` is set, the package there has no resolution yet, and `dart
-/// pub get` is run in it first.
+/// How the project's entry point is started: `dart` with `arguments`, for
+/// the project at `root` whose entry point is `entry` (from the root, with
+/// `/`). Where `resolveIn` is set, the package there has no resolution yet,
+/// and `dart pub get` is run in it first.
+///
+/// There is no working directory to name: the run is started in this
+/// process's own, where the person stands, because that is what every
+/// relative path on its command line was written against.
 typedef ProjectEntry = ({
   String root,
   String entry,
   List<String> arguments,
-  String? workingDirectory,
   String? resolveIn,
 });
 
@@ -83,8 +85,7 @@ const defaultEntry = 'bin/xtask.dart';
 /// **The project is started where the person is standing.** Its entry looks
 /// for `xtask.yaml` from its own working directory and reads relative paths
 /// on its command line — `--check-schema`, a project's own `--covering` —
-/// against it, so the run is started in [workingDirectory] whenever it can
-/// be:
+/// against it, so the run is always started in [workingDirectory]:
 ///
 /// - `dart run <package>:xtask` where the entry point is its package's
 ///   `bin/xtask.dart` and the package resolution nearest to
@@ -98,11 +99,15 @@ const defaultEntry = 'bin/xtask.dart';
 ///   is compiled on every run. The path is relative to [workingDirectory], so
 ///   the names of the directories above the root are not on the command line
 ///   — `cmd.exe` would read a `&` or a `%` in them, which nobody typed.
-/// - Where the package has no resolution yet: `dart run :xtask` in it for a
-///   `bin/xtask.dart` — `dart run` resolves one there first, the one form that
-///   moves the run, and only until the first `pub get` — and for any other
-///   file, `dart pub get` in it before the file form, which cannot resolve
-///   anything itself.
+/// - Where the package has no resolution yet: `dart pub get` in it, and then
+///   the file form, for a `bin/xtask.dart` as for any other file. `dart run
+///   :xtask` in the package would resolve it as well, but only by starting
+///   the run there, and a run started anywhere but [workingDirectory] reads
+///   every relative path the person typed against the wrong directory —
+///   one argument at a time to patch, and the next one added breaks again.
+///   The `pub get` is the one `dart run` would have done itself, and it is
+///   paid once: from then on the package resolves, and the forms above
+///   apply.
 ProjectEntry? projectEntry(
   List<String> args, {
   required String workingDirectory,
@@ -143,17 +148,6 @@ ProjectEntry? projectEntry(
       root: root,
       entry: entry,
       arguments: ['run', '$name:xtask', ...args],
-      workingDirectory: null,
-      resolveIn: null,
-    );
-  }
-  final resolved = _resolves(name, package, from: package);
-  if (named && !resolved) {
-    return (
-      root: root,
-      entry: entry,
-      arguments: ['run', ':xtask', ..._reportFrom(args, workingDirectory)],
-      workingDirectory: package,
       resolveIn: null,
     );
   }
@@ -165,8 +159,7 @@ ProjectEntry? projectEntry(
       p.relative(file, from: workingDirectory),
       ...args,
     ],
-    workingDirectory: null,
-    resolveIn: resolved ? null : package,
+    resolveIn: _resolves(name, package, from: package) ? null : package,
   );
 }
 
@@ -224,7 +217,7 @@ Future<int> runProjectEntry(
     return ExitCode.invalidFile;
   }
   final paths = resolver ?? ExecutableResolver.forHost();
-  final from = entry.workingDirectory ?? Directory.current.path;
+  final from = Directory.current.path;
   final dart = paths.resolve('dart', from: from);
   if (dart == null) {
     err(
@@ -283,7 +276,6 @@ Future<int> runProjectEntry(
     process = await Process.start(
       dart,
       entry.arguments,
-      workingDirectory: entry.workingDirectory,
       environment: {...environment, handOverVariable: '${depth + 1}'},
       includeParentEnvironment: false,
       runInShell: shell,
@@ -313,36 +305,6 @@ Future<int> runProjectEntry(
       await watch.cancel();
     }
   }
-}
-
-/// [args] with the file `--report` names made absolute against
-/// [workingDirectory], for a run started somewhere else.
-///
-/// The engine reads that path against where it was started, as the person
-/// typed it against where they stand; moved, the run would write the report
-/// beside another package's pubspec, where whatever asked for it does not
-/// look. Only what comes before `--`: after it, the arguments are a task's.
-List<String> _reportFrom(List<String> args, String workingDirectory) {
-  // What the parser would refuse is left for it to refuse in its own words:
-  // an empty path made absolute is a directory, and an option after
-  // `--report` made absolute is a path.
-  String absolute(String path) => path.isEmpty || path.startsWith('-')
-      ? path
-      : p.join(workingDirectory, path);
-  final given = [...args];
-  for (var at = 0; at < given.length; at++) {
-    final argument = given[at];
-    if (argument == '--') {
-      break;
-    }
-    if (argument == '--report' && at + 1 < given.length) {
-      at++;
-      given[at] = absolute(given[at]);
-    } else if (argument.startsWith('--report=')) {
-      given[at] = '--report=${absolute(argument.substring(9))}';
-    }
-  }
-  return given;
 }
 
 bool _isCompletionScript(String argument) =>

@@ -212,9 +212,11 @@ paths on the command line keep meaning what they meant:
 - `dart run <path>/<entry>`, otherwise: from outside that resolution, or for
   an entry point that is any other file. Correct, and slower: a file is
   compiled every time.
-- When the package has never been resolved: `dart run :xtask` in it for a
-  `bin/xtask.dart`, so that `dart run` resolves it first, and `dart pub get`
-  in it before the file for anything else.
+- When the package has never been resolved: `dart pub get` in it, then the
+  file, still from where you stand — once; from then on the package resolves
+  and the forms above apply. `dart run :xtask` in the package would resolve
+  it too, but only by moving the run there, and every relative path you typed
+  (`--report`, `--check-schema`, …) would be read from the wrong directory.
 
 A workflow step running that file — `dart run tools/bin/xtask.dart check`, or
 an entry point with a name of its own — is a gate set's invocation to
@@ -748,8 +750,6 @@ its last report is a whole one: `complete` is `true`, `code` is `130` or
 SIGINT`. A run that cannot do that — killed with `SIGKILL`, or on a machine
 going down — leaves the last report it wrote: `complete` is `false`, and the
 task running says `the run ended while it was running`.
-Passed on to a project's own entry point, the path is made absolute first
-wherever the run is started somewhere other than where you stand.
 
 ## Exit codes
 

@@ -7,7 +7,10 @@
 - The installed `xtask` runs a project's verbs: in a repository whose root has
   a `bin/xtask.dart` of its own, it hands the run to it — `dart run
   <package>:xtask` from where you stand, or the file itself from a package
-  that resolves its own — and answers with its exit code. `--completion` is
+  that resolves its own — and answers with its exit code. Every form starts
+  the run where you stand, so relative paths on the command line mean what
+  you meant: a package never resolved has `dart pub get` run in it first,
+  once, and is then run as a file. `--completion` is
   still answered by the engine, and so is `--names` while it can read the
   file; a task's own `xtask` hands over again; `XTASK_HAND_OVERS` stops a loop
   at eight; no `dart` on `PATH` is a `3`.
@@ -43,8 +46,8 @@
   Written before anything else, as tasks begin and end, and last with the
   code: a run refused before it began says why, and one killed where it
   stands leaves the last report with `complete: false`. The path is read from where
-  the command was run, and made absolute for a project's entry point started
-  elsewhere; one that cannot be written is a `2` before anything runs.
+  the command was run; one that cannot be written is a `2` before anything
+  runs.
 
 - `env-unset: [names]` takes variables away from a task's body — a `run:` and
   a `do:` alike, and everything a verb starts — so `dart test` need not see

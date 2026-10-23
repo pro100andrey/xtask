@@ -49,9 +49,8 @@ void main() {
 
   /// [entry]'s fields as a list, which compares by what is in it: a record
   /// holding a list compares the list by identity.
-  List<Object?>? fields(ProjectEntry? entry) => entry == null
-      ? null
-      : [entry.root, entry.arguments, entry.workingDirectory];
+  List<Object?>? fields(ProjectEntry? entry) =>
+      entry == null ? null : [entry.root, entry.arguments, entry.resolveIn];
 
   setUp(() {
     root = Directory(tempRepo('entry').path).resolveSymbolicLinksSync();
@@ -138,13 +137,18 @@ void main() {
     ]);
   });
 
-  test('a root never resolved is run from the root, where `dart run` '
-      'resolves it first', () {
+  test('a root never resolved has a resolution got first, and is then run as '
+      'a file from where the person stands', () {
+    // `dart run :xtask` would resolve it too, but only in the package — the
+    // run moved there, and every relative path on the command line with it.
     repository();
+    final inside = Directory(p.join(root, 'packages', 'core'))
+      ..createSync(recursive: true);
 
-    expect(fields(entryFrom(root)), [
+    final entry = entryFrom(inside.path)!;
+    expect(fields(entry), [
       root,
-      ['run', ':xtask', 'check'],
+      ['run', p.join('..', '..', 'bin', 'xtask.dart'), 'check'],
       root,
     ]);
   });
@@ -185,31 +189,29 @@ void main() {
     ]);
   });
 
-  test('a run moved to the root is handed the report where the person '
-      'stands, in either spelling', () {
-    // `--report` is read against the working directory, and the one form
-    // that moves the run would otherwise write it beside the root's
-    // pubspec — a report the caller, looking where it said, never finds.
+  test('a root never resolved is handed every path as the person wrote it, '
+      'since the run stays where they stand', () {
+    // `--report` and `--check-schema` are read against the working
+    // directory; a run started where the person typed them reads them as
+    // they meant them, `/` and all, on every platform.
     repository();
     final inside = Directory(p.join(root, 'packages', 'core'))
       ..createSync(recursive: true);
-    final there = p.join(inside.path, 'out', 'run.json');
+    final args = [
+      'check',
+      '--report',
+      'out/run.json',
+      '--report=out/run.json',
+      '--check-schema',
+      'schema/xtask.json',
+    ];
 
-    expect(
-      entryFrom(inside.path, [
-        'check',
-        '--report',
-        'out/run.json',
-        '--',
-        '--report',
-        'x',
-      ])?.arguments,
-      ['run', ':xtask', 'check', '--report', there, '--', '--report', 'x'],
-    );
-    expect(
-      entryFrom(inside.path, ['check', '--report=out/run.json'])?.arguments,
-      ['run', ':xtask', 'check', '--report=$there'],
-    );
+    final entry = entryFrom(inside.path, args)!;
+    expect(entry.arguments, [
+      'run',
+      p.join('..', '..', 'bin', 'xtask.dart'),
+      ...args,
+    ]);
   });
 
   test('a run started where the person stands is handed it as written', () {
@@ -256,6 +258,7 @@ void main() {
 
   test('a `dart` that cannot be started is said, and answers 1', () async {
     repository();
+    resolution(root, {'shop': ''});
     final said = <String>[];
     final nowhere = p.join(root, 'no-such-dir');
 
@@ -367,7 +370,6 @@ void main() {
         p.join('..', 'tool', 'xtask.dart'),
         'check',
       ]);
-      expect(entry.workingDirectory, isNull);
       expect(entry.resolveIn, isNull);
     });
 
@@ -379,13 +381,14 @@ void main() {
       expect(entry.resolveIn, p.join(root, 'tools'));
     });
 
-    test('a bin/xtask.dart with no resolution is run by `dart run :xtask` '
-        'in its package', () {
+    test('a bin/xtask.dart with no resolution has one got first, and is '
+        'run as a file from where the person stands', () {
       declared('tools/bin/xtask.dart', package: 'tools', name: 'tasks');
 
-      expect(fields(entryFrom(root)), [
+      final entry = entryFrom(root)!;
+      expect(fields(entry), [
         root,
-        ['run', ':xtask', 'check'],
+        ['run', p.join('tools', 'bin', 'xtask.dart'), 'check'],
         p.join(root, 'tools'),
       ]);
     });
