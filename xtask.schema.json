@@ -310,6 +310,19 @@
             "type": "boolean",
             "description": "Whether this task runs with nothing else running at all. Under `-j` the run waits for what it has started to end, runs this, and starts nothing until it has ended — a benchmark, which shares the machine rather than one nameable thing. Its `each:` members run one at a time."
           },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "linux",
+                "macos",
+                "windows"
+              ]
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "The operating systems this task is for; absent, every one. Elsewhere it does not run and is reported as skipped — `linux only` — and what needs it, or follows it by `then:`, runs as though it had passed: being for another platform is not a failure."
+          },
           "timeout": {
             "type": "integer",
             "minimum": 1,

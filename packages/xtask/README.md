@@ -727,7 +727,7 @@ Each task, and under `members` each member of an `each:` in the set's order:
 | field | what it says |
 | --- | --- |
 | `task`, `member` | the task's name, or the member's |
-| `result` | `passed`, `failed`, `skipped` — it never started, because what it needs or follows did not pass — or `not-run`: the run stopped before it, or part-way through it |
+| `result` | `passed`, `failed`, `skipped` — it never started, because what it needs or follows did not pass, or because its `platforms:` leave this machine out — or `not-run`: the run stopped before it, or part-way through it |
 | `seconds` | how long it ran; absent where it never started, and for the member of an `each:` of one |
 | `code` | for a failure, the code the table gives it: a `run:` body is `1` whatever its program exited with, and that number is in `why` |
 | `why` | where it did not pass, what the run said: the failure as printed, or why it did not run |
@@ -852,6 +852,7 @@ handled the same way, and a process is ended at once rather than asked.
 | `exclusive` | tokens this task holds alone while it runs — which makes its own `each:` members serial too |
 | `alone` | nothing else runs while this task does, whatever `-j` says |
 | `interruptible` | a failure elsewhere may stop this task where it stands |
+| `platforms` | the operating systems this task is for — `linux`, `macos`, `windows`; elsewhere it is skipped, and what needs it goes on |
 | `timeout` | seconds a `run:` body may take before it is killed — per member under `each:` |
 | `unchanged` | a set of paths whose files this task must leave as the run found them — compared byte for byte |
 
@@ -896,6 +897,49 @@ to have them caught.
 members are not files there is anything to compare — is refused by `--validate`
 and by `--dry-run`, and by a run when it reaches the task, before the body
 starts: a gate that cannot compare must not run the generator and say nothing.
+
+### Platforms
+
+Some steps make sense on one operating system only — installing a Linux
+desktop entry, signing a macOS bundle. `platforms:` says which:
+
+```yaml
+tasks:
+  install-desktop:
+    desc: install the .desktop file and the icon
+    platforms: [linux]
+    do: linux-app-install
+  smoke:
+    desc: start the installed app once
+    needs: [install-desktop]
+    run: [tool/smoke]
+```
+
+On any other machine the task does not run, and is not said to have passed:
+the summary prints `skipped  install-desktop — linux only`, `--report` writes
+it as `skipped` with that `why`, and `--dry-run` prints the same line in its
+place without resolving its body — a program or a variable the run would not
+look for is not missing. The names are exactly `linux`, `macos` and `windows`;
+any other, an empty list, or one written twice is refused when the file is
+read, because each would be a task no machine runs and every run green about
+it.
+
+**What needs it, or follows it by `then:`, runs as though it had passed.**
+`smoke` above runs on macOS too. Being for another platform is the project's
+decision about the task, not something that went wrong, and a dependent is not
+to be stopped for a decision that was made on purpose. That is why the key is
+in the file: a verb deciding it inside, silently succeeding elsewhere or
+refusing elsewhere, either reports a green that is not about this machine or
+turns the gate red on a machine the step was never for.
+
+The skip is decided where the task would have begun, and not before: what it
+needs still runs first, and if that fails, the task — and what needs it — is
+skipped for that failure, as any other would be. A task being for Linux says
+nothing about the ones it needs.
+
+`--check-ci` counts a task as reached by the plan, whatever OS the job runs
+on: which machine a job is on is the host's to decide, and a task skipped
+there is one the file chose to skip, not one a job forgot.
 
 ### Secrets
 

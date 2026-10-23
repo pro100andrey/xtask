@@ -42,6 +42,14 @@ void main() {
       expect((task()['properties']! as Map<String, Object?>).keys, taskKeys);
     });
 
+    test('`platforms:` offers the names the parser accepts', () {
+      // Written out in the schema, because a const table cannot read the
+      // enum: this is what keeps the two from drifting.
+      expect((property('platforms')['items']! as Map)['enum'], [
+        for (final os in OperatingSystem.values) os.name,
+      ]);
+    });
+
     test('the top-level keys likewise', () {
       expect(
         (schema['properties']! as Map<String, Object?>).keys.toSet(),

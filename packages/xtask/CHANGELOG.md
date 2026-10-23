@@ -4,6 +4,14 @@
 
 ### Added
 
+- `platforms: [linux|macos|windows]` on a task: on any other machine it does
+  not run and is reported as skipped with the reason — `linux only` — in the
+  summary, in `--report` (`skipped`, with that `why`) and in `--dry-run`,
+  which does not resolve its body. What needs it, or follows it by `then:`,
+  runs as though it had passed. Any other name, an empty list or a name
+  written twice is refused when the file is read. `--check-ci` still counts
+  such a task as reached.
+
 - `secret-env: [NAMES]`, at the top level, prints the values of those
   variables as `***` in everything the engine writes: `--dry-run`'s argv and
   `env` lines, the line a failure reproduces itself with, `::error::`

@@ -142,12 +142,32 @@ final class CutOff extends Skipped {
       : 'the run ended before it began';
 }
 
+/// It is for other operating systems than this one — its `platforms:`.
+///
+/// **The one reason that is not about something going wrong.** Every other
+/// [Skipped] says the run did not get to the task; this one says the file
+/// decided it has no business here, which is why what needs it, or follows it
+/// by `then:`, goes on as though it had passed (see `admits`). Reported all
+/// the same, in the summary and the report: a task that did not run on this
+/// machine and said nothing would read as one that did.
+final class OffPlatform extends Skipped {
+  const OffPlatform(this.platforms);
+
+  /// The task's `platforms:`, as written.
+  final List<OperatingSystem> platforms;
+
+  /// `linux only`, `linux and macos only`: what the task is for, which is the
+  /// part a reader acts on — the machine they are on, they know.
+  @override
+  String get sentence => '${platforms.map((os) => os.name).join(' and ')} only';
+}
+
 /// Which [Result] a task that did not run to its end is reported as.
 ///
 /// Written out case by case, so that the next reason a task does not run is
 /// a decision about which of the two it is rather than a default.
 Result resultOf(Skipped why) => switch (why) {
-  NeedsStopped() || FollowsStopped() => Result.skipped,
+  NeedsStopped() || FollowsStopped() || OffPlatform() => Result.skipped,
   RunStopped() ||
   PartlyRun() ||
   NeverStartable() ||
@@ -193,9 +213,10 @@ const reportVersion = 1;
 /// **Four, because a reader acts on four.** Passed and failed are the run's
 /// verdict; the other two are both "did not run" and are told apart because
 /// they are fixed in different places: a task skipped is waiting on one that
-/// failed, and fixing that one runs it, while a task not run was stopped by
-/// the run ending — a failure elsewhere, or the run cut off — and says
-/// nothing about anything it needs.
+/// failed, and fixing that one runs it — or is for another platform, which
+/// nothing on this machine fixes, and its `why` says which — while a task not
+/// run was stopped by the run ending — a failure elsewhere, or the run cut
+/// off — and says nothing about anything it needs.
 enum Result {
   /// It ran to its end and passed.
   passed('passed'),
@@ -205,7 +226,7 @@ enum Result {
   failed('failed'),
 
   /// It never started: what it needs, or the task whose `then:` it follows,
-  /// did not pass.
+  /// did not pass — or its `platforms:` do not include this machine.
   skipped('skipped'),
 
   /// It did not run, or did not run to its end, because the run stopped first.

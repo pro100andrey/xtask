@@ -293,6 +293,7 @@ Task _task(
     interruptible: _flag(map, 'interruptible', 'task `$name`'),
     exclusive: _names(map, 'exclusive', name),
     alone: _flag(map, 'alone', 'task `$name`'),
+    platforms: _platforms(map, name),
     unchanged: _optionalString(map, 'unchanged', name),
   );
   // The document is here and nowhere else, so this is where a rule whose
@@ -456,6 +457,50 @@ List<String> _names(YamlMap map, String key, String taskName) {
     _nonEmpty(value, node, 'an entry of `$key:` in task `$taskName`');
   }
   return List.unmodifiable(values);
+}
+
+/// `platforms:`, read as the operating systems it names.
+///
+/// **Every refusal here is a task that would otherwise never run.** A name
+/// that is none of the three matches no machine, and an empty list matches
+/// none either, so each would be a task skipped everywhere with every run
+/// green about it — the silent green this key exists to say out loud. A name
+/// written twice says nothing the first did not, and is most often a second
+/// platform mistyped as the first.
+List<OperatingSystem> _platforms(YamlMap map, String taskName) {
+  final node = map.nodes['platforms'];
+  if (node == null) {
+    return const [];
+  }
+  final written = _stringList(node, '`platforms:` of task `$taskName`');
+  if (written.isEmpty) {
+    throw XtaskFormatException(
+      '`platforms:` of task `$taskName` is empty, so no machine would ever '
+      'run it — name the ones it is for, or leave the key out for every one',
+      node.span,
+    );
+  }
+  final platforms = <OperatingSystem>[];
+  for (final (at, name) in written.indexed) {
+    final span = (node as YamlList).nodes[at].span;
+    final platform = OperatingSystem.named(name);
+    if (platform == null) {
+      throw XtaskFormatException(
+        '`$name` in `platforms:` of task `$taskName` is not a platform this '
+        'engine knows — it is one of '
+        '${OperatingSystem.values.map((os) => os.name).join(', ')}',
+        span,
+      );
+    }
+    if (platforms.contains(platform)) {
+      throw XtaskFormatException(
+        '`platforms:` of task `$taskName` names `$name` twice',
+        span,
+      );
+    }
+    platforms.add(platform);
+  }
+  return List.unmodifiable(platforms);
 }
 
 /// [value], or a refusal naming [what].

@@ -33,6 +33,7 @@ const taskKeys = <String>{
   'interruptible',
   'exclusive',
   'alone',
+  'platforms',
   'timeout',
   'unchanged',
 };
@@ -274,6 +275,21 @@ final class DoBody extends Body {
   final String verb;
 }
 
+/// An operating system a task may be for — `platforms:`.
+///
+/// **Three, and the three names the file may write.** A name the engine never
+/// matches would make a task skipped everywhere and every run green about it,
+/// so `darwin` or `win32` is refused when the file is read rather than read as
+/// a fourth platform nobody is on.
+enum OperatingSystem {
+  linux,
+  macos,
+  windows;
+
+  /// The one written [name], or null where it is none of them.
+  static OperatingSystem? named(String name) => values.asNameMap()[name];
+}
+
 /// One node of the task graph (a task's keys).
 final class Task with Located {
   const Task({
@@ -295,6 +311,7 @@ final class Task with Located {
     this.interruptible = false,
     this.exclusive = const [],
     this.alone = false,
+    this.platforms = const [],
     this.timeout,
     this.unchanged,
   });
@@ -398,6 +415,21 @@ final class Task with Located {
   /// starts nothing else until it has ended; its own `each:` members run one
   /// at a time, for the same reason.
   final bool alone;
+
+  /// The operating systems this task is for, or empty for every one.
+  ///
+  /// **The project's decision, written where it can be read.** A step that
+  /// only makes sense on one OS — installing a Linux desktop entry — used to
+  /// decide it inside the verb: one returned success elsewhere without doing
+  /// anything, another refused. The first is a green that is not about this
+  /// machine, the second makes the gate red on the machines the task was never
+  /// for. Elsewhere such a task is skipped and said to be, and what needs it
+  /// or follows it by `then:` goes on as though it had passed: being for
+  /// another OS is not a failure, and a dependent cannot be blamed for it.
+  final List<OperatingSystem> platforms;
+
+  /// Whether [platforms] let this task run on [os].
+  bool isFor(OperatingSystem os) => platforms.isEmpty || platforms.contains(os);
 
   /// The gate sets this task belongs to.
   final List<String> gate;

@@ -51,6 +51,16 @@ final class SkipIt extends Admission {
   final Skipped why;
 }
 
+/// It is not for this machine, and is passed over as though it had run.
+///
+/// Apart from [SkipIt] because the walk does the opposite with it: a task
+/// skipped stops what needs it, and one passed over lets it go on.
+final class PassOver extends Admission {
+  const PassOver(this.why);
+
+  final OffPlatform why;
+}
+
 /// Whether [step] may start, must be skipped, or is simply not ready.
 ///
 /// The whole of the walk's ordering rule, and pure: it reads what has already
@@ -63,11 +73,18 @@ final class SkipIt extends Admission {
 ///
 /// [givenUp] is the run having decided its answer: what has not started must
 /// not start. What is running is left alone.
+///
+/// A task whose `platforms:` leave out [host] is passed over **where it would
+/// have begun, and not before**: what it needs is waited for, and a failure
+/// there is still the reason given. Passed over sooner, a dependent would go
+/// on past a failure two steps back, because a task that is for another
+/// platform says nothing about the ones it needs.
 Admission admits(
   PlanStep step, {
   required Set<String> finished,
   required Set<String> stopped,
   required bool givenUp,
+  required OperatingSystem host,
 }) {
   // Named rather than dropped: a task that silently did not happen is
   // indistinguishable from one that passed.
@@ -87,6 +104,9 @@ Admission admits(
   if (!step.task.needs.every(finished.contains) ||
       (origin != null && !finished.contains(origin))) {
     return const NotYet();
+  }
+  if (!step.task.isFor(host)) {
+    return PassOver(OffPlatform(step.task.platforms));
   }
   return const Ready();
 }
@@ -473,7 +493,10 @@ final class Executor {
     for (final step in plan.steps) {
       final task = step.task;
       final name = task.unchanged;
-      if (name == null) {
+      // A task this machine will not run holds nothing: its set is not the
+      // question here, and one that cannot be read would be a refusal kept
+      // for a task that never reaches the point of saying it.
+      if (name == null || !task.isFor(bodies.resolver.os)) {
         continue;
       }
       if (unchangedRefusal(task, bodies.sets) case final refusal?) {
@@ -604,10 +627,20 @@ final class Executor {
           finished: finished,
           stopped: stopped,
           givenUp: _givenUp.already,
+          host: bodies.resolver.os,
         );
         if (verdict case SkipIt(:final why)) {
           outcomes.skipped[name] = why is RunStopped ? _notBegun : why;
           stopped.add(name);
+          waiting.removeAt(at--);
+          began = true;
+          continue;
+        }
+        if (verdict case PassOver(:final why)) {
+          // Finished and not stopped: what needs it, and what follows it by
+          // `then:`, go on. No place and no token, because nothing runs.
+          outcomes.skipped[name] = why;
+          finished.add(name);
           waiting.removeAt(at--);
           began = true;
           continue;

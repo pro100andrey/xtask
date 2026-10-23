@@ -33,6 +33,16 @@ Future<int> dryRun({
   log('plan: ${plan.names.join(', ')}');
 
   for (final step in plan.steps) {
+    // Not resolved: the run would not look for its program or its variables
+    // on this machine, so a dry run that refused for their absence would be
+    // describing a run that does not happen.
+    if (!step.task.isFor(bodies.resolver.os)) {
+      log(
+        '${step.task.name}: skipped — '
+        '${OffPlatform(step.task.platforms).sentence}',
+      );
+      continue;
+    }
     final List<Resolved> resolved;
     try {
       resolved = bodies.resolveTask(step.task);

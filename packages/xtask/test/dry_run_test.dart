@@ -9,6 +9,7 @@ import 'package:xtask/src/dry_run.dart';
 import 'package:xtask/src/executables.dart';
 import 'package:xtask/src/exit_codes.dart';
 import 'package:xtask/src/graph.dart';
+import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/primitives.dart';
 
@@ -651,6 +652,39 @@ void main() {
     test('a body that is not a shim says nothing about a shell', () async {
       await dry('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n', 'a');
       expect(output(), isNot(contains('cmd.exe')));
+    });
+  });
+
+  group('a task outside its `platforms:` is shown as skipped', () {
+    ExecutableResolver on(OperatingSystem os) => ExecutableResolver(
+      environment: const {'PATH': '/bin'},
+      windows: os == OperatingSystem.windows,
+      os: os,
+      isRunnable: (path) => !p.basename(path).startsWith('missing'),
+    );
+
+    const yaml =
+        'version: 1\ntasks:\n'
+        // A program this machine has not got: elsewhere it is not looked
+        // for, since the run would not look for it either.
+        '  install: {desc: x, platforms: [linux], run: [missing-install]}\n'
+        '  smoke: {desc: y, needs: [install], run: [smoke]}\n';
+
+    test('and not resolved, and what needs it still is', () async {
+      expect(
+        await dry(yaml, 'smoke', resolver: on(OperatingSystem.macos)),
+        ExitCode.success,
+      );
+      expect(logged, contains('install: skipped — linux only'));
+      expect(output(), contains('run  /bin/smoke'));
+      expect(output(), isNot(contains('missing-install')));
+    });
+
+    test('on the platform it names, it is resolved as ever', () async {
+      expect(
+        await dry(yaml, 'smoke', resolver: on(OperatingSystem.linux)),
+        ExitCode.missingTool,
+      );
     });
   });
 }

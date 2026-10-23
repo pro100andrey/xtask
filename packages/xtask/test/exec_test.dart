@@ -213,12 +213,15 @@ void main() {
 
   /// A resolver that finds every bare name at `/bin/<name>`, so the cases
   /// below are about execution rather than about the resolver.
-  ExecutableResolver resolverFor({Set<String> shims = const {}}) =>
-      ExecutableResolver(
-        environment: const {'PATH': '/bin'},
-        windows: shims.isNotEmpty,
-        isRunnable: (path) => !p.basename(path).startsWith('missing'),
-      );
+  ExecutableResolver resolverFor({
+    Set<String> shims = const {},
+    OperatingSystem? os,
+  }) => ExecutableResolver(
+    environment: const {'PATH': '/bin'},
+    windows: shims.isNotEmpty || os == OperatingSystem.windows,
+    os: os,
+    isRunnable: (path) => !p.basename(path).startsWith('missing'),
+  );
 
   Future<int> runFile(
     String yaml,
@@ -352,6 +355,129 @@ void main() {
         expect(code, ExitCode.missingTool);
         expect(starter.started, isEmpty, reason: 'asked before it is started');
         expect(logged.join('\n'), contains('not installed'));
+      },
+    );
+  });
+
+  group('a task outside its `platforms:` is skipped, and says so', () {
+    // Run on Linux, about all three: the machine is injected, as `windows`
+    // always was, or the rule for the other two ships untested.
+    Future<(int, List<Ended>)> on(
+      OperatingSystem os,
+      String yaml,
+      String task, {
+      bool keepGoing = false,
+    }) async {
+      final reports = <RunSoFar>[];
+      final code = await runFile(
+        yaml,
+        task,
+        keepGoing: keepGoing,
+        resolver: resolverFor(os: os),
+        reportTo: reports.add,
+      );
+      return (code, reports.last.tasks);
+    }
+
+    const linuxOnly =
+        'version: 1\ntasks:\n'
+        '  install: {desc: x, platforms: [linux], run: [install]}\n';
+
+    test('on the platform it names, it runs', () async {
+      final (code, tasks) = await on(
+        OperatingSystem.linux,
+        linuxOnly,
+        'install',
+      );
+      expect(code, ExitCode.success);
+      expect(starter.started.map((s) => s.executable), ['/bin/install']);
+      expect(tasks.single.result, Result.passed);
+    });
+
+    test(
+      'elsewhere it does not, the run passes, and the summary names it',
+      () async {
+        final (code, tasks) = await on(
+          OperatingSystem.macos,
+          linuxOnly,
+          'install',
+        );
+        expect(code, ExitCode.success);
+        expect(starter.started, isEmpty);
+        expect(logged, contains('skipped  install — linux only'));
+        // `skipped`, not `passed`: nothing ran, and a report that said it
+        // passed would say something about this machine that is not true.
+        expect(tasks.single.result, Result.skipped);
+        expect(tasks.single.why, 'linux only');
+        expect(tasks.single.took, isNull);
+      },
+    );
+
+    test('on Windows too, naming every platform it is for', () async {
+      final (code, tasks) = await on(
+        OperatingSystem.windows,
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, platforms: [linux, macos], run: [a]}\n',
+        'a',
+      );
+      expect(code, ExitCode.success);
+      expect(starter.started, isEmpty);
+      expect(tasks.single.why, 'linux and macos only');
+    });
+
+    test('what needs it runs, as though it had passed', () async {
+      final (code, tasks) = await on(
+        OperatingSystem.macos,
+        'version: 1\ntasks:\n'
+            '  install: {desc: x, platforms: [linux], run: [install]}\n'
+            '  smoke: {desc: y, needs: [install], run: [smoke]}\n',
+        'smoke',
+      );
+      expect(code, ExitCode.success);
+      expect(starter.started.map((s) => s.executable), ['/bin/smoke']);
+      expect(
+        [for (final t in tasks) (t.name, t.result)],
+        [
+          ('install', Result.skipped),
+          ('smoke', Result.passed),
+        ],
+      );
+    });
+
+    test('and so does what follows it by `then:`', () async {
+      final (code, _) = await on(
+        OperatingSystem.macos,
+        'version: 1\ntasks:\n'
+            '  install: {desc: x, platforms: [linux], run: [install], '
+            'then: [announce]}\n'
+            '  announce: {desc: y, run: [announce]}\n',
+        'install',
+      );
+      expect(code, ExitCode.success);
+      expect(starter.started.map((s) => s.executable), ['/bin/announce']);
+    });
+
+    test(
+      'what it needs still runs, and a failure there still counts',
+      () async {
+        // The skip is decided where the task would have begun: what it needs
+        // is in the plan like any requirement, and a dependent of it does not
+        // pass over a failure two steps back.
+        starter = FakeStarter({'build': 1});
+        final (code, tasks) = await on(
+          OperatingSystem.macos,
+          'version: 1\ntasks:\n'
+              '  build: {desc: b, run: [build]}\n'
+              '  install: {desc: x, platforms: [linux], needs: [build], '
+              'run: [install]}\n'
+              '  smoke: {desc: y, needs: [install], run: [smoke]}\n',
+          'smoke',
+          keepGoing: true,
+        );
+        expect(code, ExitCode.taskFailed);
+        expect(starter.started.map((s) => s.executable), ['/bin/build']);
+        expect(tasks[1].why, const NeedsStopped('build').sentence);
+        expect(tasks[2].why, const NeedsStopped('install').sentence);
       },
     );
   });
@@ -3668,12 +3794,14 @@ void _admissionTable() {
       String name, {
       List<String> needs = const [],
       String? after,
+      List<OperatingSystem> platforms = const [],
     }) => PlanStep(
       Task(
         name: name,
         desc: 'd',
         body: const RunBody(['echo']),
         needs: needs,
+        platforms: platforms,
       ),
       continuationOf: after,
     );
@@ -3683,7 +3811,14 @@ void _admissionTable() {
       Set<String> finished = const {},
       Set<String> stopped = const {},
       bool givenUp = false,
-    }) => admits(step, finished: finished, stopped: stopped, givenUp: givenUp);
+      OperatingSystem host = OperatingSystem.linux,
+    }) => admits(
+      step,
+      finished: finished,
+      stopped: stopped,
+      givenUp: givenUp,
+      host: host,
+    );
 
     test('a step waiting on nothing is ready', () {
       expect(ask(stepOf('a')), isA<Ready>());
@@ -3714,6 +3849,45 @@ void _admissionTable() {
       // `--keep-going` never gives up, which is the whole of what it says.
       expect(
         (ask(stepOf('a'), givenUp: true) as SkipIt).why,
+        isA<RunStopped>(),
+      );
+    });
+
+    test('a step for another platform is passed over where it would begin', () {
+      const linux = [OperatingSystem.linux];
+      expect(ask(stepOf('a', platforms: linux)), isA<Ready>());
+      final verdict = ask(
+        stepOf('a', platforms: linux),
+        host: OperatingSystem.macos,
+      );
+      expect((verdict as PassOver).why.sentence, 'linux only');
+      // Not before: what it waits on is waited for, and what stopped is
+      // still the reason.
+      expect(
+        ask(
+          stepOf('a', needs: ['b'], platforms: linux),
+          host: OperatingSystem.macos,
+        ),
+        isA<NotYet>(),
+      );
+      expect(
+        (ask(
+                  stepOf('a', needs: ['b'], platforms: linux),
+                  stopped: {'b'},
+                  host: OperatingSystem.macos,
+                )
+                as SkipIt)
+            .why,
+        isA<NeedsStopped>(),
+      );
+      expect(
+        (ask(
+                  stepOf('a', platforms: linux),
+                  givenUp: true,
+                  host: OperatingSystem.windows,
+                )
+                as SkipIt)
+            .why,
         isA<RunStopped>(),
       );
     });

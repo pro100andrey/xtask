@@ -616,6 +616,21 @@ tasks:
       );
       expect(found.unrun, ['check']);
     });
+
+    test("a task for another platform than the job's is still reached", () {
+      // Which OS the job is on is the host's to decide when it runs, and a
+      // task skipped there is a decision the file made, not a forgotten one.
+      steps('      - run: dart run :xtask ci\n');
+      final found = check('''
+version: 1
+gates: [ci]
+tasks:
+  lint: {desc: a, gate: [ci], run: [lint]}
+  install: {desc: b, gate: [ci], platforms: [windows], run: [i]}
+''');
+      expect(found.ok, isTrue);
+      expect(found.unreached, isEmpty);
+    });
   });
 
   group('a step that names the gate and does not enforce it', () {

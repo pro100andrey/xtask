@@ -412,6 +412,19 @@ const _taskKeys = <String, Map<String, Object?>>{
         'Direct requirements, run before this task. Each runs once per '
         'invocation however many tasks need it.',
   },
+  'platforms': {
+    'type': 'array',
+    'items': {
+      'enum': ['linux', 'macos', 'windows'],
+    },
+    'minItems': 1,
+    'uniqueItems': true,
+    'description':
+        'The operating systems this task is for; absent, every one. Elsewhere '
+        'it does not run and is reported as skipped — `linux only` — and what '
+        'needs it, or follows it by `then:`, runs as though it had passed: '
+        'being for another platform is not a failure.',
+  },
   'run': {
     'type': 'array',
     // **The first element is the executable, and it may not be blank.** Only

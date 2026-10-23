@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 
 import 'errors.dart';
 import 'exit_codes.dart';
+import 'model.dart';
 
 /// Finding the program a task's `run:` names.
 ///
@@ -26,12 +27,26 @@ final class ExecutableResolver {
     required this.environment,
     required this.windows,
     required this.isRunnable,
-  }) : _paths = p.Context(style: windows ? p.Style.windows : p.Style.posix);
+    OperatingSystem? os,
+  }) : os = os ?? (windows ? OperatingSystem.windows : OperatingSystem.linux),
+       assert(
+         os == null || (os == OperatingSystem.windows) == windows,
+         'a resolver with Windows rules is on Windows, and only then',
+       ),
+       _paths = p.Context(style: windows ? p.Style.windows : p.Style.posix);
 
   /// The resolver for the machine this process is running on.
   factory ExecutableResolver.forHost() => ExecutableResolver(
     environment: Platform.environment,
     windows: Platform.isWindows,
+    os: switch (Platform.operatingSystem) {
+      'windows' => OperatingSystem.windows,
+      'macos' => OperatingSystem.macos,
+      // Every other POSIX host Dart runs on — Linux, Android, Fuchsia — is
+      // `linux` to a file: the three names are the ones a file may write, and
+      // a project restricting a task to Linux means the Unix it builds on.
+      _ => OperatingSystem.linux,
+    },
     isRunnable: Platform.isWindows ? _existsOnWindows : _executableOnPosix,
   );
 
@@ -41,6 +56,15 @@ final class ExecutableResolver {
   /// Whether the rules are Windows' rules: `;` between `PATH` entries, and a
   /// bare name that may match `dart.bat`.
   final bool windows;
+
+  /// Which operating system this is, for a task's `platforms:`.
+  ///
+  /// **Here, beside [windows], because it is the same fact and is injected
+  /// the same way.** Read from `Platform` by the engine itself, the rule for
+  /// the two machines a test does not run on would ship untested — and a test
+  /// that leaves it out gets `linux`, or `windows` where it asked for Windows'
+  /// rules, rather than whatever machine happens to run it.
+  final OperatingSystem os;
 
   /// Whether this path names something that could actually be started.
   ///

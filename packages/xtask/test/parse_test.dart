@@ -1557,4 +1557,66 @@ tasks: {}
       );
     });
   });
+
+  group('`platforms:` names the operating systems a task is for', () {
+    test('read as the three names, in the order written', () {
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, run: [dart], platforms: [macos, linux]}\n'
+        '  b: {desc: x, run: [dart], platforms: [windows]}\n'
+        '  c: {desc: x, run: [dart]}\n',
+      );
+      expect(file.tasks['a']!.platforms, [
+        OperatingSystem.macos,
+        OperatingSystem.linux,
+      ]);
+      expect(file.tasks['b']!.platforms, [OperatingSystem.windows]);
+      // Absent is every platform, which is what a task has always been.
+      expect(file.tasks['c']!.platforms, isEmpty);
+    });
+
+    test('a name that is not one of the three is refused', () {
+      // `osx`, `darwin`, `win32`: each is a platform somebody calls it, and a
+      // task restricted to a name the engine never matches would be skipped
+      // everywhere, green.
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], platforms: [darwin]}\n',
+        ),
+      );
+      expect(message, contains('`darwin` in `platforms:` of task `a`'));
+      expect(message, contains('linux, macos, windows'));
+    });
+
+    test('an empty list is refused', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], platforms: []}\n',
+        ),
+      );
+      expect(message, contains('`platforms:` of task `a` is empty'));
+    });
+
+    test('a name written twice is refused', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], platforms: [linux, linux]}\n',
+        ),
+      );
+      expect(message, contains('`linux` twice'));
+    });
+
+    test('not a list is refused', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], platforms: linux}\n',
+        ),
+      );
+      expect(message, contains('`platforms:` of task `a` must be a list'));
+    });
+  });
 }
