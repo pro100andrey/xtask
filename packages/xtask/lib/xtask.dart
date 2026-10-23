@@ -20,6 +20,22 @@ import 'src/process.dart';
 // this package exists to remove.
 export 'src/context.dart' show Captured, LogSink, Verb, VerbContext;
 
+// **Reading the model, never running it.** A project's own entry point
+// sometimes has to ask the file a question before it hands the run over —
+// one may choose which members of `check` to run from the paths a change
+// touched — and the only way to ask used to be a second engine:
+// `dart run :xtask --gate-members check`, half a second of JIT start on every
+// handover, and lines of the project.s own — a second root search, the start of
+// that process and the reading of its lines — that had to agree with the
+// engine's without anything holding them to it. These answer in-process, from
+// the code the command line answers from. They only read: nothing that plans
+// or runs a task is public, so the file format and the command line stay the
+// whole of what a project's runs depend on.
+//
+// What they throw is the refusal the command line prints for the same case,
+// so its type is public with them.
+export 'src/errors.dart' show XtaskFormatException;
+
 // A verb answers with a number, and the README tells its author to write that
 // number against the table this class is. Not exporting it meant telling them
 // to write `return 0;` — the very thing `boundaries_test.dart` refuses inside
@@ -27,14 +43,18 @@ export 'src/context.dart' show Captured, LogSink, Verb, VerbContext;
 // constant carries why the code is that code, and the digit does not.
 export 'src/exit_codes.dart' show ExitCode, continuationNotice;
 
+// The read itself; see `XtaskFormatException` above for why.
+export 'src/reading.dart' show findRoot, gateMembers;
+
 /// Runs `xtask` with the verbs this project supplies, and answers with the
 /// process exit code — the README's exit code table says what each means.
 ///
-/// This is the whole public surface. A project depends on `xtask`, writes
+/// This is the whole of what RUNS. A project depends on `xtask`, writes
 /// `bin/xtask.dart` calling this, and `dart run :xtask <task>` reaches it by
-/// file name. **The answer is the process's exit code and has to be
-/// used as one** — a caller that discards it reports success whatever
-/// happened.
+/// file name; beside it are only the types a verb needs and `findRoot` and
+/// `gateMembers`, which read the file and run nothing. **The answer is the
+/// process's exit code and has to be used as one** — a caller that discards
+/// it reports success whatever happened.
 ///
 /// Everything ambient is supplied here and nowhere below: the directory the
 /// command was run in, the environment, the two output streams, how a program

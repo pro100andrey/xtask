@@ -4,6 +4,14 @@
 
 ### Added
 
+- `findRoot(from)` and `gateMembers(gate, {workingDirectory})` are exported
+  from `package:xtask/xtask.dart`, so a project's own entry point can ask
+  where `xtask.yaml` is and what a gate set holds without starting a second
+  engine. `gateMembers` answers exactly what `--gate-members` prints — the
+  command now runs it — and throws `XtaskFormatException`, also exported now,
+  with the message that command prints where it refuses: no file, a file that
+  cannot be read or does not parse, a gate set that is not declared.
+
 - `env-paths: {NAME: path}` on a task sets variables whose values are paths
   from the repository root: the body — a `run:` or a `do:` — gets the root
   joined to each, absolute, normalised and in the machine's separators,

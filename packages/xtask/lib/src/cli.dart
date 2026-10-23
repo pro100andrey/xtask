@@ -26,8 +26,8 @@ import 'gates.dart';
 import 'graph.dart';
 import 'markers.dart';
 import 'model.dart';
-import 'parse.dart';
 import 'primitives.dart';
+import 'reading.dart';
 import 'report.dart' as report;
 import 'request.dart';
 import 'schema.dart';
@@ -35,30 +35,6 @@ import 'secrets.dart';
 import 'sets.dart';
 import 'validate.dart';
 import 'version.dart';
-
-/// The directory holding `xtask.yaml`, looked for from [from] upwards.
-///
-/// **Upwards, and that is a decision.** The file lives at the repository
-/// root, and everything in it is relative to that root: `in:`, a set's globs,
-/// what `remove` is allowed to touch. Reading `./xtask.yaml` would be correct
-/// only when somebody happens to be standing at the top — from `packages/lake`
-/// it finds nothing, and the obvious repair, taking the current directory as
-/// the root, resolves every path against the wrong place without saying so.
-/// Walking up makes the root a property of the repository rather than of where
-/// the terminal is.
-String? findRoot(String from) {
-  var directory = p.absolute(from);
-  while (true) {
-    if (File(p.join(directory, xtaskFileName)).existsSync()) {
-      return directory;
-    }
-    final parent = p.dirname(directory);
-    if (parent == directory) {
-      return null;
-    }
-    directory = parent;
-  }
-}
 
 /// Runs one invocation and answers with the exit code the table gives it.
 ///
@@ -326,32 +302,29 @@ Future<int> _answer(
     return ExitCode.invalidFile;
   }
 
-  final root = findRoot(workingDirectory);
-  if (root == null) {
-    err(
-      'xtask: no `$xtaskFileName` in `$workingDirectory` or any directory '
-      'above it. It belongs at the repository root, and every path in it '
-      'is relative to wherever it is',
-    );
-    return ExitCode.invalidFile;
+  // **Answered by the function a project's own entry point calls**, so that
+  // the two cannot drift: the members a project reads in-process and the
+  // lines a shell loop reads here are one implementation, refusals included.
+  // After the shadowing check, where it always was, because a project whose
+  // verbs are refused is refused whatever it asked.
+  if (request case GateMembers(:final gate)) {
+    try {
+      gateMembers(gate, workingDirectory: workingDirectory).forEach(out);
+      return ExitCode.success;
+    } on XtaskFormatException catch (problem) {
+      err('$problem');
+      return ExitCode.invalidFile;
+    }
   }
 
-  final path = p.join(root, xtaskFileName);
-  final XtaskFile file;
+  final ({String root, String path, XtaskFile file}) read;
   try {
-    file = parseXtaskFile(
-      File(path).readAsStringSync(),
-      sourceUrl: Uri.file(path),
-    );
+    read = readFrom(workingDirectory);
   } on XtaskFormatException catch (problem) {
     err('$problem');
     return ExitCode.invalidFile;
-  } on FileSystemException catch (problem) {
-    // `findRoot` proved the file is there, so this is a permission or a
-    // device — worth a sentence rather than a stack trace.
-    err('xtask: cannot read `$path`: ${problem.osError?.message ?? problem}');
-    return ExitCode.invalidFile;
   }
+  final (:root, :path, :file) = read;
 
   final known = {...builtInVerbs, ...verbs};
 
@@ -388,7 +361,8 @@ Future<int> _answer(
           EmitSchema() ||
           CheckSchema() ||
           ShowVersion() ||
-          ShowCompletion():
+          ShowCompletion() ||
+          GateMembers():
         throw StateError('answered above');
 
       case Validate():
@@ -425,7 +399,7 @@ Future<int> _answer(
         // over the whole file it is what makes the answer readable.
         (gate == null
                 ? report.grouping(file)
-                : report.listing(tasksInGate(file, _gate(file, gate))))
+                : report.listing(tasksInGate(file, declaredGate(file, gate))))
             .forEach(out);
         return ExitCode.success;
 
@@ -436,12 +410,6 @@ Future<int> _answer(
 
       case ListNames():
         names(file).forEach(out);
-        return ExitCode.success;
-
-      case GateMembers(:final gate):
-        for (final task in tasksInGate(file, _gate(file, gate))) {
-          out(task.name);
-        }
         return ExitCode.success;
 
       case DryRunTask(:final task, :final arguments, :final only):
@@ -537,7 +505,7 @@ void _refuseNarrowingNothing(
       final known = file.sets.keys;
       throw XtaskFormatException(
         '`--only $name=…` names a set, and there is no set called `$name`'
-        '${unknownNameHint(name, known, otherwise: _theFileHas(known))}',
+        '${unknownNameHint(name, known, otherwise: theFileHas(known))}',
       );
     }
     final reads = plan.steps.any(
@@ -554,29 +522,4 @@ void _refuseNarrowingNothing(
       memberPattern(name, pattern);
     }
   }
-}
-
-/// What follows an unknown name when nothing is near it: every name there
-/// is, where the list is short enough to be the answer.
-String _theFileHas(Iterable<String> known) => known.isEmpty
-    ? ''
-    : ' — this file has '
-          '${(known.toList()..sort()).map((n) => '`$n`').join(', ')}';
-
-/// [gate], if the file knows the name.
-///
-/// A gate set that is not declared is a typo, and the answer to a typo must
-/// not be an empty list: `--gate-members ci-analize` printing nothing reads as
-/// "that job checks nothing", which is the failure this whole tool is about.
-/// Whether a DECLARED gate has members is `--validate`'s question, not
-/// this one's.
-String _gate(XtaskFile file, String gate) {
-  final known = file.gates.keys.toSet();
-  if (known.contains(gate)) {
-    return gate;
-  }
-  throw XtaskFormatException(
-    'there is no gate set called `$gate`'
-    '${unknownNameHint(gate, known, otherwise: _theFileHas(known))}',
-  );
 }

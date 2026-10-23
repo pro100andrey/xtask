@@ -242,6 +242,25 @@ binary holds the ones it was built with and wants rebuilding after one changes.
 This repository keeps its own invocation as the `aot` task rather than a second
 copy in this file — `xtask --dry-run aot` prints it.
 
+An entry point that has to ask the file something before it hands the run
+over — which tasks a gate set holds, to choose among them — need not start a
+second engine for the answer and pay that half second again. Two functions
+read it in-process, from the code the command line answers from:
+
+```dart
+final root = findRoot(Directory.current.path);   // the directory holding
+                                                 // xtask.yaml, or null
+final members = gateMembers('check');            // what --gate-members prints
+```
+
+`gateMembers` looks for the file from `workingDirectory:` upwards (left out,
+from where the process runs) and answers the gate set's tasks in run order. It
+is the code `--gate-members` itself runs, so where that command refuses —
+no `xtask.yaml` here or above, one that cannot be read or does not parse, a
+gate set the file does not declare — the function throws
+`XtaskFormatException` carrying the same message. A declared gate set with no
+members is `[]`. Neither function runs a task or reads anything but the file.
+
 ### Testing a verb
 
 A verb is a function of a `VerbContext`, so a test builds one and calls it —
