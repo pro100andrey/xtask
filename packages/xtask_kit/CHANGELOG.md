@@ -20,3 +20,17 @@
 - `onPathLine`: whether the command just installed is the one `PATH` finds,
   something else is, or nothing is.
 - `homeOf` and `dataHome`.
+- `vsCodeInstall`, `vsCodeUninstall` and `vsCodeProfiles`: a project's own VS
+  Code extension, built as a VSIX, installed into the profile `PROFILE` or
+  `--profile` names — checked against VS Code's profiles first, since
+  `code --profile` creates a missing one empty. `installVsCodeExtension` and
+  `uninstallVsCodeExtension` as functions.
+- `bashScript()`: a project's shell script run under bash — on Windows Git's
+  bash, never WSL's launcher (`findGitBash`, `runBashScript`).
+- `packageTests()`: `flutter test` or `dart test` in each package, by whether
+  its pubspec takes anything from the Flutter SDK; a package without `test/` is
+  skipped (`runPackageTests`, `usesFlutter`).
+- `pubPublish` and `publishToPub`: a package published to pub after checking
+  that the registry does not serve the version yet, the changelog names it,
+  and the package matches HEAD; then a wait until the registry serves it,
+  answering `4` where the upload happened and the registry has not caught up.

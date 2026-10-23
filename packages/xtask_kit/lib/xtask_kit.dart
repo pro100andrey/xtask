@@ -14,6 +14,7 @@
 /// its own, which the install `needs:`.
 library;
 
+export 'src/bash.dart' show bashScript, findGitBash, runBashScript;
 export 'src/cli.dart'
     show
         CliPlaces,
@@ -36,4 +37,32 @@ export 'src/linux_app.dart'
         linuxAppUninstall,
         missingFromBundle;
 export 'src/on_path.dart' show onPathLine;
+export 'src/package_tests.dart' show packageTests, runPackageTests, usesFlutter;
+export 'src/publish.dart'
+    show
+        PubPackage,
+        RegistryProbe,
+        RegistryUnavailable,
+        askRegistry,
+        changelogNames,
+        manifestField,
+        pubPublish,
+        publishToPub,
+        registryWaits,
+        servedVersions,
+        uncommittedRefusal;
 export 'src/replace.dart' show notALink, pointLink, replaceDirectory;
+export 'src/vscode.dart'
+    show
+        ProfileNames,
+        VsCodeExtension,
+        VsCodeManifest,
+        installVsCodeExtension,
+        installedVersion,
+        profileArgs,
+        readProfileNames,
+        uninstallVsCodeExtension,
+        vsCodeInstall,
+        vsCodeProfiles,
+        vsCodeUninstall,
+        vsCodeUserDir;

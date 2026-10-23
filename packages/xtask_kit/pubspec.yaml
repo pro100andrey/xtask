@@ -1,8 +1,8 @@
 name: xtask_kit
 description: >-
   Verbs for xtask that projects otherwise write again each: installing a Linux
-  app or the command-line tools `dart build cli` leaves for the person running
-  it, under ~/.local, and saying whether PATH reaches what was installed.
+  app, CLI tools or a VS Code extension; publishing to pub; tests per package;
+  scripts under Git's bash.
 version: 0.1.0
 repository: https://github.com/pro100andrey/xtask/tree/main/packages/xtask_kit
 issue_tracker: https://github.com/pro100andrey/xtask/issues
@@ -24,6 +24,7 @@ dependencies:
   # `VerbContext`, and answers an `ExitCode` — the surface a project's own
   # verbs are written against, and nothing below it.
   xtask: ^0.4.0
+  yaml: ^3.1.3
 
 dev_dependencies:
   pro_lints: ^6.2.0
