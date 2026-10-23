@@ -45,12 +45,7 @@ void main() {
   ProjectEntry? entryFrom(
     String directory, [
     List<String> args = const ['check'],
-    Map<String, String> environment = const {},
-  ]) => projectEntry(
-    args,
-    workingDirectory: directory,
-    environment: environment,
-  );
+  ]) => projectEntry(args, workingDirectory: directory);
 
   /// [entry]'s fields as a list, which compares by what is in it: a record
   /// holding a list compares the list by identity.
@@ -87,9 +82,47 @@ void main() {
 
     expect(fields(entryFrom(app)), [
       root,
-      ['run', p.join(root, 'bin', 'xtask.dart'), 'check'],
+      ['run', p.join('..', '..', 'bin', 'xtask.dart'), 'check'],
       null,
     ]);
+  });
+
+  test("the file form's path is relative, so nothing above the root reaches "
+      "a batch file's shell", () {
+    root = (Directory(p.join(root, 'Work (2024) & %x%'))..createSync()).path;
+    repository();
+    resolution(root, {'shop': ''});
+    final app = p.join(root, 'apps', 'console');
+    resolution(app, {'console': ''});
+
+    final entry = entryFrom(app, ['check'])!;
+    expect(entry.arguments[1], p.join('..', '..', 'bin', 'xtask.dart'));
+    expect(shellMetacharacterIn(entry.arguments), isNull);
+  });
+
+  test('a resolution that cannot be read, or names the package off this '
+      'machine, is not the root: the file form, and no throw', () {
+    repository();
+    resolution(root, {'shop': ''});
+    final app = p.join(root, 'apps', 'console');
+    final config = File(p.join(app, '.dart_tool', 'package_config.json'))
+      ..createSync(recursive: true);
+
+    for (final text in [
+      '{not json',
+      jsonEncode({
+        'packages': [
+          {'name': 'shop', 'rootUri': 'https://example.com/shop/'},
+        ],
+      }),
+    ]) {
+      config.writeAsStringSync(text);
+      expect(
+        entryFrom(app)?.arguments[1],
+        p.join('..', '..', 'bin', 'xtask.dart'),
+        reason: text,
+      );
+    }
   });
 
   test('a package of the same name elsewhere is not the root', () {
@@ -101,7 +134,7 @@ void main() {
 
     expect(entryFrom(app)?.arguments.take(2), [
       'run',
-      p.join(root, 'bin', 'xtask.dart'),
+      p.join('..', '..', 'bin', 'xtask.dart'),
     ]);
   });
 
@@ -117,7 +150,7 @@ void main() {
   });
 
   test('the engine answers itself: no file, no entry point, its own '
-      'repository, completion, and a run already handed over here', () {
+      'repository, and completion while it can read the file', () {
     expect(entryFrom(root), isNull, reason: 'no xtask.yaml');
 
     repository(entry: false);
@@ -135,16 +168,30 @@ void main() {
     ]) {
       expect(entryFrom(root, args), isNull, reason: '$args');
     }
+  });
+
+  test('`--names` goes to the project when this engine cannot read the file '
+      '— one written for a newer xtask', () {
+    repository();
+    resolution(root, {'shop': ''});
+    File(p.join(root, 'xtask.yaml')).writeAsStringSync(
+      'version: 1\ntasks:\n  a:\n    run: [x]\n    from-the-future: true\n',
+    );
+
+    expect(entryFrom(root, ['--names'])?.arguments, [
+      'run',
+      'shop:xtask',
+      '--names',
+    ]);
+  });
+
+  test("what follows `--` is a task's, and decides nothing here", () {
+    repository();
+    resolution(root, {'shop': ''});
 
     expect(
-      entryFrom(root, ['check'], {projectEntryVariable: root}),
-      isNull,
-      reason: 'handed over once already',
-    );
-    expect(
-      entryFrom(root, ['check'], {projectEntryVariable: p.dirname(root)}),
-      isNotNull,
-      reason: 'handed over for another root: this one is nested in it',
+      entryFrom(root, ['test', '--', '--names', '--completion'])?.arguments,
+      ['run', 'shop:xtask', 'test', '--', '--names', '--completion'],
     );
   });
 
@@ -165,5 +212,71 @@ void main() {
 
     expect(code, ExitCode.missingTool);
     expect(said.single, contains('bin/xtask.dart'));
+  });
+
+  test('a `dart` that cannot be started is said, and answers 1', () async {
+    repository();
+    final said = <String>[];
+    final nowhere = p.join(root, 'no-such-dir');
+
+    final code = await runProjectEntry(
+      entryFrom(root)!,
+      environment: const {},
+      err: said.add,
+      resolver: ExecutableResolver(
+        environment: {'PATH': nowhere},
+        windows: false,
+        isRunnable: (_) => true,
+      ),
+    );
+
+    expect(code, ExitCode.taskFailed);
+    expect(said.single, contains('could not be started'));
+  });
+
+  test('a run handed over $handOverLimit times deep is a loop, refused with '
+      '2 before anything starts; one less is a run', () async {
+    repository();
+    final said = <String>[];
+    final absent = ExecutableResolver(
+      environment: const {'PATH': ''},
+      windows: false,
+      isRunnable: (_) => false,
+    );
+    Future<int> at(int depth) => runProjectEntry(
+      entryFrom(root)!,
+      environment: {handOverVariable: '$depth'},
+      err: said.add,
+      resolver: absent,
+    );
+
+    expect(await at(handOverLimit), ExitCode.invalidFile);
+    expect(said.last, contains('loop'));
+    expect(
+      await at(handOverLimit - 1),
+      ExitCode.missingTool,
+      reason: 'past the check, to the lookup of `dart`',
+    );
+  });
+
+  test("a batch-file `dart` refuses a metacharacter the person's command "
+      'line carries', () async {
+    repository();
+    resolution(root, {'shop': ''});
+    final said = <String>[];
+
+    final code = await runProjectEntry(
+      entryFrom(root, ['check', 'a&b'])!,
+      environment: const {},
+      err: said.add,
+      resolver: ExecutableResolver(
+        environment: const {'PATH': r'C:\dart', 'PATHEXT': '.BAT'},
+        windows: true,
+        isRunnable: (path) => path.toLowerCase().endsWith('dart.bat'),
+      ),
+    );
+
+    expect(code, ExitCode.invalidFile);
+    expect(said.single, contains('`a&b`'));
   });
 }

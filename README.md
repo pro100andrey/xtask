@@ -202,11 +202,14 @@ paths on the command line keep meaning what they meant:
 - `dart run :xtask` in the root, when the root has never been resolved, so
   that `dart run` resolves it first.
 
-Two requests are not handed over: `--completion`, and `--names`, which a
-completion script asks on every TAB and which needs nothing but the file. A
-run already handed over for a root carries `XTASK_ENTRY` set to it and is
-answered by the engine there, so the hand-over cannot loop. Without `dart` on
-`PATH` the installed `xtask` says so and answers `3`. In this package's own
+`--completion` is not handed over, and neither is `--names`, which a
+completion script asks on every TAB, while the installed engine can read the
+file — only a file written for a newer `xtask` sends it to the project.
+Arguments after `--` are a task's and decide nothing here. A task that runs
+`xtask` hands over again, as the person typing it would; a run handed over
+eight times deep is taken for a loop (`XTASK_HAND_OVERS` counts) and refused
+with `2`. Without `dart` on `PATH` the installed `xtask` says so and answers
+`3`. In this package's own
 repository there is nothing to hand over to: its `bin/xtask.dart` is the
 installed one.
 

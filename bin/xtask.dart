@@ -21,11 +21,7 @@ import 'package:xtask/xtask.dart';
 
 Future<void> main(List<String> args) async {
   final environment = Platform.environment;
-  if (projectEntry(
-        args,
-        workingDirectory: Directory.current.path,
-        environment: environment,
-      )
+  if (projectEntry(args, workingDirectory: Directory.current.path)
       case final entry?) {
     exitCode = await runProjectEntry(
       entry,

@@ -7,9 +7,10 @@
 - The installed `xtask` runs a project's verbs: in a repository whose root has
   a `bin/xtask.dart` of its own, it hands the run to it — `dart run
   <package>:xtask` from where you stand, or the file itself from a package
-  that resolves its own — and answers with its exit code. `--completion` and
-  `--names` are still answered by the engine, `XTASK_ENTRY` keeps a hand-over
-  from looping, and no `dart` on `PATH` is a `3`.
+  that resolves its own — and answers with its exit code. `--completion` is
+  still answered by the engine, and so is `--names` while it can read the
+  file; a task's own `xtask` hands over again; `XTASK_HAND_OVERS` stops a loop
+  at eight; no `dart` on `PATH` is a `3`.
 
 ## 0.4.0
 

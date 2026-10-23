@@ -304,7 +304,7 @@ bool _existsOnWindows(String path) =>
 /// `%` among them: `%PATH%` in an argument reaches a batch file as whatever
 /// this machine's `PATH` is, expanded on the command line before the file
 /// sees it.
-const cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"', '%'};
+const _cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"', '%'};
 
 /// Refuses an argument the shell would reinterpret, when the shell is
 /// unavoidable — the batch-shim rule.
@@ -323,22 +323,36 @@ void refuseShellMetacharacters(
   String executable,
   List<String> arguments,
 ) {
+  if (shellMetacharacterIn(arguments) case (
+    :final argument,
+    :final character,
+  )) {
+    throw RunFailure(
+      ExitCode.invalidFile,
+      'task `$task` passes `$argument` to `$executable`, which is '
+      'a batch file. Windows starts one through the shell whatever the '
+      'caller asks for, so `$character` in that argument would be '
+      '${character == '%' ? 'read as the start of a `%NAME%` the shell '
+                'replaces with a variable' : 'read as a shell operator'} '
+      'rather than as text. Point the task at a real '
+      'executable, or make it a verb — a Dart function is where logic '
+      'belongs anyway',
+    );
+  }
+}
+
+/// The first of [arguments] holding a character `cmd.exe` acts on, with the
+/// character; null where there is none — the batch-shim rule's question,
+/// which each caller refuses in its own words.
+({String argument, String character})? shellMetacharacterIn(
+  List<String> arguments,
+) {
   for (final argument in arguments) {
-    for (final character in cmdMetacharacters) {
-      if (!argument.contains(character)) {
-        continue;
+    for (final character in _cmdMetacharacters) {
+      if (argument.contains(character)) {
+        return (argument: argument, character: character);
       }
-      throw RunFailure(
-        ExitCode.invalidFile,
-        'task `$task` passes `$argument` to `$executable`, which is '
-        'a batch file. Windows starts one through the shell whatever the '
-        'caller asks for, so `$character` in that argument would be '
-        '${character == '%' ? 'read as the start of a `%NAME%` the shell '
-                  'replaces with a variable' : 'read as a shell operator'} '
-        'rather than as text. Point the task at a real '
-        'executable, or make it a verb — a Dart function is where logic '
-        'belongs anyway',
-      );
     }
   }
+  return null;
 }
