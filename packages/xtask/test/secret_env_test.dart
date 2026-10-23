@@ -113,6 +113,24 @@ tasks:
       expect(secrets.values, unorderedEquals([_token, 'declared-key']));
     });
 
+    test('and from every `env-paths:`, as the path the body is given', () {
+      // The body gets the absolute path, so that is the form that reaches a
+      // line — the written one is only the end of it.
+      final secrets = secretsIn(
+        loadDocument('''
+version: 1
+secret-env: [KEY]
+tasks:
+  a: {desc: x, run: [dart], env-paths: {KEY: keys/./signing}}
+  b: {desc: x, run: [dart], env-paths: {OTHER: not/a/secret}}
+'''),
+        const {},
+        windows: true,
+        root: r'C:\repo',
+      );
+      expect(secrets.values, [r'C:\repo\keys\signing']);
+    });
+
     test('on Windows a name is matched whatever its case', () {
       final document = loadDocument('version: 1\nsecret-env: [TOKEN]\n');
       expect(
@@ -208,6 +226,18 @@ tasks:
       expect(all(), isNot(contains(_token)));
       expect(all(), isNot(contains('signing-key-value')));
       expect(all(), contains('--token=***'));
+      expect(all(), contains('env  SIGNING=***'));
+    });
+
+    test('--dry-run masks an `env-paths:` value', () async {
+      writeFile('''
+version: 1
+secret-env: [SIGNING]
+tasks:
+  deploy: {desc: x, run: [dart, deploy], env-paths: {SIGNING: keys/signing}}
+''');
+      expect(await run(['--dry-run', 'deploy']), ExitCode.success);
+      expect(all(), isNot(contains(p.join('keys', 'signing'))));
       expect(all(), contains('env  SIGNING=***'));
     });
 

@@ -89,6 +89,7 @@ ValidationReport validateFile(
       problems.add(XtaskFormatException(refusal, task.span));
     }
     _checkWorkingDirectory(task, file, problems, root);
+    _checkEnvPaths(task, file, problems);
     _checkRemoveArguments(task, file, problems, root);
   }
 
@@ -198,6 +199,42 @@ void _checkWorkingDirectory(
       ),
     );
     return;
+  }
+}
+
+/// An `env-paths:` value composed out of a `values:` member that leaves the
+/// repository.
+///
+/// The written value was refused by the parser already; this is
+/// [_checkWorkingDirectory]'s composed half, for the same reason — a member
+/// of `values:` is not asked the boundary anywhere else, and a file this
+/// called clean would be refused by `--dry-run`.
+void _checkEnvPaths(
+  Task task,
+  XtaskFile file,
+  List<XtaskFormatException> problems,
+) {
+  final set = file.sets[task.each];
+  if (set is! ValueSet) {
+    return;
+  }
+  for (final MapEntry(:key, :value) in task.envPaths.entries) {
+    for (final composed in substituted(
+      [value],
+      all: const [],
+      each: set.values,
+    )) {
+      if (!leavesRoot(composed)) {
+        continue;
+      }
+      problems.add(
+        XtaskFormatException(
+          envPathLeavesRoot(task: task.name, name: key, written: composed),
+          task.span,
+        ),
+      );
+      break;
+    }
   }
 }
 

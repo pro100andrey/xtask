@@ -4,6 +4,17 @@
 
 ### Added
 
+- `env-paths: {NAME: path}` on a task sets variables whose values are paths
+  from the repository root: the body — a `run:` or a `do:` — gets the root
+  joined to each, absolute, normalised and in the machine's separators,
+  whatever `in:` says, and `--dry-run` prints that value. A path that is
+  absolute or climbs through `..` is refused when the file is read; `$each`
+  may end one, and a `values:` member that takes it out of the root is
+  refused by `--validate` and the run. A name the same task's `env:` sets or
+  `env-unset:` removes is refused, compared without case. A name in
+  `secret-env:` is masked as the absolute path, and its value cannot be made
+  from `$each`.
+
 - `platforms: [linux|macos|windows]` on a task: on any other machine it does
   not run and is reported as skipped with the reason — `linux only` — in the
   summary, in `--report` (`skipped`, with that `why`) and in `--dry-run`,

@@ -186,6 +186,20 @@ void main() {
       expect(report.toString(), contains('reaches outside the repository'));
     });
 
+    test('and so is an `env-paths:` value composed out of them', () {
+      final report = check(
+        'version: 1\n'
+        "sets:\n  f:\n    values: [dev, '../../etc']\n"
+        'tasks:\n'
+        r'  a: {desc: x, each: f, run: [d, $each], env-paths: {X: c/$each}}'
+        '\n',
+      );
+      expect(
+        report.toString(),
+        contains('`X` in `env-paths:` of task `a` says `c/../../etc`'),
+      );
+    });
+
     test('and ordinary values say nothing', () {
       final report = check(
         'version: 1\n'

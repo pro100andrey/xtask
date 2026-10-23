@@ -60,13 +60,15 @@ sealed class Resolved {
   final String workingDirectory;
 
   /// The ambient environment without the task's `env-unset:` and with its
-  /// `env:` applied: what the body actually sees, rather than what the file
+  /// `env:` and `env-paths:` applied: what the body actually sees, rather than
+  /// what the file
   /// adds — and **the whole of it**, because a child is handed this map and
   /// nothing else. A variable removed here is one the body does not have.
   final Map<String, String> environment;
 
-  /// Only what the task's own `env:` adds, with markers already standing for
-  /// what they name.
+  /// Only what the task's own `env:` and `env-paths:` add, with markers
+  /// already standing for what they name and each path already the absolute
+  /// one the body is given.
   ///
   /// **Computed once, because two things print it.** A report shows what the
   /// file declared rather than the hundred variables that are part of the
@@ -367,6 +369,15 @@ final class BodyResolver {
         entry.key: member == null
             ? entry.value
             : withMember(entry.value, member),
+      // Among what the task declares rather than beside it, so `--dry-run`,
+      // a failure's reproduction and the report print the path the body is
+      // given — the one a reader can paste — and not the one the file wrote.
+      for (final MapEntry(:key, :value) in task.envPaths.entries)
+        key: _envPath(
+          task,
+          key,
+          member == null ? value : withMember(value, member),
+        ),
     });
     return (
       member: member,
@@ -512,6 +523,27 @@ final class BodyResolver {
       );
     }
     return where;
+  }
+
+  /// What `env-paths:` entry [name] of [task] hands the body, [composed] being
+  /// its value with the member already in it.
+  ///
+  /// **Asked the boundary again, of the composed value.** The parser asked it
+  /// of what the file wrote; a `values:` member is not a path and is not asked
+  /// anywhere else, and `cache/$each` with a member of `../..` passes the one
+  /// and not the other.
+  ///
+  /// Only the written half, not [staysUnder] as `in:` is: the path is text a
+  /// program is handed, most often of a directory it is about to create, and
+  /// the engine itself goes nowhere through it.
+  String _envPath(Task task, String name, String composed) {
+    if (leavesRoot(composed)) {
+      throw RunFailure(
+        ExitCode.invalidFile,
+        envPathLeavesRoot(task: task.name, name: name, written: composed),
+      );
+    }
+    return envPathUnderRoot(root, composed, windows: resolver.windows);
   }
 
   /// The members of set [name], as a failure of [task] when there are none.

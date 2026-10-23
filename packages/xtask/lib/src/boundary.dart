@@ -103,6 +103,45 @@ String workingDirectoryLeavesRoot({
     'that runs somewhere the repository does not own is not something this '
     'file can vouch for';
 
+/// Why `env-paths:` entry [name] of task [task], as [written], is refused.
+///
+/// Beside [workingDirectoryLeavesRoot] and for its reason: the parser refuses
+/// what the file wrote, `--validate` and the resolver what a member composed,
+/// and one boundary says one sentence.
+String envPathLeavesRoot({
+  required String task,
+  required String name,
+  required String written,
+}) =>
+    '`$name` in `env-paths:` of task `$task` says `$written`, which reaches '
+    'outside the repository. A path there is relative to the root and stays '
+    'there; a value that is not one of its paths belongs in `env:`';
+
+/// The value a body is given for `env-paths:` entry [written]: [root] joined
+/// to it, normalised, in the separators of the machine [windows] describes.
+///
+/// **Normalised, because it is handed over as text.** `./.cache//pub/` and
+/// `.cache/pub` name one directory, and a program comparing the two, or a
+/// person reading the dry run, should not have to know that.
+///
+/// [windows] rather than this process's own platform, as the resolver's rules
+/// are: the separators are the one thing here that differs on the machine this
+/// matters most for, and a test that could not ask for them would ship them
+/// unchecked. The secrets read it the same way, so the value masked is the
+/// value printed.
+///
+/// [written] has passed [leavesRoot]; nothing here asks it again.
+String envPathUnderRoot(
+  String root,
+  String written, {
+  required bool windows,
+}) {
+  final paths = windows ? p.windows : p.posix;
+  return paths.normalize(
+    paths.join(root, paths.joinAll(p.posix.split(written))),
+  );
+}
+
 /// [written] resolved under [root], or null when the root does not own it.
 ///
 /// **The verb's question, and it is not the file's.** `in:` is text somebody

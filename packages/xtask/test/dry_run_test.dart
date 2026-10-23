@@ -506,6 +506,22 @@ void main() {
       expect(output(), contains('  env  unset CI'));
     });
 
+    test(
+      'what `env-paths:` sets is printed as the path the body gets',
+      () async {
+        await dry(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, run: [dart, test], env-paths: {CACHE: .c/pub}}\n',
+          'a',
+          resolver: hostShaped(),
+        );
+        expect(
+          output(),
+          contains('  env  CACHE=${p.join(root.path, '.c', 'pub')}'),
+        );
+      },
+    );
+
     test(r'with $each already standing for the member', () async {
       // Every other line of this block was substituted, so it promised
       // `FLAVOR=$each` while the run exported `FLAVOR=dev`.

@@ -1393,6 +1393,96 @@ tasks: {}
       expect(message, contains('in `env-unset:`'));
     });
 
+    test('`env-paths:` is read as names and paths from the root', () {
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, run: [dart], env-paths: {PUB_CACHE: .cache/pub}}\n',
+      );
+      expect(file.tasks['a']!.envPaths, {'PUB_CACHE': '.cache/pub'});
+    });
+
+    test('a path in `env-paths:` that leaves the root is refused', () {
+      // When the file is read, not when a run reaches the task: the value is
+      // written text, and what it names is known before anything runs.
+      for (final where in ['/tmp/x', '../x', r'..\x', 'C:x', r'\\srv\s']) {
+        final message = refusalOf(
+          () => parseXtaskFile(
+            'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart], env-paths: '
+            '{X: "${where.replaceAll(r'\', r'\\')}"}}\n',
+          ),
+        );
+        expect(
+          message,
+          contains('`X` in `env-paths:` of task `a`'),
+          reason: where,
+        );
+        expect(message, contains('reaches outside the repository'));
+      }
+    });
+
+    test('a name in both `env:` and `env-paths:` is refused', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], env: {Cache: x}, '
+          'env-paths: {CACHE: y}}\n',
+        ),
+      );
+      expect(message, contains('task `a` sets `CACHE` twice'));
+    });
+
+    test('and so is one `env-unset:` removes', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], env-unset: [cache], '
+          'env-paths: {CACHE: y}}\n',
+        ),
+      );
+      expect(message, contains('task `a` both sets and removes `cache`'));
+    });
+
+    test(r'`$each` may end a path in `env-paths:`, and only end it', () {
+      parseXtaskFile(
+        'version: 1\nsets:\n  s: [a]\ntasks:\n'
+        r'  a: {desc: x, each: s, run: [b, $each], env-paths: {X: c/$each}}'
+        '\n',
+      );
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\nsets:\n  s: [a]\ntasks:\n'
+          r'  a: {desc: x, each: s, run: [b, $each], '
+          r'env-paths: {X: $each/c}}'
+          '\n',
+        ),
+      );
+      expect(message, contains('nothing may follow it'));
+    });
+
+    test(r'and a path made from `$each` cannot be a secret', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\nsecret-env: [X]\nsets:\n  s: [a]\ntasks:\n'
+          r'  a: {desc: x, each: s, run: [b], env-paths: {X: c/$each}}'
+          '\n',
+        ),
+      );
+      expect(message, contains('`X` in `env-paths:` of task `a`'));
+      expect(message, contains('is in `secret-env:`'));
+    });
+
+    test('a marker in a name of `env-paths:` names nothing', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\nsets:\n  s: [a]\ntasks:\n'
+          r'  a: {desc: x, each: s, run: [b, $each], env-paths: {$each: c}}'
+          '\n',
+        ),
+      );
+      expect(message, contains('in `env-paths:`'));
+    });
+
     test('an environment variable name cannot hold an `=`', () {
       final message = refusalOf(
         () => parseXtaskFile(

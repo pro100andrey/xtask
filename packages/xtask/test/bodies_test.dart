@@ -773,6 +773,82 @@ void main() {
       expect(body.environment, {'TEMP': 'C:/t'});
     });
 
+    test('has what `env-paths:` names as an absolute path under the root', () {
+      // From the root whatever `in:` says: the path is the file's, written
+      // from where the file is, and a body in `packages/a` reading
+      // `.cache/pub` would otherwise look for it in `packages/a/.cache/pub`.
+      Directory(p.join(root.path, 'packages', 'a')).createSync(recursive: true);
+      final body = resolve(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, in: packages/a, run: [dart], '
+            'env-paths: {PUB_CACHE: ./.cache//pub/}}\n',
+        'a',
+        environment: const {'PATH': '/bin'},
+      ).single;
+      final expected = p.join(root.path, '.cache', 'pub');
+      expect(body.environment['PUB_CACHE'], expected);
+      expect(body.declaredEnvironment, {'PUB_CACHE': expected});
+    });
+
+    test(r'with `$each` at its end standing for the member', () {
+      final body = resolve(
+        'version: 1\n'
+            'sets:\n  f:\n    values: [dev]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: f, run: [d, $each],'
+            r' env-paths: {OUT: build/$each}}'
+            '\n',
+        'a',
+      ).single;
+      expect(body.environment['OUT'], p.join(root.path, 'build', 'dev'));
+    });
+
+    test('a member that takes the path out of the root is refused', () {
+      // The written path passed when the file was read; a `values:` member is
+      // not a path and is not asked the boundary anywhere else.
+      expect(
+        () => resolve(
+          'version: 1\n'
+              "sets:\n  f:\n    values: ['../..']\n"
+              'tasks:\n'
+              r'  a: {desc: x, each: f, run: [d, $each],'
+              r' env-paths: {OUT: build/$each}}'
+              '\n',
+          'a',
+        ),
+        throwsA(
+          isA<RunFailure>()
+              .having((f) => f.code, 'code', ExitCode.invalidFile)
+              .having(
+                (f) => f.message,
+                'message',
+                contains('reaches outside the repository'),
+              ),
+        ),
+      );
+    });
+
+    test("on Windows the path is written with Windows' separators", () {
+      // The value reaches a program as text, and a Windows program handed
+      // `C:\repo/.cache/pub` is one that may or may not read it.
+      // A verb body and no `in:`, so nothing here asks this machine about a
+      // root it does not have.
+      final body =
+          BodyResolver(
+                root: r'C:\repo',
+                resolver: windowsShims(),
+                verbs: {'v': (_) async => 0},
+              )
+              .resolveTask(
+                parseXtaskFile(
+                  'version: 1\ntasks:\n'
+                  '  a: {desc: x, do: v, env-paths: {PUB_CACHE: .cache/pub}}\n',
+                ).tasks['a']!,
+              )
+              .single;
+      expect(body.environment['PUB_CACHE'], r'C:\repo\.cache\pub');
+    });
+
     test('on Windows `env:` replaces a variable spelled in another case', () {
       // The child is handed this map and nothing else, so two spellings of one
       // variable would reach it as two, and which one it reads is the

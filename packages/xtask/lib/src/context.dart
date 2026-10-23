@@ -74,8 +74,8 @@ final class VerbContext {
   final List<String> args;
 
   /// The environment the body would see: this machine's, without what the
-  /// task's `env-unset:` names, with its own `env:` applied over it — and
-  /// winning where both name the same variable.
+  /// task's `env-unset:` names, with its own `env:` and `env-paths:` applied
+  /// over it — and winning where both name the same variable.
   ///
   /// **Not the task's `env:` on its own**, which is what the name suggests and
   /// what this doc comment said until somebody read it beside the code. A verb

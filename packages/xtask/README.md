@@ -151,7 +151,7 @@ Future<int> regen(VerbContext context) async {
   // context.args     `args:` with `$all` expanded, then anything
   //                  the command line passed after `--`
   // context.env      this machine's environment, without `env-unset:`,
-  //                  with `env:` winning a clash
+  //                  with `env:` and `env-paths:` winning a clash
   // context.root     the repository root, absolute — what a set's members
   //                  and `in:` are relative to
   // context.file('packages/a/x.dart'), context.directory(...)
@@ -845,6 +845,7 @@ handled the same way, and a process is ended at once rather than asked.
 | `env` | environment for this task only |
 | `env-required` | variables that must already be set, checked before the body runs |
 | `env-unset` | variables the body must not see — removed, not emptied |
+| `env-paths` | variables whose values are paths from the root — the body gets them absolute |
 | `needs` | direct requirements, run before this task, once per invocation |
 | `then` | continuations, run **after** this task's body |
 | `gate` | the gate sets this task belongs to |
@@ -957,12 +958,13 @@ secret-env: [SIGNING_KEY, PUB_TOKEN]
 
 Their values are printed as `***` in everything the engine itself writes.
 The values are the ones this run has: what the machine holds under the name,
-and what any task's `env:` sets it to. The key is at the top level and not on
+and what any task's `env:` or `env-paths:` sets it to — the latter as the
+absolute path the body is given. The key is at the top level and not on
 a task, because the output is one stream: a token one task declared and
 another printed is printed all the same, and a list per task would hide it in
 the lines of the task that remembered to say so. A task's `env-unset:` keeps
 the variable from that body, and the value stays a secret wherever else it
-turns up. A secret's `env:` value cannot be made from `$each`, because a
+turns up. A secret's `env:` or `env-paths:` value cannot be made from `$each`, because a
 member is a name every line about the task prints.
 
 On GitHub Actions, a run or a dry run first writes `::add-mask::` for each
@@ -1044,7 +1046,37 @@ whatever its case, as Windows matches it, so `env-unset: [Path]` removes the
 `PATH` the machine has. A name the same task's `env:` sets is refused when the
 file is read — the file says both — and compared without case on every host,
 because a file that validated here and contradicted itself on the Windows
-runner would be the one checked in. `do:`
+runner would be the one checked in.
+
+`env-paths:` is for the value that is a path in the repository — a cache, a
+config, a binary a task built:
+
+```yaml
+tasks:
+  hooks:
+    desc: Run the hook suite against the built tool
+    in: packages/hooks
+    env-paths:
+      TOOL_BIN: packages/cli/build/bundle/bin/tool
+      PUB_CACHE: .dart_tool/pub-cache
+    run: [bash, hooks/run.sh]
+```
+
+Written in `env:`, `packages/cli/build/…` is text, and the program reads it
+from wherever it runs: from `packages/hooks` here, from wherever a script
+`cd`s next. In `env-paths:` it is a path from the root, as `in:` is, and the
+body is handed the root joined to it — absolute, normalised (`./a//b/` is
+`a/b`), and in this machine's separators, so on Windows it is
+`C:\repo\packages\cli\…`. `--dry-run` prints the value the body gets,
+`env  TOOL_BIN=/home/you/repo/packages/…`. Its own key rather than a guess about
+which `env:` values look like paths, and no `${root}` to write inside a
+string: a value is a path from the root or it is text. Nothing absolute and no
+`..` — a path that leaves the root is refused when the file is read, as `in:`
+is. `$each` may end one, as it ends `in:` — `build/$each` — and a member of a
+`values:` set that takes it out of the root is refused by `--validate` and by
+the run. A name the same task's `env:` sets, or its `env-unset:` removes, is
+refused, compared without case. A name in `secret-env:` is masked in the form
+the body gets it. `do:`
 names a verb the project wrote in Dart and handed to `runXtask`, and
 `all:` hands it the expanded set, wherever `$all` is written.
 

@@ -262,6 +262,18 @@
             },
             "description": "Variables the body must not see, whatever this machine has set — removed, not emptied. A name the same task's `env:` sets is refused, compared without case: Windows reads `Path` and `PATH` as one variable, and there a name is removed whatever its case."
           },
+          "env-paths": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\r\\n=]*\\S[^\\r\\n=]*$"
+            },
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Variables whose values are paths from the repository root: the body gets the root joined to each, absolute, normalised and in its machine's separators, whatever `in:` says. Nothing absolute and no `..`. `$each` may end one, as in `in:`. A name `env:` or `env-unset:` of the same task also holds is refused, compared without case."
+          },
           "needs": {
             "type": "array",
             "items": {

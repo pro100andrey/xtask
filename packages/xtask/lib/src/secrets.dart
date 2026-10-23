@@ -20,6 +20,7 @@ import 'dart:io' show File, FileSystemException;
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
+import 'boundary.dart' show envPathUnderRoot, leavesRoot;
 import 'markers.dart' show workflowEscaped;
 import 'model.dart' show eachMarker;
 import 'readable.dart' show withoutByteOrderMark;
@@ -147,7 +148,12 @@ Secrets readSecrets(
   } on FileSystemException {
     return Secrets.none;
   }
-  return secretsIn(loadDocument(text), environment, windows: windows);
+  return secretsIn(
+    loadDocument(text),
+    environment,
+    windows: windows,
+    root: root,
+  );
 }
 
 /// The values the names in [document]'s `secret-env:` have in this run.
@@ -162,10 +168,16 @@ Secrets readSecrets(
 /// A name is matched whatever its case on Windows, as Windows matches it. A
 /// value made from `$each` is a member's name, which the parser refuses; it
 /// is passed over here, where the file has not been parsed.
+///
+/// An `env-paths:` value is masked as the body is given it — under [root],
+/// built by the resolver's own function — because that is the form every line
+/// prints; the written form is only its end. Without a [root] there is no
+/// such form, and one that leaves the root is the parser's to refuse.
 Secrets secretsIn(
   Object? document,
   Map<String, String> environment, {
   required bool windows,
+  String? root,
 }) {
   if (document is! Map) {
     return Secrets.none;
@@ -194,5 +206,18 @@ Secrets secretsIn(
                 value is String &&
                 !value.endsWith(eachMarker))
               value,
+    if ((document['tasks'], root) case (
+      final Map<Object?, Object?> tasks,
+      final root?,
+    ))
+      for (final task in tasks.values)
+        if (task case {'env-paths': final Map<Object?, Object?> paths})
+          for (final MapEntry(:key, :value) in paths.entries)
+            if (key is String &&
+                names.contains(folded(key)) &&
+                value is String &&
+                !value.endsWith(eachMarker) &&
+                !leavesRoot(value))
+              envPathUnderRoot(root, value, windows: windows),
   ]);
 }

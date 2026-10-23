@@ -26,6 +26,7 @@ const taskKeys = <String>{
   'env',
   'env-required',
   'env-unset',
+  'env-paths',
   'needs',
   'then',
   'gate',
@@ -304,6 +305,7 @@ final class Task with Located {
     this.env = const {},
     this.envRequired = const [],
     this.envUnset = const [],
+    this.envPaths = const {},
     this.needs = const [],
     this.then = const [],
     this.gate = const [],
@@ -365,6 +367,19 @@ final class Task with Located {
   /// may also hold — whatever its case, because Windows reads `Path` and
   /// `PATH` as one variable and the file is the same file there.
   final List<String> envUnset;
+
+  /// Variables whose values are paths from the repository root, as written.
+  ///
+  /// **Their own key, not a reading of `env:`.** A value in `env:` is text and
+  /// is handed over as text: the program reading `.cache/pub` reads it from
+  /// wherever it runs, which `in:` moves and the person's shell does not. A
+  /// path here is the file's, written from where the file is, so the body is
+  /// handed the root joined to it — absolute, normalised, in this machine's
+  /// separators. Guessing which `env:` values are paths would be the guessing
+  /// this file exists to remove. Nothing that leaves the root, as with `in:`;
+  /// no name `env:` or `env-unset:` of the same task also holds, whatever its
+  /// case.
+  final Map<String, String> envPaths;
 
   /// Direct requirements only — transitive is the graph's business (a task's
   /// keys).

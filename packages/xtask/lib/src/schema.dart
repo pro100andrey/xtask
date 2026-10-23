@@ -373,6 +373,18 @@ const _taskKeys = <String, Map<String, Object?>>{
         'refused, compared without case: Windows reads `Path` and `PATH` as '
         'one variable, and there a name is removed whatever its case.',
   },
+  'env-paths': {
+    'type': 'object',
+    'propertyNames': _envName,
+    'additionalProperties': {'type': 'string'},
+    'description':
+        'Variables whose values are paths from the repository root: the body '
+        'gets the root joined to each, absolute, normalised and in its '
+        "machine's separators, whatever `in:` says. Nothing absolute and no "
+        r'`..`. `$each` may end one, as in `in:`. A name `env:` or '
+        '`env-unset:` of the same task also holds is refused, compared '
+        'without case.',
+  },
   'exclusive': {
     ..._nameList,
     'description':

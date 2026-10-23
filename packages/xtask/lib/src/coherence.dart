@@ -51,6 +51,7 @@ List<XtaskFormatException> incoherences(
   ..._eachMarker(task),
   ..._markerInAName(task),
   ..._setAndUnset(task, keySpan),
+  ..._setTwice(task, keySpan),
   ..._bodyCannotHonourIt(task, keySpan),
 ];
 
@@ -70,15 +71,44 @@ Iterable<XtaskFormatException> _setAndUnset(
   Task task,
   SourceSpan? Function(String key)? keySpan,
 ) sync* {
-  final set = {for (final name in task.env.keys) name.toUpperCase()};
+  // `env-paths:` sets a variable as `env:` does, and is the same
+  // contradiction beside `env-unset:`.
+  final set = {
+    for (final name in [...task.env.keys, ...task.envPaths.keys])
+      name.toUpperCase(),
+  };
   for (final name in task.envUnset) {
     if (set.contains(name.toUpperCase())) {
       yield XtaskFormatException(
-        'task `${task.name}` both sets and removes `$name` — `env:` gives it '
-        'a value and `env-unset:` takes it away, and which one the body gets '
+        'task `${task.name}` both sets and removes `$name` — `env:` or '
+        '`env-paths:` gives it a value and `env-unset:` takes it away, and '
+        'which one the body gets '
         'would be the order they were applied in. Keep one (names are '
         'compared without case, because Windows reads them that way)',
         keySpan?.call('env-unset') ?? task.span,
+      );
+    }
+  }
+}
+
+/// A variable a task's `env:` and its `env-paths:` both set.
+///
+/// **Refused rather than ordered**, as [_setAndUnset] refuses its pair: one
+/// value is text and the other a path from the root, and which the body gets
+/// would be the order the two maps were laid down in. Compared without case,
+/// for that function's reason.
+Iterable<XtaskFormatException> _setTwice(
+  Task task,
+  SourceSpan? Function(String key)? keySpan,
+) sync* {
+  final set = {for (final name in task.env.keys) name.toUpperCase()};
+  for (final name in task.envPaths.keys) {
+    if (set.contains(name.toUpperCase())) {
+      yield XtaskFormatException(
+        'task `${task.name}` sets `$name` twice — in `env:` as text and in '
+        '`env-paths:` as a path from the root. Keep one (names are compared '
+        'without case, because Windows reads them that way)',
+        keySpan?.call('env-paths') ?? task.span,
       );
     }
   }
@@ -138,13 +168,14 @@ Iterable<XtaskFormatException> _bodyCannotHonourIt(
 /// A marker written where nothing stands for it.
 ///
 /// `exclusive:`, `env-required:`, `env-unset:`, `needs:`, `then:`, `gate:` and
-/// the KEYS of `env:` hold names, and a name is looked for as written: a token
-/// is taken when the walk admits a task, before its set has been read, so there
-/// is no member yet for `$each` to stand for; a variable, a task or a gate set
-/// called `$each` is one nobody has. Neither refused nor expanded is the one
-/// combination that says nothing — `exclusive: [lock-$each]` validated clean
-/// and made every member hold the same token, and `env: {$each: '1'}` set a
-/// variable literally called `$each` once per member.
+/// the KEYS of `env:` and `env-paths:` hold names, and a name is looked for as
+/// written: a token is taken when the walk admits a task, before its set has
+/// been read, so there is no member yet for `$each` to stand for; a variable, a
+/// task or a gate set called `$each` is one nobody has. Neither refused nor
+/// expanded is the one combination that says nothing — `exclusive:
+/// [lock-$each]` validated clean and made every member hold the same token,
+/// and `env: {$each: '1'}` set a variable literally called `$each` once per
+/// member.
 Iterable<XtaskFormatException> _markerInAName(Task task) sync* {
   for (final (key, names) in [
     ('exclusive', task.exclusive),
@@ -156,6 +187,7 @@ Iterable<XtaskFormatException> _markerInAName(Task task) sync* {
     // The keys, not the values: a value is text handed to the child and a
     // marker in one is a substitution like any other.
     ('env', task.env.keys.toList()),
+    ('env-paths', task.envPaths.keys.toList()),
   ]) {
     final written = names.where(
       (name) => _bareMarker.hasMatch(name) || _bareEach.hasMatch(name),
@@ -198,6 +230,8 @@ Iterable<XtaskFormatException> _eachMarker(Task task) sync* {
     ...argv.skip(1),
     ...task.args,
     ...task.env.values,
+    // A path from the root composed around a member, as `in:` is.
+    ...task.envPaths.values,
     ?task.workingDirectory,
   ];
   // **Every occurrence but a trailing one.** `endsWith` alone looked only at
@@ -284,9 +318,14 @@ Iterable<XtaskFormatException> _allMarker(Task task) sync* {
     );
   }
 
-  final oneThing = [?task.workingDirectory, ...task.env.values].where(
-    _bareMarker.hasMatch,
-  );
+  final oneThing =
+      [
+        ?task.workingDirectory,
+        ...task.env.values,
+        ...task.envPaths.values,
+      ].where(
+        _bareMarker.hasMatch,
+      );
   if (oneThing.isNotEmpty) {
     final where = oneThing.first;
     // Neither refused nor substituted before, so the body ran in a directory

@@ -282,6 +282,7 @@ Task _task(
     each: _optionalString(map, 'each', name),
     workingDirectory: _optionalString(map, 'in', name),
     env: Map.unmodifiable(_env(map, name, secrets)),
+    envPaths: Map.unmodifiable(_env(map, name, secrets, key: 'env-paths')),
     envRequired: List.unmodifiable(
       _optionalStringList(map, 'env-required', name),
     ),
@@ -516,28 +517,37 @@ String _nonEmpty(String value, YamlNode node, String what) {
   throw XtaskFormatException('$what is empty', node.span);
 }
 
+/// The map under [key] — `env:` or `env-paths:`, which hold the same names and
+/// the same text, read by one function so that the two cannot disagree about
+/// either.
+///
+/// A value of `env-paths:` is a path from the root besides, and one that
+/// leaves it is refused here, where the file is read: what it names is known
+/// before anything runs, and a run that found out only on reaching the task
+/// would have run everything before it first.
 Map<String, String> _env(
   YamlMap map,
   String taskName,
-  Set<String> secrets,
-) {
-  final node = map.nodes['env'];
+  Set<String> secrets, {
+  String key = 'env',
+}) {
+  final node = map.nodes[key];
   if (node == null) {
     return const {};
   }
 
-  final envMap = _asMap(node, '`env:` of task `$taskName`');
+  final envMap = _asMap(node, '`$key:` of task `$taskName`');
   final env = <String, String>{};
-  for (final key in _keyNodes(envMap)) {
-    final name = _name(key, 'an environment variable name');
+  for (final keyNode in _keyNodes(envMap)) {
+    final name = _name(keyNode, 'an environment variable name');
     if (name.contains('=')) {
       // `=` is what separates a name from its value in the environment the
       // child is handed, so a name holding one reaches it as `A=B=x`.
       throw XtaskFormatException(
-        '`$name` in `env:` of task `$taskName` has an `=` in it, and an '
+        '`$name` in `$key:` of task `$taskName` has an `=` in it, and an '
         'environment variable name cannot: it is what separates the name '
         'from the value',
-        key.span,
+        keyNode.span,
       );
     }
     final valueNode = envMap.nodes[name]!;
@@ -549,7 +559,7 @@ Map<String, String> _env(
       // gone. Refusing costs a pair of quotes; coercing costs a wrong value
       // that looks right.
       throw XtaskFormatException(
-        '`$name` in `env:` of task `$taskName` is not a string — quote it. '
+        '`$name` in `$key:` of task `$taskName` is not a string — quote it. '
         'An environment variable is text, and YAML reads an unquoted `1.10` '
         'as the number 1.1, which is not what was written',
         valueNode.span,
@@ -561,10 +571,16 @@ Map<String, String> _env(
       // that passes here and means one variable on the Windows runner is
       // the one that gets checked in.
       throw XtaskFormatException(
-        '`$name` in `env:` of task `$taskName` is in `secret-env:`, and its '
+        '`$name` in `$key:` of task `$taskName` is in `secret-env:`, and its '
         'value is made from `$eachMarker` — a member, which every line about '
         'the task prints. A secret that differs per member belongs in the '
         "environment the run is given, or in a verb's own lookup",
+        valueNode.span,
+      );
+    }
+    if (key == 'env-paths' && leavesRoot(value)) {
+      throw XtaskFormatException(
+        envPathLeavesRoot(task: taskName, name: name, written: value),
         valueNode.span,
       );
     }
