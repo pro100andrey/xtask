@@ -84,6 +84,17 @@ Map<String, Map<String, Object?>> get _topLevel => {
         "this project's verbs — from the root, with `/`. The installed "
         '`xtask` hands a run to it. Leave it out for `bin/xtask.dart`.',
   },
+  'secret-env': {
+    'type': 'array',
+    'items': _envName,
+    'description':
+        'Variables whose values the engine prints as `***` — in `--dry-run`, '
+        'a failure, an annotation, a refusal and the `--report` file — with '
+        "the value this machine has and any a task's `env:` gives it. On "
+        'GitHub Actions each is also handed to `::add-mask::` before a run '
+        'prints anything. A value shorter than 4 characters is not masked. '
+        'What a body prints itself is not filtered.',
+  },
   'gates': {
     'type': 'array',
     'items': _name,

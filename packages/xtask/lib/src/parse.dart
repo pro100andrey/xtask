@@ -59,6 +59,11 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
   _refuseUnknownKeys(root, topLevelKeys, 'top-level key');
 
   final entry = root.nodes['entry'];
+  // Read for its shape and for the one rule that needs the tasks, and not
+  // kept: which values are hidden is `secrets.dart`'s, read from the document
+  // before this function has run — a run is masked from its first line, and
+  // that can be a refusal of this very file.
+  final secrets = _envNames(root, 'secret-env', null).toSet();
   return XtaskFile(
     version: version,
     entry: entry == null ? null : _entry(entry),
@@ -68,7 +73,7 @@ XtaskFile parseXtaskFile(String source, {Uri? sourceUrl}) {
     // — a gate set runs its tasks in the order they appear — and a map anybody
     // downstream can reorder is an order nobody can rely on.
     sets: Map.unmodifiable(_sets(root)),
-    tasks: Map.unmodifiable(_tasks(root)),
+    tasks: Map.unmodifiable(_tasks(root, secrets)),
   );
 }
 
@@ -221,7 +226,7 @@ NamedSet _namedSet(YamlNode node, String name, SourceSpan keySpan) {
   );
 }
 
-Map<String, Task> _tasks(YamlMap root) {
+Map<String, Task> _tasks(YamlMap root, Set<String> secrets) {
   final node = root.nodes['tasks'];
   if (node == null) {
     return const {};
@@ -237,14 +242,19 @@ Map<String, Task> _tasks(YamlMap root) {
   final tasks = <String, Task>{};
   for (final key in _keyNodes(map)) {
     final name = _name(key, 'a task name');
-    tasks[name] = _task(map.nodes[name]!, name, key.span);
+    tasks[name] = _task(map.nodes[name]!, name, key.span, secrets);
   }
   return tasks;
 }
 
 // ── one task ────────────────────────────────────────────────────────────────
 
-Task _task(YamlNode node, String name, SourceSpan keySpan) {
+Task _task(
+  YamlNode node,
+  String name,
+  SourceSpan keySpan,
+  Set<String> secrets,
+) {
   final map = _asMap(node, 'task `$name`');
   _refuseUnknownKeys(map, taskKeys, 'key in task `$name`');
 
@@ -271,7 +281,7 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     all: _optionalString(map, 'all', name),
     each: _optionalString(map, 'each', name),
     workingDirectory: _optionalString(map, 'in', name),
-    env: Map.unmodifiable(_env(map, name)),
+    env: Map.unmodifiable(_env(map, name, secrets)),
     envRequired: List.unmodifiable(
       _optionalStringList(map, 'env-required', name),
     ),
@@ -461,7 +471,11 @@ String _nonEmpty(String value, YamlNode node, String what) {
   throw XtaskFormatException('$what is empty', node.span);
 }
 
-Map<String, String> _env(YamlMap map, String taskName) {
+Map<String, String> _env(
+  YamlMap map,
+  String taskName,
+  Set<String> secrets,
+) {
   final node = map.nodes['env'];
   if (node == null) {
     return const {};
@@ -496,6 +510,19 @@ Map<String, String> _env(YamlMap map, String taskName) {
         valueNode.span,
       );
     }
+    if (value.endsWith(eachMarker) &&
+        secrets.any((s) => s.toUpperCase() == name.toUpperCase())) {
+      // Compared without case, as `env-unset:` against `env:` is: a file
+      // that passes here and means one variable on the Windows runner is
+      // the one that gets checked in.
+      throw XtaskFormatException(
+        '`$name` in `env:` of task `$taskName` is in `secret-env:`, and its '
+        'value is made from `$eachMarker` — a member, which every line about '
+        'the task prints. A secret that differs per member belongs in the '
+        "environment the run is given, or in a verb's own lookup",
+        valueNode.span,
+      );
+    }
     env[name] = value;
   }
   return env;
@@ -508,23 +535,23 @@ Map<String, String> _env(YamlMap map, String taskName) {
 /// one no report can print, and one holding `=` is not a name the environment
 /// can have — and a second set of rules for names in a list would be the
 /// schema and the parser disagreeing about one of them.
-List<String> _envNames(YamlMap map, String key, String taskName) {
+///
+/// [taskName] is the task the list is a key of, or null for the top level.
+List<String> _envNames(YamlMap map, String key, String? taskName) {
   final node = map.nodes[key];
   if (node == null) {
     return const [];
   }
+  final of = taskName == null ? '' : ' of task `$taskName`';
   if (node is! YamlList) {
-    throw XtaskFormatException(
-      '`$key:` of task `$taskName` must be a list',
-      node.span,
-    );
+    throw XtaskFormatException('`$key:`$of must be a list', node.span);
   }
   final names = <String>[];
   for (final entry in node.nodes) {
     final name = _name(entry, 'an environment variable name');
     if (name.contains('=')) {
       throw XtaskFormatException(
-        '`$name` in `$key:` of task `$taskName` has an `=` in it, and an '
+        '`$name` in `$key:`$of has an `=` in it, and an '
         'environment variable name cannot: it is what separates the name '
         'from the value',
         entry.span,

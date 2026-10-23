@@ -4,6 +4,17 @@
 
 ### Added
 
+- `secret-env: [NAMES]`, at the top level, prints the values of those
+  variables as `***` in everything the engine writes: `--dry-run`'s argv and
+  `env` lines, the line a failure reproduces itself with, `::error::`
+  annotations, refusals that quote the command line, the hand-over's own
+  messages and the `--report` file. The values are the run's — what the
+  machine holds under each name and what any task's `env:` sets it to. On
+  GitHub Actions a run or a dry run writes `::add-mask::` for each before its
+  first line. A value shorter than four characters is not masked, and a
+  secret's `env:` value made from `$each` is refused. What a body prints
+  itself is not filtered.
+
 - The installed `xtask` runs a project's verbs: in a repository whose root has
   a `bin/xtask.dart` of its own, it hands the run to it — `dart run
   <package>:xtask` from where you stand, or the file itself from a package

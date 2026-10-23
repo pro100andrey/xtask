@@ -62,7 +62,7 @@ final class GitHubMarkers extends LogMarkers {
   /// fold could still be opened on half a name with the rest printed beside
   /// it as stray output.
   @override
-  List<String> open(String task) => ['::group::${_escaped(task)}'];
+  List<String> open(String task) => ['::group::${workflowEscaped(task)}'];
 
   @override
   List<String> close() => const ['::endgroup::'];
@@ -73,21 +73,25 @@ final class GitHubMarkers extends LogMarkers {
   @override
   List<String> error(String message) => [
     '::endgroup::',
-    '::error::${_escaped(message)}',
+    '::error::${workflowEscaped(message)}',
   ];
-
-  /// GitHub reads a workflow command up to the end of its line, so a newline
-  /// inside one truncates the annotation and prints the rest as plain output.
-  ///
-  /// **`%` first, and the order is the whole rule.** The runner decodes the
-  /// percent escapes it reads back, so leaving `%` alone meant a message that
-  /// already contained `%0A` — a URL-encoded path, a `--name a%0Ab` quoted
-  /// back out of the argv `describe` prints — was decoded into exactly the
-  /// newline this exists to remove, and the annotation stopped there. Escaped
-  /// after the others instead, it would re-escape their own `%` and the reader
-  /// would be shown the text `%0A`.
-  static String _escaped(String message) => message
-      .replaceAll('%', '%25')
-      .replaceAll('\r', '%0D')
-      .replaceAll('\n', '%0A');
 }
+
+/// GitHub reads a workflow command up to the end of its line, so a newline
+/// inside one truncates the annotation and prints the rest as plain output.
+///
+/// **`%` first, and the order is the whole rule.** The runner decodes the
+/// percent escapes it reads back, so leaving `%` alone meant a message that
+/// already contained `%0A` — a URL-encoded path, a `--name a%0Ab` quoted
+/// back out of the argv `describe` prints — was decoded into exactly the
+/// newline this exists to remove, and the annotation stopped there. Escaped
+/// after the others instead, it would re-escape their own `%` and the reader
+/// would be shown the text `%0A`.
+///
+/// Public, because `secrets.dart` masks a value in the form this writes it
+/// in: a secret holding `%` reaches an annotation as `%25`, and a mask that
+/// looked only for the value as written would let it through.
+String workflowEscaped(String message) => message
+    .replaceAll('%', '%25')
+    .replaceAll('\r', '%0D')
+    .replaceAll('\n', '%0A');

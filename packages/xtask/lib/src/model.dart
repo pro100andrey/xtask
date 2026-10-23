@@ -93,7 +93,14 @@ List<String> substituted(
 ];
 
 /// Every key the document may carry at the top level (the top level).
-const topLevelKeys = <String>{'version', 'entry', 'gates', 'sets', 'tasks'};
+const topLevelKeys = <String>{
+  'version',
+  'entry',
+  'secret-env',
+  'gates',
+  'sets',
+  'tasks',
+};
 
 /// Every key a glob set may carry (sets).
 ///

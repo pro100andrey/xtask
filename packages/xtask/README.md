@@ -897,6 +897,50 @@ members are not files there is anything to compare — is refused by `--validate
 and by `--dry-run`, and by a run when it reaches the task, before the body
 starts: a gate that cannot compare must not run the generator and say nothing.
 
+### Secrets
+
+The engine prints values. `--dry-run` prints each task's argv and its `env:`,
+a failure prints the line that reproduces it, an annotation on GitHub carries
+that line, a refusal quotes what was typed, and `--report` writes all of it
+to a file. A signing key handed to a release through `env:` or after `--`
+would be in every one of those places, so the file can name the variables
+whose values must not be:
+
+```yaml
+version: 1
+secret-env: [SIGNING_KEY, PUB_TOKEN]
+```
+
+Their values are printed as `***` in everything the engine itself writes.
+The values are the ones this run has: what the machine holds under the name,
+and what any task's `env:` sets it to. The key is at the top level and not on
+a task, because the output is one stream: a token one task declared and
+another printed is printed all the same, and a list per task would hide it in
+the lines of the task that remembered to say so. A task's `env-unset:` keeps
+the variable from that body, and the value stays a secret wherever else it
+turns up. A secret's `env:` value cannot be made from `$each`, because a
+member is a name every line about the task prints.
+
+On GitHub Actions, a run or a dry run first writes `::add-mask::` for each
+value, before any other line, so that GitHub hides them in the rest of the
+job's log as well. Not ahead of `--gate-members` or `--names`: those are
+answers a program reads, and they print names, not values.
+
+A value shorter than four characters is not masked, here or on GitHub. A
+mask replaces every occurrence, and a secret of one to three characters is a
+word, a number or a flag; masking it would put `***` into counts, paths and
+sentences across the whole log, while hiding nothing that could not be
+guessed anyway.
+
+**What a body prints is not filtered.** A program started by a task writes to
+the terminal itself unless something collects its output, so the engine never
+sees most of what a body says. Filtering the part it does see — output
+collected under `-j`, what a verb logs — would make what is hidden depend on
+how many tasks ran at once, which is worse than a rule that is easy to state.
+On GitHub the `::add-mask::` lines cover a body's output, because GitHub
+masks the log and not the engine. Anywhere else, a body that prints its own
+secret has printed it.
+
 ### A fuller example
 
 The example at the top uses three keys because three is what that repository

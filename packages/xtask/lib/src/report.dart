@@ -783,7 +783,13 @@ String commandLine(String head, List<String> arguments) =>
 /// entirely. This is for **reading** — xtask starts no shell, so there
 /// is no shell for it to be correct for, and it does not claim to be.
 String _quoted(String word) => word.isEmpty || _needsQuotes.hasMatch(word)
-    ? "'${word.replaceAll("'", r"\'")}'"
+    ? "'${quotedInside(word)}'"
     : word;
+
+/// What [word] becomes between the quotes [commandLine] puts around it.
+///
+/// Public for the reason `workflowEscaped` is: `secrets.dart` masks a value
+/// in every form the engine prints it in, and `it's` is printed `it\'s`.
+String quotedInside(String word) => word.replaceAll("'", r"\'");
 
 final _needsQuotes = RegExp(r'''[\s'"]''');

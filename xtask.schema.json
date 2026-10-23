@@ -18,6 +18,15 @@
       "pattern": "^[^\\\\]+\\.dart$",
       "description": "The project's entry point — the Dart file calling `runXtask` with this project's verbs — from the root, with `/`. The installed `xtask` hands a run to it. Leave it out for `bin/xtask.dart`."
     },
+    "secret-env": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^\\r\\n=]*\\S[^\\r\\n=]*$"
+      },
+      "description": "Variables whose values the engine prints as `***` — in `--dry-run`, a failure, an annotation, a refusal and the `--report` file — with the value this machine has and any a task's `env:` gives it. On GitHub Actions each is also handed to `::add-mask::` before a run prints anything. A value shorter than 4 characters is not masked. What a body prints itself is not filtered."
+    },
     "gates": {
       "type": "array",
       "items": {

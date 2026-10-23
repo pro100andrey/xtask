@@ -102,30 +102,54 @@ Admission admits(
 /// prints them when it ends. A task's members collect into the task, and the
 /// task collects into the log; [live] says whether nothing along that way
 /// collects, which is when a child may write to the terminal itself.
+///
+/// **Two kinds of line, kept apart all the way out.** The engine's own go to
+/// [call]; a body's — a program's collected output, what a verb logs or
+/// writes — go to [relay]. They leave by different sinks because the
+/// engine's are masked (`secrets.dart`) and a body's are not: a body that is
+/// not collected writes to the terminal itself, and masking only what
+/// happened to be collected would make what is hidden depend on `-j`.
 final class _Lines {
-  _Lines._(this._out, {required bool collected, required this.live})
-    : _held = collected ? [] : null;
+  _Lines._(
+    this._out,
+    this._relay, {
+    required bool collected,
+    required this.live,
+  }) : _held = collected ? [] : null;
 
-  /// Lines going straight to [out].
-  _Lines.to(void Function(String line) out)
-    : this._(out, collected: false, live: true);
+  /// Lines going straight to [out], a body's to [relay].
+  _Lines.to(
+    void Function(String line) out, {
+    required void Function(String line) relay,
+  }) : this._(out, relay, collected: false, live: true);
 
   final void Function(String line) _out;
-  final List<String>? _held;
+  final void Function(String line) _relay;
+
+  /// What was collected, each line with whether it is a body's.
+  final List<({String line, bool body})>? _held;
 
   /// Whether a line written here reaches the terminal as it is written.
   final bool live;
 
   /// Lines for one unit inside this one.
   _Lines into({required bool collected}) =>
-      _Lines._(call, collected: collected, live: live && !collected);
+      _Lines._(call, relay, collected: collected, live: live && !collected);
 
-  void call(String line) {
+  /// One of the engine's own lines.
+  void call(String line) => _add(line, body: false);
+
+  /// One line of a body's own output.
+  void relay(String line) => _add(line, body: true);
+
+  void _add(String line, {required bool body}) {
     final held = _held;
-    if (held == null) {
-      _out(line);
+    if (held != null) {
+      held.add((line: line, body: body));
+    } else if (body) {
+      _relay(line);
     } else {
-      held.add(line);
+      _out(line);
     }
   }
 
@@ -135,9 +159,10 @@ final class _Lines {
     if (held == null) {
       return;
     }
-    held
-      ..forEach(_out)
-      ..clear();
+    for (final (:line, :body) in held) {
+      (body ? _relay : _out)(line);
+    }
+    held.clear();
   }
 }
 
@@ -194,13 +219,14 @@ final class Executor {
     required this.bodies,
     required this.starter,
     required this.log,
+    void Function(String line)? relay,
     this.markers = const PlainMarkers(),
     this.now = DateTime.now,
     this.keepGoing = false,
     this.concurrency = 1,
     this.reportTo,
     this.interruption,
-  });
+  }) : relay = relay ?? log;
 
   /// What each task comes to on this machine.
   final BodyResolver bodies;
@@ -211,6 +237,15 @@ final class Executor {
   /// grouping, which is only possible if the engine knows where a task starts
   /// and ends — so it writes, rather than letting bodies print around it.
   final void Function(String line) log;
+
+  /// Where a body's own output goes when the engine is the one passing it
+  /// on: collected under `-j`, or what a verb logs and writes.
+  ///
+  /// [log] where nothing says otherwise. Apart from it because [log] is
+  /// masked and this is not — the engine does not filter what a body says,
+  /// and could only ever have filtered the part of it that passed through
+  /// here.
+  final void Function(String line) relay;
 
   /// How this host wants a section of output marked.
   ///
@@ -699,7 +734,7 @@ final class Executor {
     required bool collected,
   }) async {
     final task = step.task;
-    final lines = _Lines.to(log).into(collected: collected);
+    final lines = _Lines.to(log, relay: relay).into(collected: collected);
     final started = now();
     outcomes.started.add(task.name);
     try {
@@ -1125,7 +1160,7 @@ final class Executor {
               : interruption?.reached,
           // A child writes to the terminal itself only where nothing between
           // it and the terminal is collecting.
-          output: lines.live ? null : lines.call,
+          output: lines.live ? null : lines.relay,
         );
     }
   }
@@ -1139,10 +1174,10 @@ final class Executor {
   /// followed by `run(...)` printed the program's output first and the
   /// sentence introducing it last.
   Future<int> _runVerb(ResolvedVerb body, Verb implementation, _Lines lines) {
-    final out = LogSink(lines.call);
+    final out = LogSink(lines.relay);
     void log(String line) {
       out.flush();
-      lines(line);
+      lines.relay(line);
     }
 
     // `Future.sync`, so a verb that throws before it returns a future is
@@ -1177,7 +1212,7 @@ final class Executor {
               environment: body.environment,
               runInShell: runInShell,
               until: interruption?.reached,
-              output: lines.live ? null : lines.call,
+              output: lines.live ? null : lines.relay,
             );
           },
           collect: (argv, {workingDirectory, timeout}) {
@@ -1216,7 +1251,7 @@ final class Executor {
               runInShell: runInShell,
               timeout: timeout,
               until: interruption?.reached,
-              echo: lines.call,
+              echo: lines.relay,
             );
           },
           // From the directory a start given the same `workingDirectory:`

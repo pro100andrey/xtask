@@ -25,6 +25,7 @@ import 'executables.dart';
 import 'exit_codes.dart';
 import 'parse.dart';
 import 'request.dart';
+import 'secrets.dart';
 
 /// The variable a handed-over run carries: how many hand-overs deep it is.
 ///
@@ -201,26 +202,37 @@ String? _entryOf(String root) {
 /// it changes nothing — the run answers `130` either way. A `SIGTERM` is
 /// passed on as it is; an interrupt sent to this process alone reaches the
 /// engine only as that `SIGTERM`, and is answered `143`.
+///
+/// What it says itself is masked as the engine's lines are (`secrets.dart`):
+/// it quotes the command line, which is where a value typed after `--` is.
+/// It says nothing to GitHub: the project's engine does, before its first
+/// line, and a run this one could not start printed nothing to mask.
 Future<int> runProjectEntry(
   ProjectEntry entry, {
   required Map<String, String> environment,
   required void Function(String line) err,
   ExecutableResolver? resolver,
 }) async {
+  final paths = resolver ?? ExecutableResolver.forHost();
+  final secrets = readSecrets(
+    entry.root,
+    environment,
+    windows: paths.windows,
+  );
+  void say(String line) => err(secrets.mask(line));
   final depth = int.tryParse(environment[handOverVariable] ?? '') ?? 0;
   if (depth >= handOverLimit) {
-    err(
+    say(
       'xtask: this run has been handed to a project entry point $depth times '
       'over, which is a loop rather than a run — an entry point at '
       '`${entry.root}` that hands over again instead of calling `runXtask`',
     );
     return ExitCode.invalidFile;
   }
-  final paths = resolver ?? ExecutableResolver.forHost();
   final from = Directory.current.path;
   final dart = paths.resolve('dart', from: from);
   if (dart == null) {
-    err(
+    say(
       'xtask: `${entry.root}` has an entry point of its own, '
       '`${entry.entry}`, where its verbs are, and it takes `dart` to run it. '
       '${paths.missingToolMessage('dart', from: from)}',
@@ -243,11 +255,11 @@ Future<int> runProjectEntry(
         runInShell: shell,
       );
     } on ProcessException catch (failure) {
-      err('xtask: `$dart pub get` could not be started: ${failure.message}');
+      say('xtask: `$dart pub get` could not be started: ${failure.message}');
       return ExitCode.taskFailed;
     }
     if (got.exitCode != ExitCode.success) {
-      err(
+      say(
         'xtask: the entry point `${entry.entry}` is in a package with no '
         'resolution, and `dart pub get` in `$package` exited with '
         '${got.exitCode}:\n${got.stdout}${got.stderr}',
@@ -262,7 +274,7 @@ Future<int> runProjectEntry(
       :final argument,
       :final character,
     )) {
-      err(
+      say(
         'xtask: `$argument` cannot be handed to `$dart`, which is a batch '
         'file: `cmd.exe` would read `$character` in it before the project '
         'does. Run `dart run :xtask` from the root instead',
@@ -284,7 +296,7 @@ Future<int> runProjectEntry(
   } on ProcessException catch (failure) {
     // 1 and not 3, as the engine answers a task that could not be started:
     // the resolver found `dart`, so this is not the proof of absence 3 is.
-    err(
+    say(
       'xtask: `$dart ${entry.arguments.join(' ')}` could not be started: '
       '${failure.message}',
     );

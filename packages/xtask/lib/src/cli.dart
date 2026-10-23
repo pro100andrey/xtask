@@ -31,6 +31,7 @@ import 'primitives.dart';
 import 'report.dart' as report;
 import 'request.dart';
 import 'schema.dart';
+import 'secrets.dart';
 import 'sets.dart';
 import 'validate.dart';
 import 'version.dart';
@@ -78,6 +79,27 @@ Future<int> runCli(
   Interruption? interruption,
 }) {
   final request = parseArguments(args);
+
+  // **Masked here, at the two sinks, and nowhere else** — see `secrets.dart`.
+  // Read before the request is answered, since its first line may be a
+  // refusal of the command line, quoting it.
+  final secrets = switch (findRoot(workingDirectory)) {
+    final root? => readSecrets(root, environment, windows: resolver.windows),
+    null => Secrets.none,
+  };
+  void shown(String line) => out(secrets.mask(line));
+  void said(String line) => err(secrets.mask(line));
+
+  // **Before a run's first line**, so that GitHub masks the bodies' output
+  // too, which the engine does not filter. Only ahead of a run or a dry run:
+  // `--gate-members` and `--names` are answers a program reads, and a line in
+  // front of them would be a gate set called `::add-mask::…`. Nothing they
+  // print is a value.
+  if ((request is RunTask || request is DryRunTask) &&
+      LogMarkers.forHost(environment) is GitHubMarkers) {
+    secrets.addMasks.forEach(out);
+  }
+
   Future<int> answer(
     void Function(String line) err, {
     void Function(report.RunSoFar run)? reportTo,
@@ -85,7 +107,8 @@ Future<int> runCli(
     request,
     workingDirectory: workingDirectory,
     environment: environment,
-    out: out,
+    out: shown,
+    relay: out,
     err: err,
     resolver: resolver,
     starter: starter,
@@ -99,11 +122,12 @@ Future<int> runCli(
       task,
       path,
       workingDirectory: workingDirectory,
-      err: err,
+      secrets: secrets,
+      err: said,
       answer: (err, reportTo) => answer(err, reportTo: reportTo),
     );
   }
-  return answer(err);
+  return answer(said);
 }
 
 /// A run with `--report`: the run as [answer] gives it, written to [path]
@@ -118,10 +142,14 @@ Future<int> runCli(
 ///
 /// What the run says on [err] is the refusal the report carries: in a run,
 /// only what refused it goes there.
+///
+/// Every string in it is masked by [secrets] before it is encoded: what a
+/// task failed with is the reproduction line, argv and all.
 Future<int> _reporting(
   String task,
   String path, {
   required String workingDirectory,
+  required Secrets secrets,
   required void Function(String line) err,
   required Future<int> Function(
     void Function(String line) err,
@@ -141,7 +169,8 @@ Future<int> _reporting(
     file.parent.createSync(recursive: true);
     part
       ..writeAsStringSync(
-        '${const JsonEncoder.withIndent('  ').convert(json)}\n',
+        '${const JsonEncoder.withIndent('  ').convert(secrets.maskJson(json))}'
+        '\n',
       )
       ..renameSync(file.path);
   }
@@ -192,11 +221,15 @@ Future<int> _reporting(
 }
 
 /// [request] answered, with the code the table gives it.
+///
+/// [out] and [err] are masked; [relay] is [out] as it is, for the output of
+/// a body the engine passes on.
 Future<int> _answer(
   Request request, {
   required String workingDirectory,
   required Map<String, String> environment,
   required void Function(String line) out,
+  required void Function(String line) relay,
   required void Function(String line) err,
   required ExecutableResolver resolver,
   required ProcessStarter starter,
@@ -437,6 +470,7 @@ Future<int> _answer(
           bodies: bodiesFor(task, arguments, only),
           starter: starter,
           log: out,
+          relay: relay,
           markers: LogMarkers.forHost(environment),
           keepGoing: keepGoing,
           concurrency: concurrency,
