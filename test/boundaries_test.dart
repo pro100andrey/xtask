@@ -56,7 +56,16 @@ void main() {
     // second place that decides what to say — and it is why the flush sits
     // with the starter that hands it over rather than with the walk that
     // asked for a process.
-    const allowed = {'lib/xtask.dart', 'lib/src/process.dart'};
+    //
+    // `bin/xtask.dart` is the installed entry point, and hands `stderr` to the
+    // hand-over to a project's own entry (`project_entry.dart`) for its one
+    // refusal, as `lib/xtask.dart` hands it to the engine: the terminal is
+    // still chosen in exactly the places a process starts.
+    const allowed = {
+      'lib/xtask.dart',
+      'lib/src/process.dart',
+      'bin/xtask.dart',
+    };
     final writers = {
       for (final MapEntry(key: file, value: source) in sources.entries)
         // Handed over as well as called on: `_writing(stdout)` reaches for

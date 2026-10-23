@@ -183,15 +183,32 @@ was optional.
 `dart install xtask` puts a real `xtask` on the PATH, compiled, and for a
 repository whose tasks are all `run:` that is the pleasant way to work.
 
-It stops working the moment a project registers a **verb**, and that is the
-design rather than a limitation. What gets installed is this package's own
-entry point, and it passes no verbs, because it cannot know yours: `do: notify`
-then meets *"the engine ships no project verbs"*, correctly, since the `notify`
-the file means is a Dart function in your repository and not in the tool. That
-is why the entry point belongs to the project — a global install is the engine,
-and `dart run :xtask` is the engine plus what you wrote. The second thing is
-also pinned by your `pubspec.yaml`, where a globally installed tool is a version
-of its own that no repository can see.
+A project that registers a **verb** has its own `bin/xtask.dart`, and that is
+where the verb is: what gets installed is this package's entry point, which
+cannot contain a Dart function of your repository. So the installed `xtask`
+looks for one. Where the directory holding `xtask.yaml` has a `bin/xtask.dart`,
+it hands the whole run to it and answers with its exit code — `xtask install`
+then means exactly what `dart run :xtask install` means, verbs, pinned version
+and all. It starts the project's entry where you are standing, so relative
+paths on the command line keep meaning what they meant:
+
+- `dart run <package>:xtask`, when the package resolution nearest to you has
+  the root's package in it — from the root or any package of its workspace. It
+  costs what `dart run :xtask` costs, about a third of a second, on top of
+  the installed binary's start.
+- `dart run <root>/bin/xtask.dart`, from a package below the root that
+  resolves its own packages. Correct, and slower: a file is compiled every
+  time.
+- `dart run :xtask` in the root, when the root has never been resolved, so
+  that `dart run` resolves it first.
+
+Two requests are not handed over: `--completion`, and `--names`, which a
+completion script asks on every TAB and which needs nothing but the file. A
+run already handed over for a root carries `XTASK_ENTRY` set to it and is
+answered by the engine there, so the hand-over cannot loop. Without `dart` on
+`PATH` the installed `xtask` says so and answers `3`. In this package's own
+repository there is nothing to hand over to: its `bin/xtask.dart` is the
+installed one.
 
 `dart run` pays the JIT's start-up — around half a second, every invocation. It
 is nothing against a gate that spends seconds inside a test runner, and it is

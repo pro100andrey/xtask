@@ -304,7 +304,7 @@ bool _existsOnWindows(String path) =>
 /// `%` among them: `%PATH%` in an argument reaches a batch file as whatever
 /// this machine's `PATH` is, expanded on the command line before the file
 /// sees it.
-const _cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"', '%'};
+const cmdMetacharacters = {'&', '|', '<', '>', '^', '(', ')', '"', '%'};
 
 /// Refuses an argument the shell would reinterpret, when the shell is
 /// unavoidable — the batch-shim rule.
@@ -324,7 +324,7 @@ void refuseShellMetacharacters(
   List<String> arguments,
 ) {
   for (final argument in arguments) {
-    for (final character in _cmdMetacharacters) {
+    for (final character in cmdMetacharacters) {
       if (!argument.contains(character)) {
         continue;
       }
