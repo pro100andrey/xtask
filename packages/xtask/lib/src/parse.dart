@@ -191,12 +191,18 @@ NamedSet _namedSet(YamlNode node, String name, SourceSpan keySpan) {
       );
     }
     final exclude = node.nodes['exclude'];
+    final containing = node.nodes['containing'];
     final producer = node.nodes['produced-by'];
     return GlobSet(
       include: _members(include, '`include:` of set `$name`'),
       exclude: exclude == null
           ? const []
           : _stringList(exclude, '`exclude:` of set `$name`'),
+      // Written empty, it would keep every member — which is what leaving it
+      // out says, so the second spelling is refused at its own line.
+      containing: containing == null
+          ? const []
+          : _members(containing, '`containing:` of set `$name`'),
       producedBy: producer == null
           ? null
           : _nonEmpty(

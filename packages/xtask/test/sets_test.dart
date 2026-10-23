@@ -387,6 +387,70 @@ void main() {
     });
   });
 
+  group('a glob set with `containing:`', () {
+    List<String> expandContaining(List<String> include, List<String> holds) =>
+        expander().expand(
+          's',
+          GlobSet(include: include, exclude: const [], containing: holds),
+        );
+
+    test('keeps only the members that hold every path', () {
+      // A package with no `test/` is the case this is for: `dart test` in it
+      // fails, and the set is what decides where it runs.
+      given([
+        'packages/both/pubspec.yaml',
+        'packages/both/test/a_test.dart',
+        'packages/no_tests/pubspec.yaml',
+        'packages/no_pubspec/test/a_test.dart',
+      ]);
+      expect(expandContaining(['packages/*'], ['pubspec.yaml', 'test']), [
+        'packages/both',
+      ]);
+    });
+
+    test('reads a path with a separator as a path under the member', () {
+      given(['a/tool/x.dart', 'b/x.dart']);
+      expect(expandContaining(['*'], ['tool/x.dart']), ['a']);
+    });
+
+    test('drops a member that is a file, which holds nothing', () {
+      given(['a/pubspec.yaml', 'pubspec.yaml']);
+      expect(expandContaining(['*'], ['pubspec.yaml']), ['a']);
+    });
+
+    test('left empty by it, the set is refused and says why', () {
+      given(['packages/a/pubspec.yaml']);
+      expect(
+        refusalOf(() => expandContaining(['packages/*'], ['test'])),
+        allOf(
+          contains('set `s` is empty'),
+          contains('none of them holds `test`'),
+        ),
+      );
+    });
+
+    test('a path that leaves the member is refused', () {
+      // `../x` from `packages/a` is `packages/x`: a question about a sibling,
+      // and from a member at the root, about a place outside the repository.
+      given(['packages/a/pubspec.yaml']);
+      for (final path in ['../x', '/etc', 'a/../../x']) {
+        expect(
+          refusalOf(() => expandContaining(['packages/*'], [path])),
+          contains('`containing: [$path]`'),
+          reason: path,
+        );
+      }
+    });
+
+    test('an empty path is refused rather than held by everything', () {
+      given(['packages/a/pubspec.yaml']);
+      expect(
+        refusalOf(() => expandContaining(['packages/*'], [''])),
+        contains('empty'),
+      );
+    });
+  });
+
   group('an expansion that finds nothing', () {
     test('is refused, not answered with an empty list', () {
       given(['lib/a.dart']);

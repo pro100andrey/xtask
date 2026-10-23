@@ -53,6 +53,9 @@ final class SetExpander {
   /// model's own list, which in a gate set is the list the next task sharing
   /// the set receives.
   List<String> expand(String name, NamedSet set) {
+    // What the patterns found before `containing:` filtered it, kept so that
+    // a set the filter emptied is not reported as patterns matching nothing.
+    List<String>? matched;
     final members = switch (set) {
       // Each member is asked the boundary question the glob arm asks, so the
       // two arms cannot disagree about `['/etc', '../..']`.
@@ -69,9 +72,9 @@ final class SetExpander {
       // drive, and it has no meaning at all about `dev` or `stable`. A set
       // that says what it holds is asked the right questions.
       ValueSet(:final values) => values,
-      GlobSet() => _matches(name, set),
+      GlobSet() => _held(name, set, matched = _matches(name, set)),
     };
-    _refuseEmpty(name, set, members);
+    _refuseEmpty(name, set, members, matched: matched?.length ?? 0);
     return List.unmodifiable(members);
   }
 
@@ -132,6 +135,67 @@ final class SetExpander {
 
     walk(Directory(root), '');
     return found..sort();
+  }
+
+  /// The members of [found] that hold every one of [GlobSet.containing].
+  ///
+  /// After the walk rather than inside it: the question is asked of a member,
+  /// and a member is only known once the patterns have matched it. A file
+  /// holds nothing, so a set of files filtered this way keeps none of them.
+  ///
+  /// The paths are checked whatever the walk found, so a path that leaves the
+  /// member is refused by `--validate` too, even where no member was found to
+  /// ask it of.
+  List<String> _held(String name, GlobSet set, List<String> found) {
+    if (set.containing.isEmpty) {
+      return found;
+    }
+    for (final path in set.containing) {
+      _refuseOutsideMember(name, set, path);
+    }
+    return [
+      for (final member in found)
+        if (set.containing.every((path) => _holds(member, path))) member,
+    ];
+  }
+
+  /// Whether [member] has something at [path], of whatever kind.
+  ///
+  /// A link counts as what is there, not as what it points at: the walk does
+  /// not follow one either, and a link to a directory elsewhere is not this
+  /// member holding it.
+  bool _holds(String member, String path) =>
+      FileSystemEntity.typeSync(
+        p.joinAll([root, ...p.posix.split(member), ...p.posix.split(path)]),
+        followLinks: false,
+      ) !=
+      FileSystemEntityType.notFound;
+
+  /// [path] from `containing:`, refused unless it names something inside a
+  /// member.
+  ///
+  /// The member's own boundary rather than the root's: `../x` from
+  /// `packages/a` stays in the repository and still asks about a sibling,
+  /// which is a question this key does not ask. An empty path, or `.`, names
+  /// the member itself and so is held by every one — a filter that keeps
+  /// everything, written as though it kept something.
+  void _refuseOutsideMember(String name, GlobSet set, String path) {
+    if (leavesRoot(path)) {
+      throw XtaskFormatException(
+        'set `$name` has `containing: [$path]`, which is not a path inside a '
+        'member. It is read from each member the patterns found, and cannot '
+        'be absolute or climb through `..`',
+        set.span,
+      );
+    }
+    if (p.posix.normalize(path) == '.') {
+      throw XtaskFormatException(
+        'set `$name` has an empty path in `containing:`. It names the member '
+        'itself, which every member holds, so it keeps everything; leave it '
+        'out',
+        set.span,
+      );
+    }
   }
 
   /// What [directory] holds, sorted, or nothing if it has gone away.
@@ -257,13 +321,28 @@ final class SetExpander {
   /// reproduced by a new route. A pattern matches nothing for two reasons, the
   /// repository genuinely having none and the pattern being broken, and in a
   /// gate the second is the dangerous one.
-  void _refuseEmpty(String name, NamedSet set, List<String> members) {
+  ///
+  /// [matched] is how many members the patterns found before `containing:`
+  /// took them away, so that the refusal blames the filter rather than
+  /// patterns that worked.
+  void _refuseEmpty(
+    String name,
+    NamedSet set,
+    List<String> members, {
+    required int matched,
+  }) {
     if (members.isNotEmpty) {
       return;
     }
     final detail = switch (set) {
       ListSet() => 'it is written with no members',
       ValueSet() => 'its `values:` are written with no members',
+      // The patterns matched and `containing:` took every member away: the
+      // filter is what to look at, and blaming the patterns would send the
+      // reader to the one part of the set that worked.
+      GlobSet(:final include, :final containing) when matched > 0 =>
+        '${_quoted(include)} matches $matched, and none of them holds '
+            '${_quoted(containing)}',
       // Blames the exclusion only when there was something for it to remove;
       // otherwise it points at a pattern that matched nothing, which is the
       // typo actually worth reporting.

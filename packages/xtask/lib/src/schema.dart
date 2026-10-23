@@ -210,6 +210,16 @@ const _globSet = <String, Map<String, Object?>>{
     'items': {'type': 'string'},
     'description': 'Patterns removed from what `include:` matched.',
   },
+  'containing': {
+    'type': 'array',
+    'items': {'type': 'string', 'minLength': 1},
+    'minItems': 1,
+    'description':
+        'Paths, relative to a member, that a member must hold to stay one — '
+        '`[pubspec.yaml]`, `[test]`. Paths only, never patterns, and never a '
+        'question about what a file says. A set this leaves empty is refused '
+        'as any empty set is.',
+  },
 };
 
 /// A task, a task's keys.

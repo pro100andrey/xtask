@@ -29,6 +29,15 @@ sets:
   packages:
     include: [packages/*]
 
+  # The same directories, less any that has no suite yet: `dart test` in a
+  # package without `test/` fails rather than finding nothing to run, and a
+  # new package should not have to grow a placeholder test to be published.
+  # A set of its own rather than `containing:` on `packages`, because
+  # `publishable` asks its question of every package — tests or none.
+  tested:
+    include: [packages/*]
+    containing: [test]
+
 tasks:
   # Order inside the gate is the order written here, and it is the one place
   # ordering is implicit (§4.3). Cheapest first: an unformatted file is one
@@ -53,7 +62,7 @@ tasks:
     # A suite finds this file upwards from there, as the command does.
     desc: run each package's suite
     gate: [check]
-    each: packages
+    each: tested
     in: $each
     run: [dart, test]
 

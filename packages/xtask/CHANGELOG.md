@@ -20,6 +20,13 @@
   no package, and `--check-ci` reads a step running it as `xtask`. An
   absolute path, `..`, `\` or a file that is not `.dart` is refused.
 
+- `containing: [paths]` on a glob set keeps only the members that hold every
+  one of those paths — `include: [packages/*]` with `containing: [test]` is
+  the packages with a suite. Paths, not patterns, and nothing reads what a
+  file says. A path that is absolute or climbs through `..` is refused, by
+  `--validate` too; a set the filter leaves empty is refused as any empty set
+  is, saying that the patterns matched and the filter took them.
+
 ### Changed
 
 - The package lives in `packages/xtask` of a workspace repository, and

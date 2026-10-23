@@ -98,7 +98,12 @@ const topLevelKeys = <String>{'version', 'entry', 'gates', 'sets', 'tasks'};
 /// Here rather than beside the parser for the reason above: `--emit-schema`
 /// projects it into a JSON Schema, and a second spelling of `include` is a
 /// second spelling that an editor would accept and the engine would refuse.
-const globSetKeys = <String>{'include', 'exclude', 'produced-by'};
+const globSetKeys = <String>{
+  'include',
+  'exclude',
+  'containing',
+  'produced-by',
+};
 
 /// Every key a value set may carry (sets).
 const valueSetKeys = <String>{'values'};
@@ -210,12 +215,23 @@ final class GlobSet extends NamedSet {
   const GlobSet({
     required this.include,
     required this.exclude,
+    this.containing = const [],
     this.producedBy,
     super.span,
   });
 
   final List<String> include;
   final List<String> exclude;
+
+  /// Paths, relative to a member, that the member must hold to stay one.
+  /// Empty keeps every member.
+  ///
+  /// **Paths, never a question about what a file says.** `[test]` keeps a
+  /// package with tests; asking what a `pubspec.yaml` declares is a query
+  /// language over manifests, which is what a monorepo tool is and this is
+  /// not. Existence is the one question a path answers the same way on every
+  /// machine without being read.
+  final List<String> containing;
 
   /// The task that makes this set's members, or null when they are simply
   /// there.

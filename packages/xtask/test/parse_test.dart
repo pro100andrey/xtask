@@ -568,6 +568,51 @@ tasks: {}
         contains('unknown key in glob set `s`: `order`'),
       );
     });
+
+    test('`containing:` is read as the paths a member must hold', () {
+      final file = parseXtaskFile('''
+version: 1
+sets:
+  s:
+    include: ['packages/*']
+    containing: [pubspec.yaml, test]
+tasks: {}
+''');
+      final set = file.sets['s']! as GlobSet;
+      expect(set.containing, ['pubspec.yaml', 'test']);
+    });
+
+    test('left out, `containing:` keeps every member', () {
+      final file = parseXtaskFile(
+        "version: 1\nsets:\n  s:\n    include: ['a']\ntasks: {}\n",
+      );
+      expect((file.sets['s']! as GlobSet).containing, isEmpty);
+    });
+
+    test('`containing:` written with nothing in it is refused', () {
+      // It would keep every member, which is what leaving it out says.
+      expect(
+        refusalOf(
+          () => parseXtaskFile(
+            "version: 1\nsets:\n  s:\n    include: ['a']\n"
+            '    containing: []\ntasks: {}\n',
+          ),
+        ),
+        contains('`containing:` of set `s` is written with no members'),
+      );
+    });
+
+    test('`containing:` on a value set is an unknown key', () {
+      expect(
+        refusalOf(
+          () => parseXtaskFile(
+            'version: 1\nsets:\n  s:\n    values: [a]\n'
+            '    containing: [x]\ntasks: {}\n',
+          ),
+        ),
+        contains('unknown key in value set `s`: `containing`'),
+      );
+    });
   });
 
   group('a value that parses and means nothing', () {

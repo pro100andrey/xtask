@@ -857,6 +857,26 @@ readings are counted rather than estimated as `2ⁿ` — they collapse, and
 `a/**/**/b` has three and not four — so the limit turns away what is actually
 expensive and nothing else.
 
+A glob set can keep only the members that hold something. `containing:` is
+a list of paths, read from inside each member the patterns found, and a member
+stays only if every one of them is there:
+
+```yaml
+sets:
+  tested:
+    include: [packages/*]
+    containing: [test]
+```
+
+That is a package with a suite, which is where `dart test` can run — in one
+without `test/` it fails rather than finding nothing. The paths are paths, not
+patterns, and existence is the whole question: nothing asks what a
+`pubspec.yaml` says, because a query over manifests is what a monorepo tool is
+(see [what it deliberately is not](#what-it-deliberately-is-not)). A path is
+refused if it is absolute or climbs through `..`, since it is about the member
+and not its siblings. A set the filter leaves empty is refused like any other,
+and the refusal says the patterns matched and the filter took them.
+
 `values:` is a declaration, not decoration. Every other kind of set holds
 paths, and the engine treats them as paths — it refuses one that reaches
 outside the repository, and it can say a glob matched nothing. Neither

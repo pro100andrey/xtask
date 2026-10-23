@@ -310,6 +310,25 @@ void main() {
       expect(report.toString(), contains('reaches outside the repository'));
     });
 
+    test(
+      'and a `containing:` path that leaves the member is still refused',
+      () {
+        // Nothing is made yet, so no member exists to ask it of — and the path
+        // is wrong regardless of what the producer makes.
+        final report = check(
+          'version: 1\n'
+          "sets:\n  made:\n    include: ['build/*']\n"
+          "    containing: ['../x']\n    produced-by: make\n"
+          'tasks:\n'
+          '  make: {desc: p, run: [touch]}\n'
+          r'  a: {desc: x, needs: [make], all: made, run: [echo, $all]}'
+          '\n',
+          withFilesystem: true,
+        );
+        expect(report.toString(), contains('`containing: [../x]`'));
+      },
+    );
+
     test('the producer has to exist', () {
       final report = check(
         'version: 1\n'
