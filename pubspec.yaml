@@ -16,6 +16,7 @@ environment:
 workspace:
   - packages/xtask
   - packages/xtask/example
+  - packages/xtask_kit
 
 dependencies:
   xtask: ^0.4.0

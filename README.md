@@ -2,8 +2,10 @@
 
 A task runner whose tasks are **data**: an `xtask.yaml`, run without a shell.
 
-The package, and everything about using it, is in
-[`packages/xtask`](packages/xtask/README.md).
+The engine, and everything about using it, is in
+[`packages/xtask`](packages/xtask/README.md). Verbs that projects otherwise
+write again each — installing a Linux app under `~/.local`, for one — are in
+[`packages/xtask_kit`](packages/xtask_kit/README.md).
 
 This repository is a Dart workspace. Its own tasks are in
 [`xtask.yaml`](xtask.yaml) and run through its own entry point,

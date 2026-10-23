@@ -23,6 +23,12 @@ version: 1
 # groups by.
 gates: [check, release]
 
+# What this repository publishes, one directory each. A new package is a new
+# directory here, and the tasks below reach it without being edited.
+sets:
+  packages:
+    include: [packages/*]
+
 tasks:
   # Order inside the gate is the order written here, and it is the one place
   # ordering is implicit (§4.3). Cheapest first: an unformatted file is one
@@ -42,12 +48,13 @@ tasks:
     run: [dart, analyze, --fatal-infos]
 
   test:
-    # In the package, because that is the only place `dart test` looks: from
+    # In each package, because that is the only place `dart test` looks: from
     # the root of a workspace it runs the root's tests, and the root has none.
-    # The suite finds this file upwards from there, as the command does.
-    desc: run the suite
+    # A suite finds this file upwards from there, as the command does.
+    desc: run each package's suite
     gate: [check]
-    in: packages/xtask
+    each: packages
+    in: $each
     run: [dart, test]
 
 
@@ -74,7 +81,8 @@ tasks:
   publishable:
     desc: refuse a package that could not be published as it stands
     gate: [release]
-    in: packages/xtask
+    each: packages
+    in: $each
     run: [dart, pub, publish, --dry-run]
 
 
