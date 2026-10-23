@@ -310,6 +310,8 @@ xtask --list --gate <name>   only the tasks in that gate set
 xtask --gate-members <name>  the tasks in that gate set, one per line
 xtask --why <task>           what puts that task in a plan, and by which
                              `needs:` or `then:`
+xtask --graph [<name>]       what that gate set or task pulls in, as
+                             a tree; with no name, every gate set
 xtask --validate             parse and check the file; run nothing
 xtask --check-ci             does the CI file still run the gate sets?
 xtask --dry-run <task>       print the resolved plan; run nothing
@@ -367,8 +369,8 @@ that narrows a gate set: the job reads as the gate, and runs part of it.
 
 ## Seeing what will happen
 
-Two questions the tool answers without running anything. Both are cheap,
-and both are the fastest way to find out that a file says something other
+Three questions the tool answers without running anything. All are cheap,
+and all are the fastest way to find out that a file says something other
 than what you meant.
 
 `--dry-run` shows what will actually happen, not what is written — sets
@@ -429,6 +431,44 @@ test
 
 Two routes, because there are two: the gate set reaches it, and so does
 somebody typing its name.
+
+`--graph` looks the other way from `--why`: down from what somebody types,
+to everything it pulls in. `--why test` asks who brings `test` into a run;
+`--graph publish` asks what `publish` brings. It draws a tree from the file
+and resolves no body, so it says nothing a program on this machine would
+change — that is `--dry-run`'s to say. In a project that builds two
+flavours over five packages:
+
+```shell
+$ xtask --graph publish
+publish
+├─ needs build ×2       dev, prod
+│  └─ needs pub-get ×5  packages/a, packages/b, packages/c and 2 more
+├─ needs analyze
+│  └─ needs pub-get     (see above)
+└─ then  announce
+   └─ needs build       (see above)
+```
+
+- **A task is drawn once.** Every later edge to it says `(see above)`, as
+  cargo tree's `(*)` does: the run reaches it once too, and a shared need
+  drawn again under everything that needs it reads as two runs of it.
+- **`then:` is its own word**, never a `needs`: one runs before the task
+  and the other after it.
+- **An `each:` task says how many members it runs for, and names them** —
+  three, and then how many more; a fourth is named rather than counted,
+  since "and 1 more" is no shorter. Its set is expanded as a run would
+  expand it now. One whose `produced-by:` task has not run yet says it
+  `cannot be resolved yet`, as `--dry-run` does.
+- **A task for another OS is marked** `⊘ linux only`, the summary's mark
+  for it, and its set is not expanded: the run would not expand it here.
+
+A gate set is drawn with its members under it. With no name, `--graph` draws
+every gate set in the order `gates:` declares, then — under `ungated`, as
+`--list` groups them — the tasks no gate set reaches, each one nothing else
+names at the top of its own branch. A name a run would refuse — unknown,
+both a gate set and a task, a gate set with nothing in it, a ring — is
+refused here with the run's own sentence and `2`.
 
 ## Gate sets, and CI
 

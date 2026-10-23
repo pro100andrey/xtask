@@ -8,6 +8,7 @@ library;
 
 import 'bodies.dart';
 import 'ci.dart';
+import 'gates.dart';
 import 'graph.dart';
 import 'model.dart';
 import 'request.dart';
@@ -585,6 +586,243 @@ List<String> why(String task, Map<String, List<PlanEdge>> routes) {
         '  nothing else names it: `$task` is where a run starts',
       for (final edge in route) '  $edge',
     ],
+  ];
+}
+
+/// What an `each:` task fans out over, as `--graph` draws it.
+///
+/// **Handed in, not found here.** A glob set's members are on disk and this
+/// module reads nothing; the command line expands the set the way a run
+/// would and says what it came to.
+sealed class Fan {
+  const Fan();
+}
+
+/// The members the set has now.
+final class Members extends Fan {
+  const Members(this.members);
+
+  final List<String> members;
+}
+
+/// A `produced-by:` set that is empty because its task has not run.
+///
+/// **Not yet is not the same as none**, which is `--dry-run`'s rule and in
+/// its words: a set another task makes is empty before that task runs, and a
+/// picture that said "×0" would draw a working file as a broken one.
+final class MembersNotYet extends Fan {
+  const MembersNotYet(this.producer);
+
+  /// The task its `produced-by:` names.
+  final String producer;
+}
+
+/// How many members of an `each:` the tree names before it counts the rest.
+///
+/// **Three, and never "and 1 more".** The members share one line with the
+/// task, so a set of forty is a count and not a list; three is enough to
+/// see what kind of thing the set holds. A fourth is named rather than
+/// counted, because "and 1 more" is no shorter than the name it stands for.
+const graphMembersNamed = 3;
+
+/// `--graph`: what [name] pulls in, drawn as a tree — its `needs:`, then
+/// its `then:`, each under the task that names it, all the way down.
+///
+/// The opposite direction from [why], which starts at a task and looks up
+/// for whoever pulls it in. This starts where a person types and looks down,
+/// so the two answer "why is this here" and "what does this bring".
+///
+/// [name] is a gate set or a task the command line has already planned, so
+/// a name nothing answers to never reaches this. Null draws every gate set
+/// in the order `gates:` declares, then the tasks none of them reaches,
+/// grouped as `--list` groups them.
+///
+/// **A task is drawn once**, and every later edge to it says `(see above)`
+/// — cargo tree's `(*)` — because a shared need drawn again under each
+/// task that needs it is a tree that grows with the square of the file and
+/// reads as two runs of one task. The run, too, reaches it once. Across the
+/// trees of one answer as well, since they are printed together.
+///
+/// `then:` is its own word and never a `needs`: one runs before and the
+/// other after, which is the distinction `--why` keeps for the same reason.
+///
+/// A task for another OS than [host] is marked `⊘` with its `platforms:`,
+/// the summary's mark and sentence for it; its set is not expanded, since
+/// the run would not expand it here. Every other `each:` task is asked
+/// [fanOf] for its members.
+List<String> graph(
+  XtaskFile file, {
+  required OperatingSystem host,
+  required Fan Function(Task task) fanOf,
+  String? name,
+}) {
+  final drawn = <String>{};
+
+  /// [at] and everything below it, onto [rows]. [lead] begins its own line
+  /// and [under] the lines of what it names.
+  void draw(
+    List<({String label, String detail})> rows,
+    String at, {
+    required String lead,
+    required String under,
+    String edge = '',
+  }) {
+    // `then  announce` lines up with `needs build`: the edge is a column of
+    // its own, so the names under one task start at one place.
+    final label = '$lead${edge.isEmpty ? '' : '${edge.padRight(5)} '}$at';
+    final task = file.tasks[at];
+    if (task == null) {
+      // A dangling name is `--validate`'s to report, and a named graph has
+      // been planned first, so only the picture of a whole broken file
+      // meets one. Drawn, because leaving it out draws a file that is fine.
+      rows.add((label: label, detail: 'there is no such task'));
+      return;
+    }
+    if (!drawn.add(at)) {
+      rows.add((label: label, detail: '(see above)'));
+      return;
+    }
+    final (count, detail) = !task.isFor(host)
+        ? ('', '⊘ ${OffPlatform(task.platforms).sentence}')
+        : task.each == null
+        ? ('', '')
+        : switch (fanOf(task)) {
+            Members(:final members) => (
+              ' ×${members.length}',
+              _named(members),
+            ),
+            MembersNotYet(:final producer) => (
+              '',
+              'cannot be resolved yet — task `$producer` makes its members',
+            ),
+          };
+    rows.add((label: '$label$count', detail: detail));
+    final edges = [
+      for (final need in task.needs) ('needs', need),
+      for (final next in task.then) ('then', next),
+    ];
+    for (final (index, (kind, next)) in edges.indexed) {
+      final last = index == edges.length - 1;
+      draw(
+        rows,
+        next,
+        lead: '$under${last ? '└─ ' : '├─ '}',
+        under: '$under${last ? '   ' : '│  '}',
+        edge: kind,
+      );
+    }
+  }
+
+  /// A tree whose first line is [heading] rather than a task, with
+  /// [roots] under it and no edge word: a gate set runs its members, and
+  /// nothing about that is a `needs:` or a `then:`.
+  List<({String label, String detail})> grouped(
+    String heading,
+    List<String> roots, {
+    String empty = '',
+  }) {
+    final rows = [(label: heading, detail: roots.isEmpty ? empty : '')];
+    for (final (index, root) in roots.indexed) {
+      final last = index == roots.length - 1;
+      draw(
+        rows,
+        root,
+        lead: last ? '└─ ' : '├─ ',
+        under: last ? '   ' : '│  ',
+      );
+    }
+    return rows;
+  }
+
+  List<({String label, String detail})> gateTree(String gate) => grouped(
+    'gate $gate',
+    [for (final task in tasksInGate(file, gate)) task.name],
+    // Only in the picture of the whole file: named, an empty gate set is
+    // refused before this, as running it is.
+    empty: 'no task is in it',
+  );
+
+  List<({String label, String detail})> taskTree(String at) {
+    final rows = <({String label, String detail})>[];
+    draw(rows, at, lead: '', under: '');
+    return rows;
+  }
+
+  final List<List<({String label, String detail})>> trees;
+  if (name != null) {
+    trees = [
+      if (file.gates.containsKey(name)) gateTree(name) else taskTree(name),
+    ];
+  } else {
+    trees = [for (final gate in file.gates.keys) gateTree(gate)];
+    // What no gate set reached: the tasks nothing names first, so a shared
+    // one is drawn under them rather than as a root of its own, then
+    // whatever a ring left with no way in. A root's whole reach is counted
+    // before the next is chosen, so nothing it pulls in becomes a root too.
+    final reached = {...drawn};
+    final roots = <String>[];
+    for (final at in [...entryPoints(file), ...file.tasks.keys]) {
+      if (_reach(file, at, reached)) {
+        roots.add(at);
+      }
+    }
+    trees.addAll(
+      // With no gate sets there is nothing to group by, and one heading
+      // over the whole file would be a grouping it does not have — as
+      // `--list` has none there either.
+      file.gates.isEmpty
+          ? [for (final root in roots) taskTree(root)]
+          : [if (roots.isNotEmpty) grouped('ungated', roots)],
+    );
+  }
+
+  return [
+    for (final (index, rows) in trees.indexed) ...[
+      if (index > 0) '',
+      ..._columns(rows),
+    ],
+  ];
+}
+
+/// Adds [from] and every task it reaches to [reached], answering whether
+/// [from] was not in it already.
+///
+/// A stack of its own rather than recursion: a chain as deep as the planner
+/// allows is a thousand frames, and this is only bookkeeping.
+bool _reach(XtaskFile file, String from, Set<String> reached) {
+  if (!reached.add(from)) {
+    return false;
+  }
+  final pending = [from];
+  while (pending.isNotEmpty) {
+    final task = file.tasks[pending.removeLast()];
+    for (final next in [...?task?.needs, ...?task?.then]) {
+      if (file.tasks.containsKey(next) && reached.add(next)) {
+        pending.add(next);
+      }
+    }
+  }
+  return true;
+}
+
+/// [members], as many as [graphMembersNamed] says and then a count.
+String _named(List<String> members) {
+  if (members.length <= graphMembersNamed + 1) {
+    return members.join(', ');
+  }
+  return '${members.take(graphMembersNamed).join(', ')} and '
+      '${members.length - graphMembersNamed} more';
+}
+
+/// [rows], each detail in one column past the widest label of its tree.
+List<String> _columns(List<({String label, String detail})> rows) {
+  final width = _widest(rows.map((row) => row.label));
+  return [
+    for (final row in rows)
+      [
+        row.label.padRight(width),
+        if (row.detail.isNotEmpty) '  ${row.detail}',
+      ].join().trimRight(),
   ];
 }
 

@@ -821,6 +821,7 @@ _Reading _readWords(List<String> arguments) {
     ListTasks() => const _Question('--list'),
     GateMembers() => const _Question('--gate-members'),
     WhyTask() => const _Question('--why'),
+    ShowGraph() => const _Question('--graph'),
     Validate() => const _Question('--validate'),
     CheckCi() => const _Question('--check-ci'),
     ShowVersion() => const _Question('--version'),

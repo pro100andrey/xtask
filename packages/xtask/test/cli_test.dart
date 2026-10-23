@@ -244,6 +244,19 @@ void main() {
       expect(parseArguments(['--why', 'a', 'b']), isA<ShowUsage>());
     });
 
+    test('--graph draws one name, or every gate set with none', () {
+      expect((parseArguments(['--graph']) as ShowGraph).name, isNull);
+      expect((parseArguments(['--graph', 'check']) as ShowGraph).name, 'check');
+      expect((parseArguments(['--graph=check']) as ShowGraph).name, 'check');
+      // The `=` says a name was meant, so an empty one is refused as one,
+      // not read as the bare mode.
+      expect(
+        (parseArguments(['--graph=']) as ShowUsage).problem,
+        contains('nothing after'),
+      );
+      expect(parseArguments(['--graph', 'a', 'b']), isA<ShowUsage>());
+    });
+
     group('--keep-going', () {
       test('it is a modifier on a run, not a mode of its own', () {
         final request = parseArguments(['check', '--keep-going']) as RunTask;
@@ -1529,6 +1542,34 @@ tasks:
         expect(await run(['--why', 'instal']), ExitCode.invalidFile);
         expect(complained(), contains('instal'));
       });
+    });
+
+    test('--graph reads the sets and the host, and refuses what a run '
+        'would', () async {
+      writeFile(r'''
+version: 1
+gates: [check]
+sets:
+  packages: {include: [packages/*]}
+tasks:
+  build: {desc: b, each: packages, in: $each, run: [dart]}
+  test: {desc: t, gate: [check], needs: [build], run: [dart]}
+  installer: {desc: i, gate: [check], platforms: [windows], run: [dart]}
+''');
+      for (final package in ['a', 'b']) {
+        Directory(p.join(root.path, 'packages', package)).createSync(
+          recursive: true,
+        );
+      }
+      expect(await run(['--graph', 'check']), ExitCode.success);
+      expect(out, [
+        'gate check',
+        '├─ test',
+        '│  └─ needs build ×2  packages/a, packages/b',
+        '└─ installer          ⊘ windows only',
+      ]);
+      expect(await run(['--graph', 'chek']), ExitCode.invalidFile);
+      expect(complained(), contains('did you mean `check`?'));
     });
 
     group('running with `-j`', () {

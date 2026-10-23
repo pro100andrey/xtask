@@ -421,6 +421,201 @@ tasks:
     });
   });
 
+  group('--graph draws what a name pulls in, as a tree', () {
+    /// The members [file]'s sets are given here, as the command line would
+    /// find them: the renderer reads no filesystem.
+    Fan Function(Task) fans(Map<String, Fan> bySet) =>
+        (task) =>
+            bySet[task.each] ?? fail('`${task.name}` was not to be asked');
+
+    test('a shared need is drawn once, and `then:` is not a need', () {
+      final file = parseXtaskFile(r'''
+version: 1
+sets:
+  pkgs: {values: [packages/a, packages/b, packages/c]}
+tasks:
+  publish: {desc: p, needs: [build, test], then: [announce], run: [dart]}
+  build: {desc: b, each: pkgs, run: [dart, $each]}
+  test: {desc: t, needs: [build], run: [dart]}
+  announce: {desc: a, run: [dart]}
+''');
+      expect(
+        graph(
+          file,
+          name: 'publish',
+          host: OperatingSystem.linux,
+          fanOf: fans({
+            'pkgs': const Members(['packages/a', 'packages/b', 'packages/c']),
+          }),
+        ),
+        [
+          'publish',
+          '├─ needs build ×3  packages/a, packages/b, packages/c',
+          '├─ needs test',
+          '│  └─ needs build  (see above)',
+          '└─ then  announce',
+        ],
+      );
+    });
+
+    test('a gate set runs its members; one for another OS is marked', () {
+      final file = parseXtaskFile(r'''
+version: 1
+gates: [check]
+sets:
+  pkgs: {values: [a]}
+tasks:
+  pub-get: {desc: g, run: [dart]}
+  format: {desc: f, gate: [check], run: [dart]}
+  analyze: {desc: a, gate: [check], needs: [pub-get], run: [dart]}
+  desktop:
+    desc: d
+    gate: [check]
+    needs: [pub-get]
+    platforms: [linux]
+    each: pkgs
+    run: [dart, $each]
+''');
+      // The members of `desktop` are not asked for: the run would not expand
+      // its set on this machine, so neither does the picture of the run.
+      expect(
+        graph(
+          file,
+          name: 'check',
+          host: OperatingSystem.macos,
+          fanOf: fans(const {}),
+        ),
+        [
+          'gate check',
+          '├─ format',
+          '├─ analyze',
+          '│  └─ needs pub-get',
+          '└─ desktop           ⊘ linux only',
+          '   └─ needs pub-get  (see above)',
+        ],
+      );
+    });
+
+    test('a set a task makes cannot be resolved yet, as --dry-run says', () {
+      final file = parseXtaskFile(r'''
+version: 1
+sets:
+  generated: {include: [gen/*], produced-by: gen}
+tasks:
+  gen: {desc: g, run: [dart]}
+  lint: {desc: l, needs: [gen], each: generated, run: [dart, $each]}
+''');
+      expect(
+        graph(
+          file,
+          name: 'lint',
+          host: OperatingSystem.linux,
+          fanOf: fans({'generated': const MembersNotYet('gen')}),
+        ),
+        [
+          'lint          cannot be resolved yet — task `gen` makes its members',
+          '└─ needs gen',
+        ],
+      );
+    });
+
+    test('three members are named, and a fourth rather than "1 more"', () {
+      final file = parseXtaskFile(r'''
+version: 1
+sets:
+  four: {values: [a, b, c, d]}
+  five: {values: [a, b, c, d, e]}
+tasks:
+  t4: {desc: x, each: four, run: [dart, $each]}
+  t5: {desc: y, each: five, run: [dart, $each]}
+''');
+      final fanOf = fans({
+        'four': const Members(['a', 'b', 'c', 'd']),
+        'five': const Members(['a', 'b', 'c', 'd', 'e']),
+      });
+      List<String> of(String name) => graph(
+        file,
+        name: name,
+        host: OperatingSystem.linux,
+        fanOf: fanOf,
+      );
+      expect(of('t4'), ['t4 ×4  a, b, c, d']);
+      expect(of('t5'), ['t5 ×5  a, b, c and 2 more']);
+    });
+
+    test('with no name, every gate set and then what none reaches', () {
+      final file = parseXtaskFile('''
+version: 1
+gates: [check, release, docs]
+tasks:
+  pub-get: {desc: g, run: [dart]}
+  analyze: {desc: a, gate: [check], needs: [pub-get], run: [dart]}
+  publish:
+    desc: p
+    gate: [release]
+    needs: [pub-get]
+    then: [announce]
+    run: [dart]
+  announce: {desc: n, run: [dart]}
+  clean: {desc: c, run: [dart]}
+''');
+      expect(
+        graph(file, host: OperatingSystem.linux, fanOf: fans(const {})),
+        [
+          'gate check',
+          '└─ analyze',
+          '   └─ needs pub-get',
+          '',
+          'gate release',
+          '└─ publish',
+          '   ├─ needs pub-get   (see above)',
+          '   └─ then  announce',
+          '',
+          'gate docs  no task is in it',
+          '',
+          'ungated',
+          '└─ clean',
+        ],
+      );
+    });
+
+    test('and with no gate sets, each task nothing names is its own', () {
+      // No heading over the whole file, as `--list` has none: it would be a
+      // grouping the file does not have.
+      final file = parseXtaskFile('''
+version: 1
+tasks:
+  build: {desc: b, run: [dart]}
+  test: {desc: t, needs: [build], run: [dart]}
+  lint: {desc: l, needs: [build], run: [dart]}
+''');
+      expect(
+        graph(file, host: OperatingSystem.linux, fanOf: fans(const {})),
+        [
+          'test',
+          '└─ needs build',
+          '',
+          'lint',
+          '└─ needs build  (see above)',
+        ],
+      );
+    });
+
+    test('a ring is drawn to where it closes, not forever', () {
+      // `--validate` reports the ring; this has only to end.
+      final file = parseXtaskFile('''
+version: 1
+tasks:
+  a: {desc: x, needs: [b], run: [dart]}
+  b: {desc: y, needs: [a], run: [dart]}
+''');
+      expect(
+        graph(file, host: OperatingSystem.linux, fanOf: fans(const {})),
+        ['a', '└─ needs b', '   └─ needs a  (see above)'],
+      );
+    });
+  });
+
   group('--check-ci', () {
     CiReport report({
       List<({CiStep step, String gate})> invocations = const [],

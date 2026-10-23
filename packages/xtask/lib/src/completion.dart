@@ -45,6 +45,7 @@ List<String> get completedOptions => [
 /// The options a value follows, which is what a script completes after them.
 List<String> get _takingAValue => [
   ...modesTakingAName,
+  ...modesTakingAnOptionalName,
   ...runOptionsTakingAValue,
 ]..sort();
 
@@ -61,7 +62,7 @@ enum _Value { gates, tasks, gatesAndTasks, sets, shells, jobs, files }
 _Value _after(String option) => switch (option) {
   '--gate' || '--gate-members' => _Value.gates,
   '--why' => _Value.tasks,
-  '--dry-run' => _Value.gatesAndTasks,
+  '--dry-run' || '--graph' => _Value.gatesAndTasks,
   '--only' => _Value.sets,
   '--completion' => _Value.shells,
   '--jobs' => _Value.jobs,

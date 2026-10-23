@@ -4,6 +4,17 @@
 
 ### Added
 
+- `xtask --graph [<name>]` draws what a gate set or task pulls in, as a
+  tree, without running or resolving anything: `needs` and `then` edges
+  each under the task that names them, a task reached twice drawn once and
+  then `(see above)`, an `each:` task with its member count and its first
+  three members (all four where there are four), a set whose `produced-by:`
+  task has not run as `cannot be resolved yet`, and a task for another OS
+  as `⊘ linux only`. With no name, every gate set and then, under
+  `ungated`, the tasks none of them reaches. A name a run refuses is
+  refused with the run's sentence and `2`. Shells complete a gate set or
+  task after it; `--check-ci` reads it as a question, as it reads `--why`.
+
 - `findRoot(from)` and `gateMembers(gate, {workingDirectory})` are exported
   from `package:xtask/xtask.dart`, so a project's own entry point can ask
   where `xtask.yaml` is and what a gate set holds without starting a second

@@ -408,6 +408,25 @@ Future<int> _answer(
         report.why(task, routesTo(file, task)).forEach(out);
         return ExitCode.success;
 
+      case ShowGraph(:final name):
+        // **Planned first, and only for what that buys.** A name `xtask
+        // <name>` would refuse — unknown, both a gate set and a task, a gate
+        // set with nothing in it, a ring — is refused here in the run's own
+        // words, rather than drawn as a tree of something that cannot run.
+        if (name != null) {
+          planFor(file, name);
+        }
+        final sets = SetExpander(root: root);
+        report
+            .graph(
+              file,
+              name: name,
+              host: resolver.os,
+              fanOf: (task) => _fanOf(file, sets, task),
+            )
+            .forEach(out);
+        return ExitCode.success;
+
       case ListNames():
         names(file).forEach(out);
         return ExitCode.success;
@@ -449,6 +468,31 @@ Future<int> _answer(
   } on XtaskFormatException catch (problem) {
     err('$problem');
     return ExitCode.invalidFile;
+  }
+}
+
+/// What [task]'s `each:` set comes to now, as `--graph` draws it.
+///
+/// **Expanded as the run expands it**, so the tree names the members a run
+/// started now would reach. Empty because its `produced-by:` task has not
+/// run is "not yet", as `--dry-run` says; every other refusal is the run's
+/// own, and answered 2 as the run would.
+report.Fan _fanOf(XtaskFile file, SetExpander sets, Task task) {
+  final name = task.each!;
+  final set = file.sets[name];
+  if (set == null) {
+    throw XtaskFormatException(
+      noSuchSet(task: task.name, key: 'each', name: name),
+      task.span,
+    );
+  }
+  try {
+    return report.Members(sets.expand(name, set));
+  } on EmptySetException catch (empty) {
+    if (empty.onlyYet && set is GlobSet) {
+      return report.MembersNotYet(set.producedBy!);
+    }
+    rethrow;
   }
 }
 

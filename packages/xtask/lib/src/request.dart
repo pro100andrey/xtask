@@ -119,6 +119,19 @@ final class WhyTask extends Request {
   final String task;
 }
 
+/// `xtask --graph [<name>]` — what a gate set or task pulls in, as a tree.
+///
+/// **The other direction from [WhyTask].** `--why` looks up from a task to
+/// whoever pulls it in; this looks down from what somebody types to what it
+/// pulls in, and draws it without running or resolving a body.
+final class ShowGraph extends Request {
+  const ShowGraph([this.name]);
+
+  /// The gate set or task to draw, or null for every gate set and then the
+  /// tasks none of them reaches.
+  final String? name;
+}
+
 /// `xtask --version` — print which engine this is.
 ///
 /// Answered without a file, for the same reason as [EmitSchema]: it is a fact
@@ -193,6 +206,7 @@ const modes = {
   '--check-ci',
   '--list',
   '--why',
+  '--graph',
   '--gate-members',
   '--validate',
   '--dry-run',
@@ -224,6 +238,13 @@ const modesTakingAName = {
   '--check-schema',
   '--completion',
 };
+
+/// The modes that may be given a name and may be given none.
+///
+/// Apart from [modesTakingAName] because bare is a request of its own —
+/// `--graph` alone draws every gate set — and yet written with an `=`, a
+/// name was meant, so `--graph=` is refused as a missing one.
+const modesTakingAnOptionalName = {'--graph'};
 
 /// How wide `-j auto` may go, whatever the machine is.
 ///
@@ -403,7 +424,8 @@ Request parseArguments(
       // mistake, and neither is "there is no task called ``".
       if (value.isEmpty) {
         return ShowUsage(
-          modesTakingAName.contains(joined)
+          modesTakingAName.contains(joined) ||
+                  modesTakingAnOptionalName.contains(joined)
               ? '`$joined` needs a name after it, and there is nothing after '
                     'the `=`'
               : '`$joined` takes no name, so there is nothing for the `=` to '
@@ -575,6 +597,18 @@ Request parseArguments(
         : const ShowUsage('`--why` needs the name of one task');
   }
 
+  if (mode == '--graph') {
+    return switch (operands) {
+      [] => const ShowGraph(),
+      [final name] => ShowGraph(name),
+      _ => ShowUsage(
+        '`--graph` draws one gate set or task, or every gate set when given '
+        'none, and it was given '
+        '${operands.map((o) => '`$o`').join(' and ')}',
+      ),
+    };
+  }
+
   if (mode == '--gate-members') {
     return operands.length == 1
         ? GateMembers(operands.single)
@@ -689,6 +723,8 @@ const usage = [
   '  xtask --gate-members <name>  the tasks in that gate set, one per line',
   '  xtask --why <task>           what puts that task in a plan, and by which',
   '                               `needs:` or `then:`',
+  '  xtask --graph [<name>]       what that gate set or task pulls in, as',
+  '                               a tree; with no name, every gate set',
   '  xtask --validate             parse and check the file; run nothing',
   '  xtask --check-ci             does the CI file still run the gate sets?',
   '  xtask --dry-run <task>       print the resolved plan; run nothing',
