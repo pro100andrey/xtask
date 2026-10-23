@@ -185,6 +185,46 @@ void main() {
     ]);
   });
 
+  test('a run moved to the root is handed the report where the person '
+      'stands, in either spelling', () {
+    // `--report` is read against the working directory, and the one form
+    // that moves the run would otherwise write it beside the root's
+    // pubspec — a report the caller, looking where it said, never finds.
+    repository();
+    final inside = Directory(p.join(root, 'packages', 'core'))
+      ..createSync(recursive: true);
+    final there = p.join(inside.path, 'out', 'run.json');
+
+    expect(
+      entryFrom(inside.path, [
+        'check',
+        '--report',
+        'out/run.json',
+        '--',
+        '--report',
+        'x',
+      ])?.arguments,
+      ['run', ':xtask', 'check', '--report', there, '--', '--report', 'x'],
+    );
+    expect(
+      entryFrom(inside.path, ['check', '--report=out/run.json'])?.arguments,
+      ['run', ':xtask', 'check', '--report=$there'],
+    );
+  });
+
+  test('a run started where the person stands is handed it as written', () {
+    repository();
+    resolution(root, {'shop': ''});
+
+    expect(entryFrom(root, ['check', '--report', 'run.json'])?.arguments, [
+      'run',
+      'shop:xtask',
+      'check',
+      '--report',
+      'run.json',
+    ]);
+  });
+
   test("what follows `--` is a task's, and decides nothing here", () {
     repository();
     resolution(root, {'shop': ''});

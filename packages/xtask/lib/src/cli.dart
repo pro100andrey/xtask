@@ -7,6 +7,7 @@
 /// at all.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -73,9 +74,132 @@ Future<int> runCli(
   required ExecutableResolver resolver,
   required ProcessStarter starter,
   Map<String, Verb> verbs = const {},
-}) async {
+}) {
   final request = parseArguments(args);
+  Future<int> answer(
+    void Function(String line) err, {
+    void Function(report.RunSoFar run)? reportTo,
+  }) => _answer(
+    request,
+    workingDirectory: workingDirectory,
+    environment: environment,
+    out: out,
+    err: err,
+    resolver: resolver,
+    starter: starter,
+    verbs: verbs,
+    reportTo: reportTo,
+  );
 
+  if (request case RunTask(:final task, report: final path?)) {
+    return _reporting(
+      task,
+      path,
+      workingDirectory: workingDirectory,
+      err: err,
+      answer: (err, reportTo) => answer(err, reportTo: reportTo),
+    );
+  }
+  return answer(err);
+}
+
+/// A run with `--report`: the run as [answer] gives it, written to [path]
+/// before it begins, as it goes, and once it has its code.
+///
+/// **Written before anything is looked at**, file included: a run refused
+/// before a task began is a run too, and whatever reads the report is
+/// told why rather than finding none. And a report that cannot be written
+/// at all is said before any task runs — a run asked for one and left
+/// without it reads, to the program waiting on it, like a run that never
+/// happened, after the run has spent its minutes.
+///
+/// What the run says on [err] is the refusal the report carries: in a run,
+/// only what refused it goes there.
+Future<int> _reporting(
+  String task,
+  String path, {
+  required String workingDirectory,
+  required void Function(String line) err,
+  required Future<int> Function(
+    void Function(String line) err,
+    void Function(report.RunSoFar run) reportTo,
+  )
+  answer,
+}) async {
+  // Against where the command was run, as `--check-schema` reads its path:
+  // that is where the person typing it is looking.
+  final file = File(p.join(workingDirectory, path));
+  final part = File('${file.path}.part');
+
+  // Whole or not at all: a reader that opens it while the run is writing,
+  // or after a run cut off mid-write, finds the last report and not half of
+  // the next one.
+  void write(Map<String, Object?> json) {
+    file.parent.createSync(recursive: true);
+    part
+      ..writeAsStringSync(
+        '${const JsonEncoder.withIndent('  ').convert(json)}\n',
+      )
+      ..renameSync(file.path);
+  }
+
+  String failure(FileSystemException e) =>
+      'xtask: cannot write the report to `$path`: '
+      '${e.osError?.message ?? e.message}';
+
+  try {
+    write(report.runReport(task, null));
+  } on FileSystemException catch (e) {
+    err(failure(e));
+    return ExitCode.invalidFile;
+  }
+
+  // Once it has been written, a later write that fails is said once and
+  // does not change what the run answers: the run is what was asked about.
+  var said = false;
+  void keep(Map<String, Object?> json) {
+    try {
+      write(json);
+    } on FileSystemException catch (e) {
+      if (!said) {
+        said = true;
+        err(failure(e));
+      }
+    }
+  }
+
+  report.RunSoFar? last;
+  final refused = <String>[];
+  final code = await answer(
+    (line) {
+      refused.add(line);
+      err(line);
+    },
+    (run) => keep(report.runReport(task, last = run)),
+  );
+  keep(
+    report.runReport(
+      task,
+      last,
+      code: code,
+      refusal: refused.isEmpty ? null : refused.join('\n'),
+    ),
+  );
+  return code;
+}
+
+/// [request] answered, with the code the table gives it.
+Future<int> _answer(
+  Request request, {
+  required String workingDirectory,
+  required Map<String, String> environment,
+  required void Function(String line) out,
+  required void Function(String line) err,
+  required ExecutableResolver resolver,
+  required ProcessStarter starter,
+  required Map<String, Verb> verbs,
+  void Function(report.RunSoFar run)? reportTo,
+}) async {
   if (request is ShowUsage) {
     final problem = request.problem;
     if (problem == null) {
@@ -312,6 +436,7 @@ Future<int> runCli(
           markers: LogMarkers.forHost(environment),
           keepGoing: keepGoing,
           concurrency: concurrency,
+          reportTo: reportTo,
         ).run(plan);
     }
   } on XtaskFormatException catch (problem) {

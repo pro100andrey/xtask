@@ -155,6 +155,28 @@ final class _Outcomes {
 
   /// What `--only` left of the set each narrowed task expanded.
   final narrowed = <String, ({int kept, int of})>{};
+
+  // What only `--report` says. Kept apart from the maps above because the
+  // summary is built from those, and a person reading it has already been
+  // told each of these where it happened.
+
+  /// The tasks that have begun, so a report written while one runs can say
+  /// it was running rather than never reached.
+  final started = <String>{};
+
+  /// What each failed task printed, by task.
+  final why = <String, String>{};
+
+  /// The tasks the file was found wrong in part-way, with what was said. The
+  /// run answers 2 for them, which the summary has no line for.
+  final refused = <String, String>{};
+
+  /// The tasks a member of which was stopped part-way, because the run had
+  /// given up and the task was `interruptible:`.
+  final interrupted = <String>{};
+
+  /// What each member of an `each:` task came to, in the set's order.
+  final members = <String, List<Ended>>{};
 }
 
 /// How one body ended.
@@ -176,6 +198,7 @@ final class Executor {
     this.now = DateTime.now,
     this.keepGoing = false,
     this.concurrency = 1,
+    this.reportTo,
   });
 
   /// What each task comes to on this machine.
@@ -213,6 +236,16 @@ final class Executor {
 
   /// Where the clock comes from — injected, so a summary can be asserted.
   final DateTime Function() now;
+
+  /// Where what the run has come to goes, for `--report`: once before the
+  /// first task begins, again each time tasks begin or end, and last when
+  /// the run does.
+  ///
+  /// **As it goes, not only at the end.** A Ctrl-C ends this process where
+  /// it stands, with nothing after it run, so the last thing written here is
+  /// all a report of an interrupted run can be. Written as each task
+  /// begins and ends, it is never older than the task that was running.
+  final void Function(RunSoFar run)? reportTo;
 
   /// Whether this run has decided the answer is known.
   final _givenUp = GivenUp();
@@ -256,10 +289,13 @@ final class Executor {
 
     final outcomes = _Outcomes();
     final began = now();
+    void report() => _report(plan, outcomes, began);
+    report();
     final int code;
     try {
-      code = await _walk(plan, outcomes, concurrent: concurrent);
+      code = await _walk(plan, outcomes, report, concurrent: concurrent);
     } finally {
+      report();
       // Printed on the way out, whichever way that is: a file found wrong
       // mid-run unwinds through here, and the tasks that had already
       // finished, failed or been skipped are still worth their lines.
@@ -275,6 +311,65 @@ final class Executor {
       summary(outcomes.failed, outcomes.skipped).forEach(log);
     }
     return code;
+  }
+
+  /// Hands [reportTo] what the run has come to so far, where there is one.
+  ///
+  /// Asks the clock only then: a run nobody reports reads it exactly as it
+  /// did before there was a report to write.
+  void _report(Plan plan, _Outcomes outcomes, DateTime began) {
+    final to = reportTo;
+    if (to == null) {
+      return;
+    }
+    to((
+      tasks: [for (final step in plan.steps) _ended(step.task.name, outcomes)],
+      took: now().difference(began),
+    ));
+  }
+
+  /// What became of [name], from what the run has recorded about it.
+  ///
+  /// A failure first, because a task that failed may also be one the run
+  /// gave up on part-way. What it has nothing recorded for has not ended:
+  /// a report written now and left behind by a run cut off says so.
+  Ended _ended(String name, _Outcomes outcomes) {
+    final took = outcomes.took[name];
+    final members = outcomes.members[name] ?? const <Ended>[];
+    if (outcomes.refused[name] case final why?) {
+      return Ended(
+        name,
+        Result.failed,
+        took: took,
+        code: ExitCode.invalidFile,
+        why: why,
+        members: members,
+      );
+    }
+    if (outcomes.failed[name] case final code?) {
+      return Ended(
+        name,
+        Result.failed,
+        took: took,
+        code: code,
+        why: outcomes.why[name],
+        members: members,
+      );
+    }
+    final skipped =
+        outcomes.skipped[name] ??
+        (outcomes.interrupted.contains(name) ? const Interrupted() : null) ??
+        (took == null ? CutOff(began: outcomes.started.contains(name)) : null);
+    if (skipped == null) {
+      return Ended(name, Result.passed, took: took, members: members);
+    }
+    return Ended(
+      name,
+      resultOf(skipped),
+      took: took,
+      why: skipped.sentence,
+      members: members,
+    );
   }
 
   /// Reads every `unchanged:` set in [plan], before anything has run.
@@ -394,7 +489,8 @@ final class Executor {
   /// doing nothing.
   Future<int> _walk(
     Plan plan,
-    _Outcomes outcomes, {
+    _Outcomes outcomes,
+    void Function() report, {
     required bool concurrent,
   }) async {
     final waiting = [...plan.steps];
@@ -490,12 +586,20 @@ final class Executor {
                 stopped.add(name);
                 failures[order[name]!] = code;
               }
+              report();
             });
         if (step.task.alone) {
           alone = name;
           aloneWaits = false;
           break;
         }
+      }
+
+      // What began, or was skipped, this pass: a run cut off while they run
+      // leaves a report that says they were running, not that they were
+      // never reached.
+      if (began) {
+        report();
       }
 
       if (running.isEmpty && !began) {
@@ -555,6 +659,7 @@ final class Executor {
     final task = step.task;
     final lines = _Lines.to(log).into(collected: collected);
     final started = now();
+    outcomes.started.add(task.name);
     try {
       await _runTask(task, place, outcomes, lines);
       return null;
@@ -564,6 +669,7 @@ final class Executor {
         // wrong, and `cli.dart` is where that sentence is written. The
         // section is closed on the way past.
         markers.close().forEach(lines.call);
+        outcomes.refused[task.name] = '$thrown';
         rethrow;
       }
       // One clause, because there is one ending. A verb is arbitrary project
@@ -580,6 +686,7 @@ final class Executor {
       // inside a group is folded away with it.
       markers.error(failure.message).forEach(lines.call);
       outcomes.failed[task.name] = failure.code;
+      outcomes.why[task.name] = failure.message;
 
       if (step.isContinuation) {
         // Always 4, whatever went wrong inside it: the body already
@@ -683,6 +790,8 @@ final class Executor {
     var stop = false;
     XtaskFormatException? malformed;
     ({Duration spent, int members})? work;
+    // What each member came to, for the report; null for one never begun.
+    final ended = List<Ended?>.filled(resolved.length, null);
 
     Future<void> member(int at, Lease? given) async {
       final place = given ?? await _slots.take();
@@ -697,9 +806,15 @@ final class Executor {
       // Measured only where it is reported: the members' work is a line of
       // its own when there is more than one of them.
       final began = resolved.length > 1 ? now() : null;
+      var result = Result.passed;
+      int? code;
+      String? why;
       try {
         if (await _perform(resolved[at], own) == _Ending.stopped) {
           stop = true;
+          result = Result.notRun;
+          why = const Interrupted().sentence;
+          outcomes.interrupted.add(task.name);
         }
       } on XtaskFormatException catch (thrown) {
         // The file being wrong is not a thing more members can fix, and it
@@ -708,12 +823,14 @@ final class Executor {
         stop = true;
         malformed ??= thrown;
         _givenUp.now();
+        (result, code, why) = (Result.failed, ExitCode.invalidFile, '$thrown');
       } on Object catch (thrown) {
         // Anything, not only a `RunFailure`: a verb can throw whatever it
         // likes, and the tally must still say what its siblings did.
-        failures[at] = thrown is RunFailure
+        final failure = failures[at] = thrown is RunFailure
             ? thrown
             : bodyThrew(task, thrown, member: resolved[at].member);
+        (result, code, why) = (Result.failed, failure.code, failure.message);
         if (!keepGoing) {
           stop = true;
           // Said before the place is given back, so that whoever is waiting
@@ -722,12 +839,20 @@ final class Executor {
         }
       } finally {
         place.release();
-        if (began != null) {
+        final took = began == null ? null : now().difference(began);
+        if (took != null) {
           work = (
-            spent: (work?.spent ?? Duration.zero) + now().difference(began),
+            spent: (work?.spent ?? Duration.zero) + took,
             members: (work?.members ?? 0) + 1,
           );
         }
+        ended[at] = Ended(
+          resolved[at].member ?? task.name,
+          result,
+          took: took,
+          code: code,
+          why: why,
+        );
         own.end();
       }
     }
@@ -763,6 +888,19 @@ final class Executor {
     // it broke is most of what somebody wants from a red job.
     if (work case final done?) {
       outcomes.work[task.name] = done;
+    }
+    // Every member, the ones never begun too: a report that listed only what
+    // ran would read, for a run stopped after two of eight, as a set of two.
+    if (task.each != null) {
+      outcomes.members[task.name] = [
+        for (final (at, member) in ended.indexed)
+          member ??
+              Ended(
+                resolved[at].member ?? task.name,
+                Result.notRun,
+                why: const RunStopped().sentence,
+              ),
+      ];
     }
     // A task the run gave up on part-way is named, like a task it never
     // reached: two of eight members having run reads exactly like eight.

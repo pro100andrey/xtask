@@ -229,6 +229,7 @@ void main() {
     ExecutableResolver? resolver,
     LogMarkers markers = const PlainMarkers(),
     Duration step = const Duration(milliseconds: 100),
+    void Function(RunSoFar run)? reportTo,
   }) {
     final file = parseXtaskFile(yaml);
     return Executor(
@@ -246,6 +247,7 @@ void main() {
       now: ticking(step),
       keepGoing: keepGoing,
       concurrency: concurrency,
+      reportTo: reportTo,
     ).run(planRun(file, task));
   }
 
@@ -1788,6 +1790,132 @@ void main() {
         'a',
       );
       expect(logged.join('\n'), isNot(contains('members')));
+    });
+  });
+
+  group('`--report` is told what each task came to', () {
+    /// The rows of a report, as `(name, result, timed, code)`, with the
+    /// reason left out: the sentences are the report module's, and what is
+    /// asserted here is which one each task was given. Whether it was
+    /// timed rather than for how long, because writing a report reads the
+    /// clock this suite ticks.
+    List<(String, Result, bool, int?)> rows(List<Ended> tasks) => [
+      for (final t in tasks) (t.name, t.result, t.took != null, t.code),
+    ];
+
+    test('in plan order: passed, failed, skipped, and not reached', () async {
+      final reports = <RunSoFar>[];
+      starter = FakeStarter({'ruff': 1});
+      final code = await runFile(
+        'version: 1\ntasks:\n'
+            '  fmt: {desc: a, run: [dprint]}\n'
+            '  lint: {desc: b, run: [ruff]}\n'
+            '  types: {desc: c, run: [mypy]}\n'
+            '  check: {desc: d, needs: [fmt, lint, types]}\n'
+            '  ship: {desc: e, needs: [lint]}\n'
+            '  all: {desc: f, needs: [check, ship]}\n',
+        'all',
+        reportTo: reports.add,
+      );
+      expect(code, ExitCode.taskFailed);
+      final last = reports.last.tasks;
+      expect(rows(last), [
+        ('fmt', Result.passed, true, null),
+        ('lint', Result.failed, true, ExitCode.taskFailed),
+        ('types', Result.notRun, false, null),
+        ('check', Result.skipped, false, null),
+        ('ship', Result.skipped, false, null),
+        ('all', Result.skipped, false, null),
+      ]);
+      expect(last[1].why, contains('task `lint` failed with exit code 1'));
+      expect(last[2].why, const RunStopped().sentence);
+      expect(last[3].why, const NeedsStopped('lint').sentence);
+    });
+
+    test("and an `each:` task's members, the unattempted named", () async {
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      starter = FakeStarter({'ruff': 1});
+      final reports = <RunSoFar>[];
+      await runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
+            '\n',
+        'a',
+        reportTo: reports.add,
+      );
+      final task = reports.last.tasks.single;
+      expect(task.result, Result.failed);
+      expect(rows(task.members), [
+        ('pkg/a', Result.failed, true, 1),
+        ('pkg/b', Result.notRun, false, null),
+        ('pkg/c', Result.notRun, false, null),
+      ]);
+      expect(task.members.first.why, contains('at `pkg/a` failed'));
+      expect(task.members.last.why, const RunStopped().sentence);
+    });
+
+    test('while it runs, so a run cut off leaves what it had', () async {
+      // The engine does not outlive a Ctrl-C, so the last thing it wrote
+      // is all a report can be. Written as each task ends, and once before
+      // the first begins, it is never older than the task that was running.
+      starter = FakeStarter()..holds['mypy'] = Completer<void>();
+      final reports = <RunSoFar>[];
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  fmt: {desc: a, run: [dprint]}\n'
+            '  types: {desc: c, run: [mypy]}\n'
+            '  check: {desc: d, needs: [fmt, types]}\n',
+        'check',
+        reportTo: reports.add,
+      );
+      await pumpEventQueue();
+      expect(rows(reports.first.tasks).map((r) => r.$2), [
+        Result.notRun,
+        Result.notRun,
+        Result.notRun,
+      ], reason: 'one before anything began');
+      final cut = reports.last.tasks;
+      expect(rows(cut).map((r) => r.$2), [
+        Result.passed,
+        Result.notRun,
+        Result.notRun,
+      ]);
+      expect(cut[1].why, 'the run ended while it was running');
+      expect(cut[2].why, 'the run ended before it began');
+      starter.holds['mypy']!.complete();
+      await running;
+      expect(rows(reports.last.tasks).map((r) => r.$2), [
+        Result.passed,
+        Result.passed,
+        Result.passed,
+      ]);
+    });
+
+    test('a task whose `unchanged:` set changed failed, though its body '
+        'passed', () async {
+      given(['lib/a.g.dart']);
+      final reports = <RunSoFar>[];
+      final code = await runFile(
+        'version: 1\n'
+            'sets:\n  generated: {include: [lib/a.g.dart]}\n'
+            'tasks:\n'
+            '  codegen: {desc: x, do: gen, unchanged: generated}\n',
+        'codegen',
+        verbs: {
+          'gen': (context) async {
+            File(p.join(root.path, 'lib', 'a.g.dart')).writeAsStringSync('x');
+            return ExitCode.success;
+          },
+        },
+        reportTo: reports.add,
+      );
+      expect(code, ExitCode.taskFailed);
+      final task = reports.last.tasks.single;
+      expect(task.result, Result.failed);
+      expect(task.code, ExitCode.taskFailed);
+      expect(task.why, contains('changed what set `generated` holds'));
     });
   });
 

@@ -152,7 +152,7 @@ ProjectEntry? projectEntry(
     return (
       root: root,
       entry: entry,
-      arguments: ['run', ':xtask', ...args],
+      arguments: ['run', ':xtask', ..._reportFrom(args, workingDirectory)],
       workingDirectory: package,
       resolveIn: null,
     );
@@ -311,6 +311,36 @@ Future<int> runProjectEntry(
       await watch.cancel();
     }
   }
+}
+
+/// [args] with the file `--report` names made absolute against
+/// [workingDirectory], for a run started somewhere else.
+///
+/// The engine reads that path against where it was started, as the person
+/// typed it against where they stand; moved, the run would write the report
+/// beside another package's pubspec, where whatever asked for it does not
+/// look. Only what comes before `--`: after it, the arguments are a task's.
+List<String> _reportFrom(List<String> args, String workingDirectory) {
+  // What the parser would refuse is left for it to refuse in its own words:
+  // an empty path made absolute is a directory, and an option after
+  // `--report` made absolute is a path.
+  String absolute(String path) => path.isEmpty || path.startsWith('-')
+      ? path
+      : p.join(workingDirectory, path);
+  final given = [...args];
+  for (var at = 0; at < given.length; at++) {
+    final argument = given[at];
+    if (argument == '--') {
+      break;
+    }
+    if (argument == '--report' && at + 1 < given.length) {
+      at++;
+      given[at] = absolute(given[at]);
+    } else if (argument.startsWith('--report=')) {
+      given[at] = '--report=${absolute(argument.substring(9))}';
+    }
+  }
+  return given;
 }
 
 bool _isCompletionScript(String argument) =>

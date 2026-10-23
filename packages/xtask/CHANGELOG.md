@@ -36,6 +36,16 @@
   set or a `values:` set is refused by `--validate`, `--dry-run` and the run,
   before the body starts; `--dry-run` says which set a task holds.
 
+- `--report <file>` writes a run as JSON, `version: 1`: the task asked for,
+  whether the run got to its end, its code and seconds, and every task of the
+  plan in order — `passed`, `failed`, `skipped` or `not-run`, with its
+  seconds, its code and why — and under an `each:` every member the same way.
+  Written before anything else, as tasks begin and end, and last with the
+  code: a run refused before it began says why, and one cut off by Ctrl-C
+  leaves the last report with `complete: false`. The path is read from where
+  the command was run, and made absolute for a project's entry point started
+  elsewhere; one that cannot be written is a `2` before anything runs.
+
 ### Changed
 
 - The package lives in `packages/xtask` of a workspace repository, and

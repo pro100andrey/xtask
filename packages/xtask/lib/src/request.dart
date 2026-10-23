@@ -31,6 +31,7 @@ final class RunTask extends Request {
     this.keepGoing = false,
     this.concurrency = 1,
     this.only = const {},
+    this.report,
   });
 
   final String task;
@@ -46,6 +47,10 @@ final class RunTask extends Request {
 
   /// `-j`: how many tasks may be in flight. 1 is the sequential run.
   final int concurrency;
+
+  /// `--report`: the file the run is written to as JSON, as it was typed —
+  /// relative to where the command was run.
+  final String? report;
 }
 
 /// `xtask --dry-run <task> [-- <args>]` — print what that would come to .
@@ -200,10 +205,10 @@ const modes = {
 
 /// The options that are not modes: how a run happens, or what `--list`
 /// narrows to. With [modes], every option the usage names.
-const runOptions = {'--gate', '--keep-going', '--jobs', '--only'};
+const runOptions = {'--gate', '--keep-going', '--jobs', '--only', '--report'};
 
 /// The options in [runOptions] that take a value after them.
-const runOptionsTakingAValue = {'--gate', '--jobs', '--only'};
+const runOptionsTakingAValue = {'--gate', '--jobs', '--only', '--report'};
 
 /// The shells `--completion` writes a script for.
 const completionShells = ['bash', 'zsh', 'fish'];
@@ -259,6 +264,7 @@ Request parseArguments(
   var concurrency = 1;
   var jobsWritten = false;
   final only = <String, List<String>>{};
+  String? report;
 
   final passed = <String>[];
   var separated = false;
@@ -316,6 +322,21 @@ Request parseArguments(
 
     if (argument == '--keep-going') {
       keepGoing = true;
+      continue;
+    }
+
+    if (argument == '--report' || argument.startsWith('--report=')) {
+      report = argument == '--report'
+          ? rest.isNotEmpty && !rest.first.startsWith('-')
+                ? rest.removeAt(0)
+                : null
+          : argument.substring('--report='.length);
+      if (report == null || report.isEmpty) {
+        return const ShowUsage(
+          '`--report` needs the file to write the run to, such as '
+          '`--report run.json`',
+        );
+      }
       continue;
     }
 
@@ -434,6 +455,16 @@ Request parseArguments(
     // one — what `--why` says reaches a task does not depend on its members.
     return ShowUsage(
       '`--only` narrows the sets a run expands, and `$mode` expands none',
+    );
+  }
+
+  if (report != null && mode != null) {
+    // `--dry-run` included: it resolves a plan and runs none of it, and a
+    // report of a run that did not happen is one a program would read as a
+    // run in which nothing did.
+    return ShowUsage(
+      '`--report` writes what a run came to, and `$mode` does not run '
+      'anything',
     );
   }
 
@@ -567,9 +598,9 @@ Request parseArguments(
     // `xtask --keep-going` and `xtask -j 2` name no task, and "it was given"
     // with an empty list to interpolate is a sentence that stops mid-way.
     return const ShowUsage(
-      'a run needs the name of one task. `--keep-going`, `-j` and `--only` say '
-      'how a run happens, not what it runs — `xtask --list` shows what there '
-      'is',
+      'a run needs the name of one task. `--keep-going`, `-j`, `--only` and '
+      '`--report` say how a run happens, not what it runs — `xtask --list` '
+      'shows what there is',
     );
   }
   return operands.length == 1
@@ -579,6 +610,7 @@ Request parseArguments(
           keepGoing: keepGoing,
           concurrency: concurrency,
           only: Map.unmodifiable(only),
+          report: report,
         )
       : ShowUsage(
           'xtask runs one task at a time, and it was given '
@@ -649,6 +681,8 @@ const usage = [
   '                               only the members of that set a pattern',
   '                               matches, wherever an `each:` or `all:`',
   '                               names it; with --dry-run too',
+  '  xtask <task> --report <file> write what each task came to there, as',
+  '                               JSON — as it goes, and on a failure',
   '  xtask --list                 every task, grouped under its gate set,',
   '                               in the order `gates:` declares',
   '  xtask --list --gate <name>   only the tasks in that gate set',

@@ -280,6 +280,8 @@ xtask <task> --only <set>=<pattern>,…
                              only the members of that set a pattern
                              matches, wherever an `each:` or `all:`
                              names it; with --dry-run too
+xtask <task> --report <file> write what each task came to there, as
+                             JSON — as it goes, and on a failure
 xtask --list                 every task, grouped under its gate set,
                              in the order `gates:` declares
 xtask --list --gate <name>   only the tasks in that gate set
@@ -670,6 +672,80 @@ shown as it arrives, because nothing can write beside it. Once it is ready and
 waiting, nothing else starts — not a task behind it in the plan, and not one
 ahead of it that becomes ready later — or a steady supply of them would keep it
 waiting.
+
+### A run as JSON
+
+What a person reads at the end of a run, a program has had to parse — and a
+column laid out for eyes is a format nobody promised to keep.
+`--report <file>` writes the run as JSON instead, beside the output and not in
+place of it:
+
+```shell
+xtask publish --keep-going --report out/run.json
+```
+
+```json
+{
+  "version": 1,
+  "task": "publish",
+  "complete": true,
+  "code": 1,
+  "seconds": 0.127,
+  "tasks": [
+    {
+      "task": "test",
+      "result": "failed",
+      "seconds": 0.118,
+      "code": 1,
+      "why": "task `test` at `packages/cli` failed with exit code 1\n  run  …",
+      "members": [
+        {"member": "packages/cli", "result": "failed", "seconds": 0.041, "code": 1, "why": "…"},
+        {"member": "packages/core", "result": "passed", "seconds": 0.015},
+        {"member": "packages/web", "result": "passed", "seconds": 0.014}
+      ]
+    },
+    {"task": "publish", "result": "skipped", "why": "needs `test`, which did not pass"}
+  ]
+}
+```
+
+| field | what it says |
+| --- | --- |
+| `version` | the shape, `1`. Raised when a field changes meaning or goes away, not when one is added — pass over a field you do not know |
+| `task` | the task or gate set the run was asked for |
+| `complete` | whether the run got to its end. `false` in a report written while it runs, and in one a run cut off left behind |
+| `code` | what the run answered, from the [exit code table](#exit-codes); only when `complete` |
+| `seconds` | how long the run took, to the millisecond; absent when it never began |
+| `why` | what refused the run, as it was printed — a file that would not parse, a task that is not there, a file found wrong part-way |
+| `tasks` | every task of the plan, in the plan's order; empty when the run was refused before it had one |
+
+Each task, and under `members` each member of an `each:` in the set's order:
+
+| field | what it says |
+| --- | --- |
+| `task`, `member` | the task's name, or the member's |
+| `result` | `passed`, `failed`, `skipped` — it never started, because what it needs or follows did not pass — or `not-run`: the run stopped before it, or part-way through it |
+| `seconds` | how long it ran; absent where it never started, and for the member of an `each:` of one |
+| `code` | for a failure, the code the table gives it: a `run:` body is `1` whatever its program exited with, and that number is in `why` |
+| `why` | where it did not pass, what the run said: the failure as printed, or why it did not run |
+| `members` | for an `each:` task, its members — the ones never begun too, as `not-run` |
+
+A task that changed its `unchanged:` set is `failed` with every member
+`passed`: its body did its job, and what it left is what failed.
+
+The path is read against where you run the command, as `--check-schema`'s is,
+and its directory is made. It is written before anything else is looked at —
+so a run refused before a task began still leaves one, saying why — then each
+time a task begins or ends, and last with the code. A file that cannot be
+written there is a `2` before anything runs: a report asked for and missing
+reads, to whatever waits for it, as a run that never happened. Each write
+replaces the file whole, so it is never read half-written.
+
+**On Ctrl-C** the engine ends where it stands and writes nothing more, so the
+report is the last one written: `complete` is `false`, the tasks that had
+ended say how, and the one running says `the run ended while it was running`.
+Passed on to a project's own entry point, the path is made absolute first
+wherever the run is started somewhere other than where you stand.
 
 ## Exit codes
 

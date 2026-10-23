@@ -6,6 +6,92 @@ import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/report.dart';
 
 void main() {
+  group('`--report` is the run as JSON, versioned', () {
+    final run = (
+      tasks: [
+        const Ended(
+          'fmt',
+          Result.passed,
+          took: Duration(milliseconds: 412),
+        ),
+        const Ended(
+          'test',
+          Result.failed,
+          took: Duration(milliseconds: 2500),
+          code: 1,
+          why: 'task `test` at `pkg/a` failed with exit code 1',
+          members: [
+            Ended(
+              'pkg/a',
+              Result.failed,
+              took: Duration(seconds: 2),
+              code: 1,
+              why: 'task `test` at `pkg/a` failed with exit code 1',
+            ),
+            Ended('pkg/b', Result.notRun, why: 'the run stopped'),
+          ],
+        ),
+        const Ended('ship', Result.skipped, why: 'needs `test`'),
+      ],
+      took: const Duration(milliseconds: 2950),
+    );
+
+    test('every task in plan order, members under their task', () {
+      expect(runReport('check', run, code: 1), {
+        'version': reportVersion,
+        'task': 'check',
+        'complete': true,
+        'code': 1,
+        'seconds': 2.95,
+        'tasks': [
+          {'task': 'fmt', 'result': 'passed', 'seconds': 0.412},
+          {
+            'task': 'test',
+            'result': 'failed',
+            'seconds': 2.5,
+            'code': 1,
+            'why': 'task `test` at `pkg/a` failed with exit code 1',
+            'members': [
+              {
+                'member': 'pkg/a',
+                'result': 'failed',
+                'seconds': 2.0,
+                'code': 1,
+                'why': 'task `test` at `pkg/a` failed with exit code 1',
+              },
+              {
+                'member': 'pkg/b',
+                'result': 'not-run',
+                'why': 'the run stopped',
+              },
+            ],
+          },
+          {'task': 'ship', 'result': 'skipped', 'why': 'needs `test`'},
+        ],
+      });
+    });
+
+    test('a run not over yet has no code, and says it is not complete', () {
+      final json = runReport('check', run);
+      expect(json['complete'], isFalse);
+      expect(json.containsKey('code'), isFalse);
+    });
+
+    test('a run refused before any task began says why, and has no tasks', () {
+      expect(
+        runReport('chek', null, code: 2, refusal: 'no task called `chek`'),
+        {
+          'version': reportVersion,
+          'task': 'chek',
+          'complete': true,
+          'code': 2,
+          'why': 'no task called `chek`',
+          'tasks': <Object?>[],
+        },
+      );
+    });
+  });
+
   group('the total is how much work there was', () {
     test('and a fanned-out task contributes its members, not its row', () {
       // It summed the ROWS, and a fanned-out task's row is how long you

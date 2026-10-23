@@ -89,6 +89,50 @@ final class NeverStartable extends Skipped {
   String get sentence => 'nothing that would let it start ever finished';
 }
 
+/// It was running when an earlier failure answered the run, and it was
+/// `interruptible:`, so it was stopped part-way.
+///
+/// **Only the report says it in the list.** The summary has no line for it:
+/// the task's own section already says it was stopped, and a person reading
+/// both is told twice. A program reading the report has only this.
+final class Interrupted extends Skipped {
+  const Interrupted();
+
+  @override
+  String get sentence =>
+      'stopped part-way: an earlier failure had already answered the run';
+}
+
+/// The run has not got to its end — what a report written during the run
+/// says of a task, and what it still says when the run is cut off there.
+///
+/// Never in the summary, which is written once the run has ended and so
+/// never meets a task that has not.
+final class CutOff extends Skipped {
+  const CutOff({required this.began});
+
+  /// Whether the task was running, rather than not yet begun.
+  final bool began;
+
+  @override
+  String get sentence => began
+      ? 'the run ended while it was running'
+      : 'the run ended before it began';
+}
+
+/// Which [Result] a task that did not run to its end is reported as.
+///
+/// Written out case by case, so that the next reason a task does not run is
+/// a decision about which of the two it is rather than a default.
+Result resultOf(Skipped why) => switch (why) {
+  NeedsStopped() || FollowsStopped() => Result.skipped,
+  RunStopped() ||
+  PartlyRun() ||
+  NeverStartable() ||
+  Interrupted() ||
+  CutOff() => Result.notRun,
+};
+
 /// Everything that failed and everything that therefore did not run.
 ///
 /// **A skip is always reported; a lone failure is not.** A failure has
@@ -109,6 +153,126 @@ List<String> summary(Map<String, int> failed, Map<String, Skipped> skipped) {
       'skipped  $name — ${why.sentence}',
   ];
 }
+
+// ── --report ────────────────────────────────────────────────────────────────
+
+/// The shape `--report` writes, counted: a reader that knows version 1 knows
+/// every field a version 1 report can have.
+///
+/// **Raised when a field changes meaning or goes away, not when one is
+/// added.** A reader is told to pass over a field it does not know, so a new
+/// one breaks nobody; a `result` that came to mean something else would
+/// break every reader quietly, which is what the number is for.
+const reportVersion = 1;
+
+/// What became of one task, or one member of an `each:`.
+///
+/// **Four, because a reader acts on four.** Passed and failed are the run's
+/// verdict; the other two are both "did not run" and are told apart because
+/// they are fixed in different places: a task skipped is waiting on one that
+/// failed, and fixing that one runs it, while a task not run was stopped by
+/// the run ending — a failure elsewhere, or the run cut off — and says
+/// nothing about anything it needs.
+enum Result {
+  /// It ran to its end and passed.
+  passed('passed'),
+
+  /// It ran and failed — its body, its `unchanged:` set, or a refusal at its
+  /// start such as a missing tool.
+  failed('failed'),
+
+  /// It never started: what it needs, or the task whose `then:` it follows,
+  /// did not pass.
+  skipped('skipped'),
+
+  /// It did not run, or did not run to its end, because the run stopped first.
+  notRun('not-run');
+
+  const Result(this.written);
+
+  /// How the report writes it. `not-run` rather than the Dart name, because
+  /// the report is read by programs in other languages, and by people.
+  final String written;
+}
+
+/// One task, or one member of an `each:`, as the report says it ended.
+final class Ended {
+  const Ended(
+    this.name,
+    this.result, {
+    this.took,
+    this.code,
+    this.why,
+    this.members = const [],
+  });
+
+  /// The task's name, or the member's.
+  final String name;
+
+  final Result result;
+
+  /// How long it ran. Null where it never started — and for a member where
+  /// it was the only one, whose time is its task's.
+  final Duration? took;
+
+  /// The code it failed with, from the exit code table: a `run:` body that
+  /// failed is 1 whatever its program exited with, which [why] says, and a
+  /// continuation is its own failure's code although the run answers 4.
+  final int? code;
+
+  /// What the run said about it, where it did not pass: the failure as it was
+  /// printed, or why it did not run.
+  final String? why;
+
+  /// For an `each:` task, every member in the set's order.
+  final List<Ended> members;
+}
+
+/// What a run has come to so far: each task of its plan in order, and how
+/// long it has been going.
+typedef RunSoFar = ({List<Ended> tasks, Duration took});
+
+/// The report `--report` writes for a run of [task], as JSON values.
+///
+/// [code] is what the run answered, and null while it has not: a report
+/// written during the run says it is not complete, so that one left behind
+/// by a run that was cut off cannot be read as a run that ended. [refusal]
+/// is what refused the run when it never began, which is when [run] is null.
+///
+/// Fields are left out where they have nothing to say rather than written as
+/// null, the way a reader in any language finds easiest to ask about them.
+Map<String, Object?> runReport(
+  String task,
+  RunSoFar? run, {
+  int? code,
+  String? refusal,
+}) {
+  Map<String, Object?> row(String key, Ended ended) => {
+    key: ended.name,
+    'result': ended.result.written,
+    'seconds': ?_seconds(ended.took),
+    'code': ?ended.code,
+    'why': ?ended.why,
+    if (ended.members.isNotEmpty)
+      'members': [for (final member in ended.members) row('member', member)],
+  };
+  return {
+    'version': reportVersion,
+    'task': task,
+    'complete': code != null,
+    'code': ?code,
+    'seconds': ?_seconds(run?.took),
+    'why': ?refusal,
+    'tasks': [
+      for (final ended in run?.tasks ?? const <Ended>[]) row('task', ended),
+    ],
+  };
+}
+
+/// Seconds, to the millisecond: what a program compares, where [asTime] is
+/// what a person reads.
+double? _seconds(Duration? took) =>
+    took == null ? null : took.inMilliseconds / 1000;
 
 /// What a parallel run is about to do, before it goes quiet.
 ///

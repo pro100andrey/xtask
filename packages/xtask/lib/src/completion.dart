@@ -65,7 +65,7 @@ _Value _after(String option) => switch (option) {
   '--only' => _Value.sets,
   '--completion' => _Value.shells,
   '--jobs' => _Value.jobs,
-  '--check-schema' => _Value.files,
+  '--check-schema' || '--report' => _Value.files,
   _ => throw StateError(
     '`$option` takes a value, and no completion script knows what it is',
   ),

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -261,6 +262,47 @@ void main() {
         for (final mode in ['--list', '--validate', '--dry-run']) {
           final usage = parseArguments([mode, 'x', '--keep-going']);
           expect(usage, isA<ShowUsage>(), reason: '$mode accepted it');
+        }
+      });
+    });
+
+    group('--report', () {
+      test('a file for a run, in either spelling', () {
+        for (final written in [
+          ['check', '--report', 'out/run.json'],
+          ['--report=out/run.json', 'check'],
+        ]) {
+          final request = parseArguments(written) as RunTask;
+          expect(request.task, 'check', reason: '$written');
+          expect(request.report, 'out/run.json', reason: '$written');
+        }
+        expect((parseArguments(['check']) as RunTask).report, isNull);
+      });
+
+      test('it needs the file', () {
+        for (final written in [
+          ['check', '--report'],
+          ['check', '--report='],
+          ['check', '--report', '--keep-going'],
+        ]) {
+          final usage = parseArguments(written) as ShowUsage;
+          expect(usage.problem, contains('--report'), reason: '$written');
+        }
+      });
+
+      test('a mode that runs nothing has no run to report', () {
+        for (final mode in [
+          ['--list'],
+          ['--validate'],
+          ['--dry-run', 'x'],
+        ]) {
+          final usage = parseArguments([...mode, '--report', 'r.json']);
+          expect(usage, isA<ShowUsage>(), reason: '$mode accepted it');
+          expect(
+            (usage as ShowUsage).problem,
+            contains('--report'),
+            reason: '$mode',
+          );
         }
       });
     });
@@ -971,6 +1013,79 @@ tasks:
         writeFile('version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n');
         await run(['--dry-run', 'a', '--', '-n', 'two words']);
         expect(printed(), contains("run  /bin/dart test -n 'two words'"));
+      });
+    });
+
+    group('--report', () {
+      Map<String, Object?> reportAt(String path) =>
+          jsonDecode(File(path).readAsStringSync()) as Map<String, Object?>;
+
+      test('is written where the person stands, not at the root', () async {
+        // Relative to the working directory, as `--check-schema` reads its
+        // path: the person typed it from there, and a report that landed at
+        // the root would be one nobody finds.
+        starter = FakeStarter({'pytest': 1});
+        writeFile('''
+version: 1
+gates: [check]
+tasks:
+  lint: {desc: a, gate: [check], run: [ruff]}
+  unit: {desc: b, gate: [check], run: [pytest]}
+''');
+        final deep = Directory(p.join(root.path, 'packages', 'lake'))
+          ..createSync(recursive: true);
+        expect(
+          await run(['check', '--report', 'out/run.json'], from: deep.path),
+          ExitCode.taskFailed,
+        );
+        final report = reportAt(p.join(deep.path, 'out', 'run.json'));
+        expect(report['version'], 1);
+        expect(report['task'], 'check');
+        expect(report['complete'], isTrue);
+        expect(report['code'], ExitCode.taskFailed);
+        expect(
+          [
+            for (final t in report['tasks']! as List<Object?>)
+              if (t case {'task': final name, 'result': final result})
+                [name, result],
+          ],
+          [
+            ['lint', 'passed'],
+            ['unit', 'failed'],
+          ],
+        );
+      });
+
+      test('a run refused before anything began says why', () async {
+        writeFile('version: 1\ntasks:\n  lint: {desc: a, run: [ruff]}\n');
+        final at = p.join(root.path, 'run.json');
+        expect(await run(['lnit', '--report', at]), ExitCode.invalidFile);
+        final report = reportAt(at);
+        expect(report['code'], ExitCode.invalidFile);
+        expect(report['complete'], isTrue);
+        expect(report['tasks'], isEmpty);
+        expect(report['why'], contains('lnit'));
+      });
+
+      test('and so does a file the engine cannot read', () async {
+        writeFile('version: 1\ntasks: [\n');
+        final at = p.join(root.path, 'run.json');
+        expect(await run(['lint', '--report', at]), ExitCode.invalidFile);
+        expect(reportAt(at)['why'], isNotEmpty);
+      });
+
+      test('one that cannot be written is said before anything runs', () async {
+        // A report asked for and not written reads, to whatever reads it, as
+        // a run that left none — so the run that would not leave one does
+        // not begin.
+        writeFile('version: 1\ntasks:\n  lint: {desc: a, run: [ruff]}\n');
+        File(p.join(root.path, 'taken')).writeAsStringSync('');
+        expect(
+          await run(['lint', '--report', 'taken/run.json']),
+          ExitCode.invalidFile,
+        );
+        expect(starter.started, isEmpty);
+        expect(complained(), contains('taken/run.json'));
       });
     });
 
