@@ -785,7 +785,10 @@ void main() {
         'a',
         environment: const {'PATH': '/bin'},
       ).single;
-      final expected = p.join(root.path, '.cache', 'pub');
+      // `p.posix`, not the host's `p`: the resolver here is the POSIX one,
+      // and the separators are the resolver's to choose — on a Windows
+      // runner the host's join would expect the other machine's path.
+      final expected = p.posix.join(root.path, '.cache', 'pub');
       expect(body.environment['PUB_CACHE'], expected);
       expect(body.declaredEnvironment, {'PUB_CACHE': expected});
     });
@@ -800,7 +803,7 @@ void main() {
             '\n',
         'a',
       ).single;
-      expect(body.environment['OUT'], p.join(root.path, 'build', 'dev'));
+      expect(body.environment['OUT'], p.posix.join(root.path, 'build', 'dev'));
     });
 
     test('a member that takes the path out of the root is refused', () {
