@@ -6,14 +6,17 @@
 
 - On a terminal the summary, the task headings and `--graph` are drawn in
   colour: `✓` green, `✗` and a failure's code red, `⊘` and `⏹` yellow,
-  times and reasons faint, a heading bold. `NO_COLOR` (anything but empty)
-  turns it off; `FORCE_COLOR` (anything but empty or `0`) turns it on in a
-  pipe too, and `NO_COLOR` wins. A pipe or a file without `FORCE_COLOR` gets
+  times and reasons faint, a heading bold. On Linux and macOS a terminal is
+  coloured when `TERM` is set and not `dumb`; on Windows when the console
+  draws ANSI. `NO_COLOR` (anything but empty) turns it off; `FORCE_COLOR`
+  set to `0` or `false` turns it off too, and set to anything else but
+  empty turns it on in a pipe as well, `NO_COLOR` winning. A pipe or a file without `FORCE_COLOR` gets
   exactly the bytes it got before, and `--report`, `--names`,
   `--gate-members`, `--check-ci`, `--emit-schema` and the GitHub markers
   are never coloured. On a Windows console without ANSI support, the marks
   and tree glyphs are ASCII: `ok`/`FAIL`/`skip`/`stop`/`-`, `+-`, `` `- ``,
-  `|`.
+  `|` — every line the summary and `--graph` draw there is ASCII — and
+  that console is never coloured, `FORCE_COLOR` or not.
 
 - `xtask --graph [<name>]` draws what a gate set or task pulls in, as a
   tree, without running or resolving anything: `needs` and `then` edges

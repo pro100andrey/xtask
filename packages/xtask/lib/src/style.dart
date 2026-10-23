@@ -57,25 +57,28 @@ enum Glyphs {
     through: '│  ',
     rule: '──',
     times: '×',
+    dash: '—',
   ),
 
   /// What a console that cannot draw [unicode] is given instead.
   ///
-  /// **Words, padded to one width.** A mark is the first thing on a summary
-  /// row, so names line up under one another only if every mark is as wide
-  /// as the widest; `FAIL` in capitals because it is the one a reader scans
-  /// for. The branches are as wide as [unicode]'s, so a tree keeps its shape.
+  /// **Words**, `FAIL` in capitals because it is the one a reader scans
+  /// for. They are not one width, and a mark is never padded here: where
+  /// marks must line up, the summary pads them to [markWidth], and `--graph`
+  /// uses one beside a sentence, where padding would be a gap. The branches
+  /// are as wide as [unicode]'s, so a tree keeps its shape.
   ascii(
-    passed: 'ok  ',
+    passed: 'ok',
     failed: 'FAIL',
     skipped: 'skip',
     stopped: 'stop',
-    notBegun: '-   ',
+    notBegun: '-',
     branch: '+- ',
     lastBranch: '`- ',
     through: '|  ',
     rule: '--',
     times: 'x',
+    dash: '-',
   );
 
   const Glyphs({
@@ -89,6 +92,7 @@ enum Glyphs {
     required this.through,
     required this.rule,
     required this.times,
+    required this.dash,
   });
 
   final String passed;
@@ -111,6 +115,20 @@ enum Glyphs {
 
   /// What stands before an `each:` task's member count.
   final String times;
+
+  /// What joins a clause to the one it explains.
+  final String dash;
+
+  /// How wide the widest mark is: the column every mark is padded to, and so
+  /// where a name begins, which is where a member's mark and the total are
+  /// drawn under it.
+  int get markWidth => [
+    passed,
+    failed,
+    skipped,
+    stopped,
+    notBegun,
+  ].map((mark) => mark.length).reduce((a, b) => a > b ? a : b);
 }
 
 /// How the human-readable lines of one invocation are drawn.
@@ -120,17 +138,29 @@ final class Style {
   ///
   /// **Colour**, in this order:
   ///
-  /// 1. `NO_COLOR` set to anything but the empty string: none. It is a
+  /// 1. The legacy console below: none, whatever was asked. It prints an
+  ///    escape as the text `←[32m`, so a forced colour there is noise on
+  ///    every mark rather than colour.
+  /// 2. `NO_COLOR` set to anything but the empty string: none. It is a
   ///    person saying so, and a forced colour that overrode it would be the
   ///    tool deciding it knows better (no-color.org).
-  /// 2. `FORCE_COLOR` set to anything but the empty string or `0`: colour,
-  ///    even into a pipe — a CI log that renders escapes, or `less -R`. `0`
-  ///    is how a pipeline that exports it everywhere says "not here", and
-  ///    Node's tools read it so.
-  /// 3. Otherwise colour exactly when stdout is a terminal that draws ANSI
-  ///    escapes ([terminal] and [ansiEscapes]). A pipe or a file is never
-  ///    coloured, so what a program reads is byte for byte what it read
-  ///    before there was colour.
+  /// 3. `FORCE_COLOR` set to `0` or `false`: none, even on a terminal, and
+  ///    set to anything else but the empty string: colour, even into a pipe
+  ///    — a CI log that renders escapes, or `less -R`. Both as Node's tools
+  ///    read it, since that is where a pipeline exporting it learned it;
+  ///    empty is unset, as it is for `NO_COLOR`.
+  /// 4. Otherwise colour exactly when stdout is a terminal that draws ANSI
+  ///    escapes. A pipe or a file is never coloured, so what a program reads
+  ///    is byte for byte what it read before there was colour.
+  ///
+  /// **Which terminal draws ANSI**, by platform. On Windows, [ansiEscapes]:
+  /// whether the console has virtual terminal processing is a fact of the
+  /// console, and only the console can be asked it. On POSIX, `TERM` set and
+  /// not `dumb`, and [ansiEscapes] is not read: Dart answers it from a list
+  /// of `TERM` names, and `linux`, `foot` and `alacritty` are missing from
+  /// it, so the console and two common emulators would never be coloured.
+  /// Every terminal a POSIX machine still runs draws SGR colour; the one that
+  /// says it cannot says so with `dumb`.
   ///
   /// **ASCII glyphs** exactly when stdout is a Windows console that draws no
   /// ANSI escapes — conhost without virtual terminal processing, whose raster
@@ -148,12 +178,18 @@ final class Style {
   }) {
     final legacyConsole = windows && terminal && !ansiEscapes;
     final glyphs = legacyConsole ? Glyphs.ascii : Glyphs.unicode;
+    final term = environment['TERM'] ?? '';
+    final drawsAnsi =
+        terminal && (windows ? ansiEscapes : term.isNotEmpty && term != 'dumb');
     final refused = environment['NO_COLOR']?.isNotEmpty ?? false;
-    final forced = switch (environment['FORCE_COLOR']) {
-      null || '' || '0' => false,
-      _ => true,
-    };
-    final coloured = !refused && (forced || (terminal && ansiEscapes));
+    final coloured =
+        !legacyConsole &&
+        !refused &&
+        switch (environment['FORCE_COLOR']) {
+          '0' || 'false' => false,
+          null || '' => drawsAnsi,
+          _ => true,
+        };
     return Style._(coloured: coloured, glyphs: glyphs);
   }
 

@@ -466,7 +466,7 @@ Future<int> _answer(
           starter: starter,
           log: out,
           relay: relay,
-          markers: LogMarkers.forHost(environment, style: style),
+          markers: LogMarkers.forHost(environment),
           keepGoing: keepGoing,
           concurrency: concurrency,
           reportTo: reportTo,

@@ -309,8 +309,8 @@ final class Executor {
   /// process died where it stood and left them all running, orphaned.
   final Interruption? interruption;
 
-  /// How the summary is drawn. The headings are [markers]'s, which carry
-  /// their own.
+  /// How the summary and the headings are drawn: the one copy, handed to
+  /// [markers] with each heading so the two cannot be drawn apart.
   final Style style;
 
   /// Whether this run has decided the answer is known.
@@ -830,7 +830,7 @@ final class Executor {
     _Outcomes outcomes,
     _Lines lines,
   ) async {
-    markers.open(task.name).forEach(lines.call);
+    markers.open(task.name, style).forEach(lines.call);
 
     // Every way this task could turn out to be unrunnable is answered by one
     // call, and answered the same way `--dry-run` is answered — because it is

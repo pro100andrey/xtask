@@ -21,19 +21,20 @@ sealed class LogMarkers {
   /// Detected rather than configured. A flag would be a second place to say
   /// where the run is happening, and it would be wrong on the day somebody
   /// copies a workflow.
-  ///
-  /// [style] reaches the plain heading only. GitHub's markers are commands
-  /// the runner reads to the end of the line, and a colour code in one is
-  /// part of the group's name or the annotation's text.
-  factory LogMarkers.forHost(
-    Map<String, String> environment, {
-    Style style = Style.plain,
-  }) => environment['GITHUB_ACTIONS'] == 'true'
+  factory LogMarkers.forHost(Map<String, String> environment) =>
+      environment['GITHUB_ACTIONS'] == 'true'
       ? const GitHubMarkers()
-      : PlainMarkers(style);
+      : const PlainMarkers();
 
-  /// Opens a section for [task].
-  List<String> open(String task);
+  /// Opens a section for [task], drawn in [style] where the host draws it.
+  ///
+  /// **Handed the style, not holding one.** The executor draws the summary
+  /// in its style and the headings through these, and a style held here as
+  /// well was a second copy the two could be built with apart — a bold
+  /// heading over a plain summary. GitHub's markers ignore it: they are
+  /// commands the runner reads to the end of the line, and a colour code in
+  /// one is part of the group's name.
+  List<String> open(String task, [Style style = Style.plain]);
 
   /// Closes the section [open] began.
   List<String> close();
@@ -48,17 +49,14 @@ sealed class LogMarkers {
 /// the next hundred lines belong to, and that is worth having with or without
 /// a fold.
 final class PlainMarkers extends LogMarkers {
-  const PlainMarkers([this.style = Style.plain]);
-
-  /// How the heading is drawn.
-  final Style style;
+  const PlainMarkers();
 
   /// **Bold, rule and name together.** A body's own output is never
   /// coloured, so in a long transcript the heading is the one line that says
   /// where the next task begins; bold makes it findable at a glance without
   /// a colour that would read as a verdict before the task has one.
   @override
-  List<String> open(String task) => [
+  List<String> open(String task, [Style style = Style.plain]) => [
     style.paint(
       '${style.glyphs.rule} $task ${style.glyphs.rule}',
       Tint.heading,
@@ -82,7 +80,9 @@ final class GitHubMarkers extends LogMarkers {
   /// fold could still be opened on half a name with the rest printed beside
   /// it as stray output.
   @override
-  List<String> open(String task) => ['::group::${workflowEscaped(task)}'];
+  List<String> open(String task, [Style style = Style.plain]) => [
+    '::group::${workflowEscaped(task)}',
+  ];
 
   @override
   List<String> close() => const ['::endgroup::'];

@@ -53,13 +53,16 @@ String _uncoloured(String line) =>
 
 void main() {
   group('the style is chosen from what stdout is and what was asked', () {
+    // A terminal an ordinary emulator describes, unless a test says what
+    // else it is.
     Style choose({
       Map<String, String> environment = const {},
+      String? term = 'xterm-256color',
       bool terminal = true,
       bool ansiEscapes = true,
       bool windows = false,
     }) => Style.choose(
-      environment: environment,
+      environment: {'TERM': ?term, ...environment},
       terminal: terminal,
       ansiEscapes: ansiEscapes,
       windows: windows,
@@ -82,10 +85,31 @@ void main() {
       );
     });
 
-    test('a terminal that draws no ANSI is not coloured', () {
-      expect(choose(ansiEscapes: false).coloured, isFalse);
-      // `TERM=dumb` on a POSIX terminal: no escapes, but UTF-8 all the same.
-      expect(choose(ansiEscapes: false).glyphs, Glyphs.unicode);
+    test("a POSIX terminal is coloured by its TERM, not by Dart's list", () {
+      // Dart's `supportsAnsiEscapes` is false for these, measured on a pty,
+      // and every one of them draws ANSI colour.
+      for (final term in ['linux', 'foot', 'alacritty', 'xterm-kitty']) {
+        expect(
+          choose(term: term, ansiEscapes: false).coloured,
+          isTrue,
+          reason: 'TERM=$term',
+        );
+      }
+      // `TERM=dumb`, or none at all: a terminal that says it draws nothing.
+      for (final term in ['dumb', '', null]) {
+        expect(
+          choose(term: term).coloured,
+          isFalse,
+          reason: 'TERM=$term',
+        );
+        // No escapes, but UTF-8 all the same.
+        expect(choose(term: term).glyphs, Glyphs.unicode);
+      }
+    });
+
+    test('a Windows console is coloured by whether it draws ANSI', () {
+      expect(choose(term: null, windows: true).coloured, isTrue);
+      expect(choose(ansiEscapes: false, windows: true).coloured, isFalse);
     });
 
     test("Windows' legacy console is given ASCII, as marks and branches", () {
@@ -118,14 +142,39 @@ void main() {
         ).coloured,
         isFalse,
       );
-      // `0` is how a pipeline says "not forced", as Node's tools read it.
-      for (final off in ['', '0']) {
-        expect(
-          choose(environment: {'FORCE_COLOR': off}, terminal: false).coloured,
-          isFalse,
-          reason: 'FORCE_COLOR=$off',
-        );
+      // Empty is unset, as it is for NO_COLOR.
+      expect(
+        choose(environment: {'FORCE_COLOR': ''}, terminal: false).coloured,
+        isFalse,
+      );
+      expect(choose(environment: {'FORCE_COLOR': ''}).coloured, isTrue);
+    });
+
+    test('FORCE_COLOR=0 or false takes colour away, as Node reads it', () {
+      for (final off in ['0', 'false']) {
+        for (final terminal in [true, false]) {
+          expect(
+            choose(
+              environment: {'FORCE_COLOR': off},
+              terminal: terminal,
+            ).coloured,
+            isFalse,
+            reason: 'FORCE_COLOR=$off, terminal: $terminal',
+          );
+        }
       }
+      expect(choose(environment: {'FORCE_COLOR': 'true'}).coloured, isTrue);
+    });
+
+    test('FORCE_COLOR does not colour the legacy console', () {
+      // Its escapes would be printed as text: `←[32m` before every mark.
+      final legacy = choose(
+        environment: {'FORCE_COLOR': '1'},
+        ansiEscapes: false,
+        windows: true,
+      );
+      expect(legacy.coloured, isFalse);
+      expect(legacy.glyphs, Glyphs.ascii);
     });
   });
 
@@ -177,13 +226,11 @@ void main() {
     });
 
     test('the heading is bold; a GitHub group is never coloured', () {
-      expect(const PlainMarkers(Style.ansi).open('test'), [
+      expect(const PlainMarkers().open('test', Style.ansi), [
         '\x1B[1m── test ──\x1B[0m',
       ]);
-      final github = LogMarkers.forHost({
-        'GITHUB_ACTIONS': 'true',
-      }, style: Style.ansi);
-      expect(github.open('test'), ['::group::test']);
+      final github = LogMarkers.forHost({'GITHUB_ACTIONS': 'true'});
+      expect(github.open('test', Style.ansi), ['::group::test']);
       expect(github.error('broke'), ['::endgroup::', '::error::broke']);
     });
   });
@@ -214,6 +261,121 @@ void main() {
       expect(lines.join('\n'), isNot(contains(RegExp('[^\x00-\x7F]'))));
     });
 
+    test("a mark is only the mark; its padding is the summary's", () {
+      for (final glyphs in Glyphs.values) {
+        for (final mark in [
+          glyphs.passed,
+          glyphs.failed,
+          glyphs.skipped,
+          glyphs.stopped,
+          glyphs.notBegun,
+        ]) {
+          expect(mark, mark.trim(), reason: '${glyphs.name} "$mark"');
+        }
+      }
+    });
+
+    test("a member and the total begin where the task's name does", () {
+      for (final style in [Style.plain, Style.legacy]) {
+        final lines = summary(
+          (
+            tasks: [
+              const Ended(
+                'build',
+                Result.failed,
+                took: Duration(seconds: 2),
+                members: [
+                  Ended('a', Result.passed, took: Duration(seconds: 1)),
+                  Ended(
+                    'b',
+                    Result.failed,
+                    took: Duration(seconds: 1),
+                    code: 1,
+                  ),
+                ],
+              ),
+              const Ended('lint', Result.passed, took: Duration(seconds: 1)),
+            ],
+            took: const Duration(seconds: 3),
+          ),
+          concurrent: false,
+          style: style,
+        );
+        final name = lines[1].indexOf('build');
+        expect(lines[2].indexOf(style.glyphs.passed), name, reason: lines[2]);
+        expect(lines[3].indexOf(style.glyphs.failed), name, reason: lines[3]);
+        expect(lines[5].indexOf('total'), name, reason: lines[5]);
+        // And every time still in one column.
+        final times = {
+          for (final line in lines.skip(1)) line.indexOf(RegExp(r'\ds')),
+        };
+        expect(times, hasLength(1), reason: lines.join('\n'));
+      }
+    });
+
+    test('everything the summary and the graph draw is ASCII', () {
+      final file = parseXtaskFile(r'''
+version: 1
+sets:
+  pkgs: {values: [a, b, c, d, e]}
+  made: {include: ['out/*'], produced-by: gen}
+tasks:
+  publish: {desc: p, needs: [build, test, packs], then: [desktop], run: [dart]}
+  build: {desc: b, each: pkgs, run: [dart, $each]}
+  test: {desc: t, needs: [build], run: [dart]}
+  gen: {desc: g, run: [dart]}
+  packs: {desc: k, needs: [gen], each: made, run: [dart, $each]}
+  desktop: {desc: d, platforms: [windows], run: [dart]}
+''');
+      final drawn = graph(
+        file,
+        name: 'publish',
+        host: OperatingSystem.linux,
+        fanOf: (task) => task.name == 'packs'
+            ? const MembersNotYet('gen')
+            : const Members(['a', 'b', 'c', 'd', 'e']),
+        style: Style.legacy,
+      );
+      expect(drawn.join('\n'), contains('see above'));
+      expect(drawn.join('\n'), contains('and 2 more'));
+      expect(drawn.join('\n'), contains('cannot be resolved yet'));
+      expect(drawn.join('\n'), contains('windows only'));
+      final summed = summary(
+        (
+          tasks: [
+            const Ended(
+              'build',
+              Result.notRun,
+              took: Duration(seconds: 2),
+              why: 'stopped after 1 of 2 members, at an earlier failure',
+              members: [
+                Ended('a', Result.failed, took: Duration(seconds: 1), code: 1),
+                Ended('b', Result.notRun, why: 'the run ended before it began'),
+              ],
+            ),
+            const Ended('desktop', Result.skipped, why: 'windows only'),
+            const Ended(
+              'test',
+              Result.notRun,
+              took: Duration(seconds: 1),
+              why: 'stopped part-way: the run received SIGINT',
+            ),
+          ],
+          took: const Duration(seconds: 3),
+        ),
+        concurrent: true,
+        narrowed: const {'build': (kept: 2, of: 5)},
+        style: Style.legacy,
+      );
+      for (final line in [
+        ...drawn,
+        ...summed,
+        ...const PlainMarkers().open('build', Style.legacy),
+      ]) {
+        expect(line, isNot(contains(RegExp('[^\x00-\x7F]'))), reason: line);
+      }
+    });
+
     test('the tree, its count and its off-platform mark', () {
       final file = parseXtaskFile(r'''
 version: 1
@@ -241,7 +403,7 @@ tasks:
           '`- then  desktop   skip windows only',
         ],
       );
-      expect(const PlainMarkers(Style.legacy).open('test'), ['-- test --']);
+      expect(const PlainMarkers().open('test', Style.legacy), ['-- test --']);
     });
   });
 

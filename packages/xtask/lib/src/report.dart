@@ -284,6 +284,12 @@ List<String> summary(
     Result.skipped || Result.notRun => ended.why ?? '',
   };
 
+  // **Where a name begins**: past the widest mark and its space. A member's
+  // mark and the total are drawn there, under the name, so a member reads as
+  // part of its task whatever the marks are — one character or `FAIL`.
+  final marks = style.glyphs.markWidth;
+  final under = ' ' * (marks + 1);
+
   final rows = <_Row>[];
   void add(Ended ended, {required String indent, String note = ''}) {
     final why = reason(ended);
@@ -303,7 +309,7 @@ List<String> summary(
   for (final ended in run.tasks) {
     add(ended, indent: '', note: note(ended));
     for (final member in listed(ended)) {
-      add(member, indent: '  ');
+      add(member, indent: under);
     }
   }
 
@@ -315,7 +321,7 @@ List<String> summary(
   // one timed task gets none.
   if (timed.length > 1) {
     rows.add((
-      indent: '  ',
+      indent: under,
       mark: null,
       name: 'total',
       time: asTime(timed.map(workOf).reduce((a, b) => a + b)),
@@ -324,8 +330,14 @@ List<String> summary(
   }
 
   // One column for every name, the members' and the total's with them, so
-  // each time sits under the one above it whatever depth it is at.
-  final width = _widest(rows.map(_label));
+  // each time sits under the one above it whatever depth it is at. Each
+  // row's first column is measured once, and that one number is both what
+  // the column is the widest of and what the row is padded from.
+  final labels = [
+    for (final row in rows)
+      row.indent.length + (row.mark == null ? 0 : marks + 1) + row.name.length,
+  ];
+  final width = labels.fold(0, (a, b) => a > b ? a : b);
   final column = _widest(rows.map((row) => row.time ?? ''));
   // **Two numbers, and only where they differ**, after the total's own.
   // Sequentially the sum of the tasks IS how long the run took. Run together
@@ -340,11 +352,14 @@ List<String> summary(
     for (final (at, row) in rows.indexed)
       render([
         (row.indent, null),
+        // The one place a mark is padded: painted as itself, so no colour is
+        // drawn around the spaces after a short one.
         if (row.mark case (final mark, final tint)) ...[
           (mark, tint),
-          (' ', null),
+          (' ' * (marks - mark.length + 1), null),
         ],
-        (row.name.padRight(width - _label(row).length + row.name.length), null),
+        (row.name, null),
+        (' ' * (width - labels[at]), null),
         // No column at all where nothing has a time — a run of tasks that
         // are all for other platforms — rather than a gap with nothing in it.
         if (column > 0) ...[
@@ -365,10 +380,6 @@ typedef _Row = ({
   String? time,
   List<(String, Tint)> detail,
 });
-
-/// [row]'s first column as a reader sees it, which is what it is padded by.
-String _label(_Row row) =>
-    '${row.indent}${row.mark == null ? '' : '${row.mark!.$1} '}${row.name}';
 
 /// The mark a row begins with: the report's [Result], and for `not-run`
 /// whether it began.
@@ -736,8 +747,7 @@ List<String> graph(
         ? (
             '',
             (
-              '${glyphs.skipped.trimRight()} '
-                  '${OffPlatform(task.platforms).sentence}',
+              '${glyphs.skipped} ${OffPlatform(task.platforms).sentence}',
               Tint.warned,
             ),
           )
@@ -751,7 +761,8 @@ List<String> graph(
             MembersNotYet(:final producer) => (
               '',
               (
-                'cannot be resolved yet — task `$producer` makes its members',
+                'cannot be resolved yet ${glyphs.dash} task `$producer` makes '
+                    'its members',
                 Tint.faint,
               ),
             ),

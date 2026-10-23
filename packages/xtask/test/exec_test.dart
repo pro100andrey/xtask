@@ -18,6 +18,7 @@ import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/primitives.dart';
 import 'package:xtask/src/process.dart';
 import 'package:xtask/src/report.dart';
+import 'package:xtask/src/style.dart';
 
 import 'helpers.dart';
 
@@ -236,6 +237,7 @@ void main() {
     Duration step = const Duration(milliseconds: 100),
     void Function(RunSoFar run)? reportTo,
     Interruption? interruption,
+    Style style = Style.plain,
   }) {
     final file = parseXtaskFile(yaml);
     return Executor(
@@ -255,8 +257,24 @@ void main() {
       concurrency: concurrency,
       reportTo: reportTo,
       interruption: interruption,
+      style: style,
     ).run(planRun(file, task));
   }
+
+  test('the heading and the summary are drawn in the one style', () async {
+    // One style, given to the executor: the markers it was handed draw in
+    // it, so a heading and the summary under it cannot disagree.
+    await runFile(
+      'version: 1\n'
+          'tasks:\n'
+          '  a: {desc: x, run: [dart]}\n'
+          '  b: {desc: x, needs: [a], run: [dart]}\n',
+      'b',
+      style: Style.ansi,
+    );
+    expect(logged, contains('\x1B[1m── a ──\x1B[0m'));
+    expect(logged, contains(startsWith('\x1B[32m✓\x1B[0m a')));
+  });
 
   group('an empty set that feeds `remove` says what shape it wants', () {
     test(

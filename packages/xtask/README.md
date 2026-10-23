@@ -761,10 +761,17 @@ command.
 
 Whether there is colour is decided once, about stdout, in this order:
 
-1. `NO_COLOR` set to anything but the empty string: no colour.
-2. `FORCE_COLOR` set to anything but the empty string or `0`: colour, into a
-   pipe or a file too — a CI log that renders escapes, or `less -R`.
-3. Otherwise colour exactly when stdout is a terminal that draws ANSI escapes.
+1. The legacy Windows console below: no colour, whatever is set — it would
+   print each escape as text.
+2. `NO_COLOR` set to anything but the empty string: no colour.
+3. `FORCE_COLOR` set to `0` or `false`: no colour, on a terminal too. Set to
+   anything else but the empty string: colour, into a pipe or a file too — a
+   CI log that renders escapes, or `less -R`. This is how Node's tools read
+   it; empty is unset.
+4. Otherwise colour exactly when stdout is a terminal that draws ANSI escapes:
+   on Linux and macOS, a terminal whose `TERM` is set and is not `dumb`; on
+   Windows, a console with virtual terminal processing, Windows Terminal
+   among them.
 
 So **a pipe or a file gets, byte for byte, what it always got**. And what a
 program reads is never coloured, whatever the variables say: `--report`,
@@ -776,8 +783,8 @@ fragment, never through one.
 On a Windows console that draws no ANSI escapes — the legacy console, whose
 fonts have no `✓` or `├` — the glyphs are ASCII instead, marks and branches
 together: `ok`, `FAIL`, `skip`, `stop` and `-` for the marks, `+-`, `` `- ``
-and `|` for the tree, `--` around a heading and `x` before a member count.
-Nowhere else: a POSIX terminal with no escapes (`TERM=dumb`) still draws
+and `|` for the tree, `--` around a heading and `x` before a member count,
+and a member's row still begins under its task's name. Nowhere else: a POSIX terminal with no escapes (`TERM=dumb`) still draws
 UTF-8, and a pipe on any platform is a file, whose bytes do not change.
 
 ### A run as JSON
