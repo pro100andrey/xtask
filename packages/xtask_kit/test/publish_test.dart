@@ -110,6 +110,19 @@ void main() {
       expect(started, isEmpty);
     });
 
+    test('so is one whose manifest is not YAML, naming it', () async {
+      write('packages/demo/pubspec.yaml', 'name: demo\nversion: [1.2.0\n');
+      expect(await run(), ExitCode.invalidFile);
+      expect(said.join('\n'), contains('pubspec.yaml'));
+      expect(started, isEmpty);
+    });
+
+    test('a manifest written in flow style is read as pub reads it', () async {
+      write('packages/demo/pubspec.yaml', '{name: demo, version: 1.2.0}\n');
+      expect(await run(), ExitCode.success);
+      expect(asked.first, 'https://pub.dev demo');
+    });
+
     test('a CHANGELOG that does not name the version refuses', () async {
       write('packages/demo/CHANGELOG.md', '# Changelog\n\n## Unreleased\n');
       expect(await run(), ExitCode.taskFailed);
@@ -251,13 +264,36 @@ void main() {
       expect(manifestField('dev:\n  version: 1.2.0\n', 'version'), isNull);
     });
 
-    test('and is refused where it is not a single plain value', () {
+    test('and however YAML writes it — a pubspec is YAML, not lines', () {
+      expect(manifestField('version: >-\n  1.2.0\n', 'version'), '1.2.0');
+      expect(manifestField('version : 1.2.0\n', 'version'), '1.2.0');
+      expect(manifestField('"version": 1.2.0\n', 'version'), '1.2.0');
+      expect(manifestField("name: 'it''s'\n", 'name'), "it's");
       expect(
-        () => manifestField('version: >\n  1.2.0\n', 'version'),
+        manifestField('{name: demo, version: 1.2.0}\n', 'version'),
+        '1.2.0',
+      );
+    });
+
+    test('and is refused where the manifest is not a map of YAML', () {
+      expect(
+        () => manifestField('version: 1\nversion: 2\n', 'version'),
         throwsFormatException,
       );
       expect(
-        () => manifestField('version: 1\nversion: 2\n', 'version'),
+        () => manifestField('name: demo\nversion: [1.2.0\n', 'name'),
+        throwsFormatException,
+      );
+      expect(() => manifestField('- demo\n', 'name'), throwsFormatException);
+    });
+
+    test('or where the field is not a string', () {
+      expect(
+        () => manifestField('version: 1.0\n', 'version'),
+        throwsFormatException,
+      );
+      expect(
+        () => manifestField('name: [demo]\n', 'name'),
         throwsFormatException,
       );
     });

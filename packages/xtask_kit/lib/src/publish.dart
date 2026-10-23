@@ -8,6 +8,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:xtask/xtask.dart';
+import 'package:yaml/yaml.dart';
 
 /// How long [publishToPub] holds off before each look at the registry, once
 /// the upload is through.
@@ -365,33 +366,22 @@ bool changelogNames(String text, String version) {
 /// The value of the top-level [key] in [text], a `pubspec.yaml`, or null
 /// where it has none.
 ///
-/// **Read narrowly rather than parsed, and refusing past that.** This package
-/// carries no YAML parser, and the three fields read here — `name`, `version`,
-/// `publish_to` — are a single plain scalar in every manifest pub accepts in
-/// practice. So one written otherwise — a block scalar, a key given twice —
-/// throws a [FormatException] naming it, rather than being read some way it
-/// might not mean.
+/// **Parsed as YAML, the way pub reads it**, so a value quoted, folded or
+/// written in flow style means here what it means to pub. Throws a
+/// [FormatException] where [text] is not YAML or not a map, and where the
+/// value is something other than a string — `version: 1.0` is a number, and
+/// pub refuses it; reading it back as text would let a publish start on a
+/// manifest pub will not take.
 String? manifestField(String text, String key) {
-  final values = [
-    for (final line in const LineSplitter().convert(text))
-      if (line.startsWith('$key:')) line.substring(key.length + 1),
-  ];
-  if (values.isEmpty) {
-    return null;
+  final document = loadYaml(text);
+  if (document is! Map) {
+    throw const FormatException('a pubspec is a map');
   }
-  if (values.length > 1) {
-    throw FormatException('`$key:` is given ${values.length} times');
-  }
-  final match = RegExp(
-    r'''^\s+(?:'([^']*)'|"([^"\\]*)"|([^\s#'"&*!|>\[{][^\s#]*))\s*(?:#.*)?$''',
-  ).firstMatch(values.single);
-  if (match == null) {
-    throw FormatException(
-      '`$key:` is not a single plain value on its line, which is all this '
-      'reads',
-    );
-  }
-  return match[1] ?? match[2] ?? match[3];
+  return switch (document[key]) {
+    null => null,
+    final String value => value,
+    _ => throw FormatException('`$key:` is not a string'),
+  };
 }
 
 Future<void> _delay(Duration delay) => Future<void>.delayed(delay);
