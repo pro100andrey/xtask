@@ -42,10 +42,12 @@ tasks:
     run: [dart, analyze, --fatal-infos]
 
   test:
-    # From the repository root, which is the run that counts: a test that only
-    # passes from its own directory is red here.
+    # In the package, because that is the only place `dart test` looks: from
+    # the root of a workspace it runs the root's tests, and the root has none.
+    # The suite finds this file upwards from there, as the command does.
     desc: run the suite
     gate: [check]
+    in: packages/xtask
     run: [dart, test]
 
 
@@ -72,6 +74,7 @@ tasks:
   publishable:
     desc: refuse a package that could not be published as it stands
     gate: [release]
+    in: packages/xtask
     run: [dart, pub, publish, --dry-run]
 
 

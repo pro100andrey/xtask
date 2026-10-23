@@ -55,8 +55,8 @@ typedef ProjectEntry = ({
 ///
 /// Null where there is no `xtask.yaml` above [workingDirectory] (the engine
 /// says so in its own words), where its directory has no `bin/xtask.dart`,
-/// and where that directory is this package's own repository, whose entry
-/// point is this one. And for completion: `--completion` prints a script
+/// and where that directory is this package itself, whose entry point is
+/// this one. And for completion: `--completion` prints a script
 /// that is the same whoever prints it, and `--names`, asked on every TAB,
 /// is answered here while this engine can read the file — a hand-over would
 /// put a Dart start-up behind each keypress — and handed over only where it

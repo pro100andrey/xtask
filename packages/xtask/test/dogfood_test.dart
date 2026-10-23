@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -27,6 +28,7 @@ import 'package:xtask/src/version.dart';
 /// to guard against it.
 void main() {
   late String root;
+  late String package;
   late XtaskFile file;
 
   setUpAll(() {
@@ -39,6 +41,15 @@ void main() {
       reason: 'this repository is meant to have an `$xtaskFileName`',
     );
     root = found!;
+    // The README and the manifest are the package's, and the package is a
+    // member of the workspace at [root] rather than the root itself.
+    package = p.dirname(
+      p.dirname(
+        Isolate.resolvePackageUriSync(
+          Uri.parse('package:xtask/xtask.dart'),
+        )!.toFilePath(),
+      ),
+    );
     final path = p.join(root, xtaskFileName);
     file = parseXtaskFile(
       File(path).readAsStringSync(),
@@ -159,7 +170,7 @@ void main() {
     // this is the other half of the same promise, for the copy that is not in
     // the program.
     test("and it is the parser's own text, line for line", () {
-      final readme = File(p.join(root, 'README.md')).readAsStringSync();
+      final readme = File(p.join(package, 'README.md')).readAsStringSync();
       // Two spaces come off, and exactly two: the lines are indented where
       // they are printed under a `usage:` header, and the README's fence
       // supplies that header instead. Trimming further would stop comparing
@@ -194,7 +205,7 @@ void main() {
     /// heading, and `_fencedBlockAfter` answers with the first of them.
     List<String> shown(String command) {
       final lines = File(
-        p.join(root, 'README.md'),
+        p.join(package, 'README.md'),
       ).readAsStringSync().split('\n');
       final at = lines.indexOf(r'$ ' + command);
       expect(at, isNonNegative, reason: 'README.md never shows `$command`');
@@ -242,7 +253,7 @@ void main() {
     // Parsed rather than validated, because an example may name a verb the
     // project it belongs to registered and this repository has not.
     test('every complete one parses', () {
-      final readme = File(p.join(root, 'README.md')).readAsStringSync();
+      final readme = File(p.join(package, 'README.md')).readAsStringSync();
       final blocks = [
         for (final block in _fencedBlocks(readme, 'yaml'))
           if (block.startsWith('version:')) block,
@@ -293,7 +304,7 @@ void main() {
     // went wrong here is a NAME with no declaration, and that is visible in
     // the text.
     test('every verb the entry point hands over is defined nearby', () {
-      final readme = File(p.join(root, 'README.md')).readAsStringSync();
+      final readme = File(p.join(package, 'README.md')).readAsStringSync();
       final dart = _fencedBlocks(readme, 'dart').join('\n');
       final registered = RegExp("'([a-z-]+)': ([a-zA-Z]+)").allMatches(dart);
       expect(
@@ -321,7 +332,7 @@ void main() {
     // complains, and a reader who follows it lands at the top of the page and
     // assumes they missed something.
     test('every one of them', () {
-      final readme = File(p.join(root, 'README.md')).readAsStringSync();
+      final readme = File(p.join(package, 'README.md')).readAsStringSync();
       // GitHub's own rule: lower-case, punctuation dropped, spaces hyphenated.
       String slug(String heading) =>
           '#${heading.toLowerCase().replaceAll(RegExp('[^a-z0-9 -]'), '')}'
@@ -356,7 +367,7 @@ void main() {
     // the markdown itself was perfectly well formed. The fence says `text`
     // now, because a usage listing is not shell.
     test('so a stray quote cannot colour a whole block', () {
-      final readme = File(p.join(root, 'README.md')).readAsStringSync();
+      final readme = File(p.join(package, 'README.md')).readAsStringSync();
       for (final block in _fencedBlocks(readme, 'shell')) {
         for (final quote in ["'", '"']) {
           expect(
@@ -378,7 +389,7 @@ void main() {
     // so this is the thing that makes the second mention safe, and it is the
     // whole reason no generator was written for one line.
     test('and neither has moved without the other', () {
-      final manifest = File(p.join(root, 'pubspec.yaml')).readAsStringSync();
+      final manifest = File(p.join(package, 'pubspec.yaml')).readAsStringSync();
       final declared = RegExp(
         r'^version:\s*(\S+)\s*$',
         multiLine: true,

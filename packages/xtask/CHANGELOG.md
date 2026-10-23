@@ -12,6 +12,13 @@
   file; a task's own `xtask` hands over again; `XTASK_HAND_OVERS` stops a loop
   at eight; no `dart` on `PATH` is a `3`.
 
+### Changed
+
+- The package lives in `packages/xtask` of a workspace repository, and
+  `repository:` points there. The repository's own tasks run through an entry
+  point at its root, which the installed `xtask` now hands runs to like any
+  other project's.
+
 ## 0.4.0
 
 ### Added

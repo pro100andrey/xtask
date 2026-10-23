@@ -13,16 +13,25 @@
 library;
 
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
-import 'package:xtask/src/cli.dart';
 
 void main() {
   late Map<String, String> sources;
 
   setUpAll(() {
-    final root = findRoot(Directory.current.path)!;
+    // The package, found where Dart resolves it rather than where the suite
+    // happens to be started: the repository around it is a workspace, and
+    // its root is a different project.
+    final root = p.dirname(
+      p.dirname(
+        Isolate.resolvePackageUriSync(
+          Uri.parse('package:xtask/xtask.dart'),
+        )!.toFilePath(),
+      ),
+    );
     // Everything that ships, not just `lib/`. The omission was not free once:
     // the entry point went on naming the deleted design document for a day
     // after every other file stopped, because it was the one source outside
