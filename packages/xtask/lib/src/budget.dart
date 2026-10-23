@@ -139,3 +139,40 @@ final class GivenUp {
     }
   }
 }
+
+/// A signal this process received, which ends the run as a failure does and
+/// stops what a failure leaves alone.
+///
+/// **Its own fact, beside [GivenUp] and not folded into it.** A failure stops
+/// only what the file called `interruptible:` — the rest is let finish,
+/// because its result is still wanted. A signal is the person or the machine
+/// saying nothing more is wanted at all, so every running process is asked to
+/// stop, and the run answers 128 and the signal, as a shell would, whatever
+/// its tasks came to.
+///
+/// The first signal is the one the run answers with. Under the installed
+/// `xtask` a Ctrl-C arrives twice — `SIGINT` from the terminal, and the
+/// `SIGTERM` the hand-over passes on — and it is one Ctrl-C.
+final class Interruption {
+  // Synchronous, so the walk and every member asking whether to begin see the
+  // signal from the moment it is received, rather than a microtask later
+  // after one more unit has been admitted and started.
+  final _completer = Completer<void>.sync();
+
+  ({int number, String name})? _signal;
+
+  /// The signal received, or null while there has been none.
+  ({int number, String name})? get signal => _signal;
+
+  /// Completes when a signal is received.
+  Future<void> get reached => _completer.future;
+
+  /// Records signal [number], called [name] — `SIGINT`. Only the first counts.
+  void receive(int number, String name) {
+    if (_signal != null) {
+      return;
+    }
+    _signal = (number: number, name: name);
+    _completer.complete();
+  }
+}

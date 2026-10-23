@@ -742,9 +742,12 @@ written there is a `2` before anything runs: a report asked for and missing
 reads, to whatever waits for it, as a run that never happened. Each write
 replaces the file whole, so it is never read half-written.
 
-**On Ctrl-C** the engine ends where it stands and writes nothing more, so the
-report is the last one written: `complete` is `false`, the tasks that had
-ended say how, and the one running says `the run ended while it was running`.
+**On Ctrl-C or a `SIGTERM`** the run stops what it started and then ends, so
+its last report is a whole one: `complete` is `true`, `code` is `130` or
+`143`, and the task that was running says `stopped part-way: the run received
+SIGINT`. A run that cannot do that — killed with `SIGKILL`, or on a machine
+going down — leaves the last report it wrote: `complete` is `false`, and the
+task running says `the run ended while it was running`.
 Passed on to a project's own entry point, the path is made absolute first
 wherever the run is started somewhere other than where you stand.
 
@@ -759,6 +762,7 @@ An exit code is not a success flag; it is the shortest possible bug report.
 | `2` | the request was refused — a bad document, an unknown key, a cycle, a dangling reference, a set that expands to nothing; and a command line the parser turns down, or a `--check-ci` that found something |
 | `3` | a task's executable was not found |
 | `4` | a task's body succeeded and one of its `then:` continuations failed |
+| `128`+N | the run was stopped by signal N — `130` for Ctrl-C, `143` for `SIGTERM` |
 
 A `4` stops the run exactly as a `1` does: what has not started does not
 start, what is running is left alone, and the summary names the rest. The code
@@ -797,6 +801,35 @@ not two: nothing was published, everything passed, or the upload happened and
 the check after it is red. Collapsing the third into `1` tells a pipeline the
 publish failed, which is false and unrecoverable in the wrong direction — the
 registry will not accept that version again.
+
+### Ctrl-C, and SIGTERM
+
+A run that is told to stop stops what it started before it stops itself. It
+used not to: a `SIGTERM` from CI cancelling a job, or a Ctrl-C, ended the
+engine where it stood, and the `dart test` it had started — and the
+`flutter_tester` under that — went on running with nobody waiting for them,
+holding the machine and its ports until somebody found them by hand.
+
+So the engine catches `SIGINT` and `SIGTERM` for as long as a run lasts. It
+starts nothing more; every process it started — a `run:` body, each member of
+an `each:` running under `-j`, a program a verb started — is sent `SIGTERM`,
+given the same moment as a `timeout:` to write what it has, and then
+`SIGKILL`. A body that ends on the Ctrl-C itself, which the terminal sends to
+it as well, is reported as stopped and not as failed. The run then answers
+`128` and the signal, the number a shell gives a command killed by one, and
+writes its summary and its last `--report` on the way out.
+
+A `do:` verb is the exception, as it is for `timeout:`: it is Dart, and
+nothing outside it can stop it. It is waited for. A program it started is
+stopped under it, and one it asks for after the signal is not started at all
+— `run` answers `130` without starting it, and so do `capture` and `tee` — so
+a verb that hands those codes back ends promptly. One that ignores them and
+goes on working delays the run's end by as long as it works.
+
+What none of this reaches is a process's own children, for `timeout:`'s
+reason: the engine stops what it started, and a body that starts a server is
+the body's to stop. On Windows there is no `SIGTERM` to catch; Ctrl-C is
+handled the same way, and a process is ended at once rather than asked.
 
 ## The keys
 

@@ -59,3 +59,15 @@ String continuationNotice({
 }) =>
     '`$body` finished, and `$continuation` failing after it does not undo '
     'that';
+
+/// What a run ended by signal [number] answers: 128 and the signal, the
+/// number a shell gives a command it saw killed by one — `130` for a
+/// Ctrl-C, `143` for a `SIGTERM`.
+///
+/// **Not a sixth reason, a convention every shell already reads.** A
+/// pipeline that checks for `130` to tell "somebody stopped it" from "it
+/// broke" has to get the number it would have got from the program the
+/// engine wraps; the engine catching the signal, so that what it started is
+/// stopped rather than orphaned, must not change what the run is seen to
+/// have ended by.
+int bySignal(int number) => 128 + number;

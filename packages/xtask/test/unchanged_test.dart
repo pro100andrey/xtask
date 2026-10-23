@@ -39,6 +39,7 @@ final class _NoProcesses implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    Future<void>? until,
     void Function(String line)? echo,
   }) => throw StateError('nothing here starts a process');
 }

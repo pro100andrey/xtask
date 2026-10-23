@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:xtask/src/bodies.dart';
+import 'package:xtask/src/budget.dart';
 import 'package:xtask/src/context.dart';
 import 'package:xtask/src/errors.dart';
 import 'package:xtask/src/exec.dart';
@@ -159,6 +160,7 @@ final class FakeStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    Future<void>? until,
     void Function(String line)? echo,
   }) async {
     final name = p.basename(executable);
@@ -230,6 +232,7 @@ void main() {
     LogMarkers markers = const PlainMarkers(),
     Duration step = const Duration(milliseconds: 100),
     void Function(RunSoFar run)? reportTo,
+    Interruption? interruption,
   }) {
     final file = parseXtaskFile(yaml);
     return Executor(
@@ -248,6 +251,7 @@ void main() {
       keepGoing: keepGoing,
       concurrency: concurrency,
       reportTo: reportTo,
+      interruption: interruption,
     ).run(planRun(file, task));
   }
 
@@ -2094,6 +2098,119 @@ void main() {
     );
   });
 
+  group('a signal stops everything, and the run answers 128 and it', () {
+    test('what is running is stopped, interruptible or not, and nothing '
+        'more starts', () async {
+      // A failure stops only what said it may be stopped, because the rest
+      // is still wanted. A signal is nothing being wanted any more.
+      given(['pkg/a/x', 'pkg/b/x', 'pkg/c/x']);
+      starter = FakeStarter()..holds['pytest'] = Completer<void>();
+      final interruption = Interruption();
+      final runs = <RunSoFar>[];
+      final running = runFile(
+        'version: 1\n'
+            'sets:\n  pkgs:\n    include: [pkg/*]\n'
+            'tasks:\n'
+            r'  slow: {desc: b, each: pkgs, in: $each, run: [pytest]}'
+            '\n'
+            '  after: {desc: c, needs: [slow], run: [ruff]}\n',
+        'after',
+        concurrency: 2,
+        interruption: interruption,
+        reportTo: runs.add,
+      );
+      await pumpEventQueue();
+      expect(starter.stoppable.keys, contains('pytest'));
+      interruption.receive(15, 'SIGTERM');
+      final code = await running;
+
+      expect(code, 143, reason: '128 and SIGTERM, as a shell says it');
+      final names = [for (final s in starter.started) p.basename(s.executable)];
+      expect(names, ['pytest', 'pytest'], reason: 'the third never started');
+      final said = logged.join('\n');
+      expect(said, contains('xtask: received SIGTERM — stopping'));
+      expect(
+        said,
+        contains(
+          'task `slow` at `pkg/a` was stopped: the run received '
+          'SIGTERM',
+        ),
+      );
+      expect(said, isNot(contains('failed')));
+      final last = runs.last.tasks;
+      expect(last.first.why, 'stopped part-way: the run received SIGTERM');
+      expect(
+        last.first.members.last.why,
+        'the run received SIGTERM before it began',
+      );
+      expect(last.last.result, Result.notRun);
+      expect(last.last.why, 'the run received SIGTERM before it began');
+    });
+
+    test(
+      'a body ending on its own signal first is stopped, not failed',
+      () async {
+        // A Ctrl-C reaches the terminal's whole foreground group: the body can
+        // end on it before the engine's SIGTERM is sent, at `-2` or whatever
+        // its own handler answers.
+        starter = FakeStarter({'pytest': -2})..holds['pytest'] = Completer();
+        final interruption = Interruption();
+        final running = runFile(
+          'version: 1\ntasks:\n  slow: {desc: b, run: [pytest]}\n',
+          'slow',
+          interruption: interruption,
+        );
+        await pumpEventQueue();
+        starter.holds['pytest']!.complete();
+        interruption.receive(2, 'SIGINT');
+        expect(await running, 130);
+        expect(logged.join('\n'), isNot(contains('failed')));
+      },
+    );
+
+    test('a verb is waited for, and what it would start is not', () async {
+      // Nothing outside a verb can stop it, so it is let finish; a program
+      // it asks for after the signal is answered as stopped without being
+      // started at all.
+      final interruption = Interruption();
+      final gate = Completer<void>();
+      final codes = <int>[];
+      final running = runFile(
+        'version: 1\ntasks:\n  v: {desc: b, do: walk}\n',
+        'v',
+        interruption: interruption,
+        verbs: {
+          'walk': (context) async {
+            await gate.future;
+            codes
+              ..add(await context.run(['ruff']))
+              ..add((await context.capture(['ruff'])).exitCode);
+            return ExitCode.success;
+          },
+        },
+      );
+      await pumpEventQueue();
+      interruption.receive(2, 'SIGINT');
+      gate.complete();
+      expect(await running, 130);
+      expect(codes, [
+        SystemProcessStarter.interrupted,
+        SystemProcessStarter.interrupted,
+      ]);
+      expect(starter.started, isEmpty);
+      expect(starter.captured, isEmpty);
+    });
+
+    test('no signal, no difference', () async {
+      final code = await runFile(
+        'version: 1\ntasks:\n  a: {desc: x, run: [ruff]}\n',
+        'a',
+        interruption: Interruption(),
+      );
+      expect(code, ExitCode.success);
+    });
+  });
+
   group('the file says whether, the flag says how many', () {
     test("`serial:` keeps a task's members from overlapping", () async {
       // One shared `pub` cache, one git index: getting this wrong makes a run
@@ -3378,6 +3495,32 @@ void main() {
         reason: 'it was stopped, not waited out',
       );
     });
+
+    test('a capture is stopped when it is told to', () async {
+      // `start`'s `until:`, for the program a verb captures: a signal that
+      // could not reach it would leave it running after the run had ended.
+      final starter = SystemProcessStarter(
+        grace: const Duration(milliseconds: 200),
+      );
+      final stop = Completer<void>();
+      final began = DateTime.now();
+      final capturing = starter.capture(
+        '/bin/sh',
+        ['-c', 'exec sleep 20'],
+        workingDirectory: Directory.current.path,
+        environment: Platform.environment,
+        runInShell: false,
+        until: stop.future,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      stop.complete();
+      expect((await capturing).exitCode, SystemProcessStarter.interrupted);
+      expect(
+        DateTime.now().difference(began),
+        lessThan(const Duration(seconds: 10)),
+        reason: 'it was stopped, not waited out',
+      );
+    }, testOn: 'posix');
 
     test('a killed process is not waited out through a grandchild', () async {
       // Collecting ends when stdout and stderr close, and a grandchild that

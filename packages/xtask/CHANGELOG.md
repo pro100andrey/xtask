@@ -41,8 +41,8 @@
   plan in order — `passed`, `failed`, `skipped` or `not-run`, with its
   seconds, its code and why — and under an `each:` every member the same way.
   Written before anything else, as tasks begin and end, and last with the
-  code: a run refused before it began says why, and one cut off by Ctrl-C
-  leaves the last report with `complete: false`. The path is read from where
+  code: a run refused before it began says why, and one killed where it
+  stands leaves the last report with `complete: false`. The path is read from where
   the command was run, and made absolute for a project's entry point started
   elsewhere; one that cannot be written is a `2` before anything runs.
 
@@ -52,6 +52,16 @@
   whatever its case, so `[Path]` removes `PATH`; a name the same task's
   `env:` sets is refused when the file is read, compared without case on
   every host. `--dry-run` prints each as `env  unset CI`.
+
+- A run stopped by Ctrl-C or `SIGTERM` stops what it started instead of
+  leaving it running: nothing more starts, every process the run started — a
+  `run:` body, each member of an `each:` under `-j`, a program a verb started
+  — is sent `SIGTERM` and, after a grace, `SIGKILL`, and the run answers `128`
+  and the signal (`130`, `143`). A body ending on the Ctrl-C itself is
+  reported as stopped, not failed. A `do:` verb is waited for; what it asks
+  to start after the signal is answered `130` and not started. Its last
+  `--report` is written with `complete: true` and the signal's code, and the
+  task running says it was stopped. On Windows, Ctrl-C only.
 
 ### Changed
 

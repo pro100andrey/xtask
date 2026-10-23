@@ -103,6 +103,28 @@ final class Interrupted extends Skipped {
       'stopped part-way: an earlier failure had already answered the run';
 }
 
+/// The process received a signal, and the run stopped there: before this task
+/// began, or part-way through it.
+///
+/// Apart from [RunStopped], [PartlyRun] and [Interrupted], whose sentences
+/// all say "an earlier failure": a run stopped by a Ctrl-C may have had no
+/// failure at all, and a reader told to look for one looks for something that
+/// is not there.
+final class Signalled extends Skipped {
+  const Signalled(this.signal, {required this.began});
+
+  /// The signal's name — `SIGINT`.
+  final String signal;
+
+  /// Whether the task had begun.
+  final bool began;
+
+  @override
+  String get sentence => began
+      ? 'stopped part-way: the run received $signal'
+      : 'the run received $signal before it began';
+}
+
 /// The run has not got to its end — what a report written during the run
 /// says of a task, and what it still says when the run is cut off there.
 ///
@@ -130,6 +152,7 @@ Result resultOf(Skipped why) => switch (why) {
   PartlyRun() ||
   NeverStartable() ||
   Interrupted() ||
+  Signalled() ||
   CutOff() => Result.notRun,
 };
 
@@ -273,6 +296,18 @@ Map<String, Object?> runReport(
 /// what a person reads.
 double? _seconds(Duration? took) =>
     took == null ? null : took.inMilliseconds / 1000;
+
+/// What a run says the moment it receives [signal]: that it is stopping,
+/// and why it has not stopped yet.
+///
+/// **Said at once, because the run does not end at once.** Each process is
+/// asked to stop and given a moment to write what it has before it is made
+/// to, and a verb is Dart nothing outside it can stop — so the run can go on
+/// for seconds after a Ctrl-C, and silence through them reads as a Ctrl-C
+/// that did nothing.
+String stopping(String signal) =>
+    'xtask: received $signal — stopping what is running and starting nothing '
+    'more';
 
 /// What a parallel run is about to do, before it goes quiet.
 ///

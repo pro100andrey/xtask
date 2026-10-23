@@ -9,6 +9,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'src/budget.dart';
 import 'src/cli.dart';
 import 'src/context.dart';
 import 'src/executables.dart';
@@ -44,6 +45,49 @@ Future<int> runXtask(
   List<String> args, {
   Map<String, Verb> verbs = const {},
   String? workingDirectory,
+}) async {
+  // **Signals are caught here, for the length of the call, and nowhere
+  // else.** Uncaught, a `SIGTERM` or a Ctrl-C ended this process where it
+  // stood and left every process it had started running — a `dart test`, and
+  // the `flutter_tester` under it, orphaned. Caught, it is told to the run,
+  // which stops them and answers 128 and the signal, as a shell would; and
+  // the default is handed back once the call returns, so whoever embeds this
+  // is not left with a process that ignores them afterwards.
+  //
+  // Watching replaces the default for as long as it lasts, so a signal that
+  // arrives with no run in flight — `--list`, `--check-ci` — is let the
+  // command finish, which takes a moment, and the command answers as it
+  // would have. Windows has no `SIGTERM` to watch; it has Ctrl-C, which
+  // arrives as `SIGINT` and is handled the same way.
+  final interruption = Interruption();
+  final watching = [
+    for (final signal in [
+      ProcessSignal.sigint,
+      if (!Platform.isWindows) ProcessSignal.sigterm,
+    ])
+      signal.watch().listen(
+        (signal) => interruption.receive(signal.signalNumber, signal.name),
+      ),
+  ];
+  try {
+    return await _run(
+      args,
+      verbs: verbs,
+      workingDirectory: workingDirectory,
+      interruption: interruption,
+    );
+  } finally {
+    for (final watch in watching) {
+      await watch.cancel();
+    }
+  }
+}
+
+Future<int> _run(
+  List<String> args, {
+  required Map<String, Verb> verbs,
+  required String? workingDirectory,
+  required Interruption interruption,
 }) {
   // Made once and asked twice: the engine writes through it, and the starter
   // asks it whether there is still anybody to write for.
@@ -84,6 +128,7 @@ Future<int> runXtask(
       flushStdout: out.flush,
     ),
     verbs: verbs,
+    interruption: interruption,
   );
 }
 

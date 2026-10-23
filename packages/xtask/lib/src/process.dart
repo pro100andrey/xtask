@@ -256,6 +256,7 @@ final class SystemProcessStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    Future<void>? until,
     void Function(String line)? echo,
   }) async {
     final process = await Process.start(
@@ -307,16 +308,32 @@ final class SystemProcessStarter implements ProcessStarter {
     ]);
 
     final int code;
-    if (timeout == null) {
+    if (timeout == null && until == null) {
       code = await process.exitCode;
     } else {
-      final finished = await process.exitCode
-          .then<int?>((code) => code)
-          .timeout(timeout, onTimeout: () => null);
-      if (finished == null) {
+      // `start`'s race, for `start`'s reasons: the program ending, its
+      // deadline, or a signal, and a program that had already ended by the
+      // time it lost was not stopped.
+      int? alreadyFinished;
+      final ending = process.exitCode.then<int?>(
+        (code) => alreadyFinished = code,
+      );
+      final outcome = await Future.any([
+        if (timeout == null)
+          ending.then((code) => (code: code, stopped: false))
+        else
+          ending
+              .timeout(timeout, onTimeout: () => null)
+              .then((code) => (code: code, stopped: false)),
+        if (until != null)
+          until.then((_) => (code: null as int?, stopped: true)),
+      ]);
+      if (outcome.code ?? alreadyFinished case final finished?) {
+        code = finished;
+      } else {
         await _stop(process);
+        code = outcome.stopped ? interrupted : timedOut;
       }
-      code = finished ?? timedOut;
     }
     // **Bounded, as `start` bounds it.** A captured program that backgrounds
     // something — `sh -c 'daemon &'`, a build tool's daemon — hands it the
@@ -337,9 +354,10 @@ final class SystemProcessStarter implements ProcessStarter {
   /// task that hung is a task that failed.
   static const timedOut = 124;
 
-  /// What a process stopped because the run gave up answers with — a shell's
-  /// number for SIGINT. Distinct from [timedOut] so a report can say which
-  /// happened, and never a task failure: it was not allowed to finish.
+  /// What a process stopped because the run gave up, or because this process
+  /// received a signal, answers with — a shell's number for SIGINT. Distinct
+  /// from [timedOut] so a report can say which happened, and never a task
+  /// failure: it was not allowed to finish.
   static const interrupted = 130;
 }
 

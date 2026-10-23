@@ -356,6 +356,12 @@ abstract interface class ProcessStarter {
   /// caller's. Only whoever holds the process can kill it, and a deadline
   /// applied by waiting less would report a timeout while the process ran on.
   ///
+  /// [until], where given, stops the process when it completes — the run
+  /// having given up on an `interruptible:` task, or this process having
+  /// received a signal — and the answer is then
+  /// `SystemProcessStarter.interrupted`'s number. The starter's for
+  /// [timeout]'s reason.
+  ///
   /// [output], when given, is where the body's own stdout and stderr go
   /// instead of straight through — **the one place that promise is
   /// deliberately not kept**, and only a run that asked to be parallel gives
@@ -384,6 +390,9 @@ abstract interface class ProcessStarter {
   ///
   /// [echo], when given, is handed each line as it arrives as well — what
   /// [VerbContext.tee] is. The streams are kept whole either way.
+  ///
+  /// [until] is [start]'s: when it completes the program is stopped, and the
+  /// code is the one [start] answers for a stop.
   Future<Captured> capture(
     String executable,
     List<String> arguments, {
@@ -391,6 +400,7 @@ abstract interface class ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    Future<void>? until,
     void Function(String line)? echo,
   });
 }

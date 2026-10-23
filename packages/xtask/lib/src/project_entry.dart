@@ -203,9 +203,11 @@ String? _entryOf(String root) {
 /// — while it ends the program it runs on a `SIGTERM`. Whether the
 /// interrupt came from the terminal cannot be told here (`stdin.hasTerminal`
 /// answers yes for `/dev/null`), and need not be: from Ctrl-C the project's
-/// run and what it started have the `SIGINT` from the group already, and
-/// the `SIGTERM` reaches only the engine that is ending anyway. A `SIGTERM`
-/// is passed on as it is.
+/// engine has the `SIGINT` from the group already and is stopping its run,
+/// and it counts only the first signal it receives, so the `SIGTERM` behind
+/// it changes nothing — the run answers `130` either way. A `SIGTERM` is
+/// passed on as it is; an interrupt sent to this process alone reaches the
+/// engine only as that `SIGTERM`, and is answered `143`.
 Future<int> runProjectEntry(
   ProjectEntry entry, {
   required Map<String, String> environment,
@@ -305,7 +307,7 @@ Future<int> runProjectEntry(
     // A run ended by a signal answers as a shell would say it, 128 and the
     // signal, where Dart reports the signal negated. Only off Windows: there
     // a negative code is an NTSTATUS the shell reports as it is.
-    return code < 0 && !Platform.isWindows ? 128 - code : code;
+    return code < 0 && !Platform.isWindows ? bySignal(-code) : code;
   } finally {
     for (final watch in watching) {
       await watch.cancel();

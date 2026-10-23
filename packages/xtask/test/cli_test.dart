@@ -52,6 +52,7 @@ final class FakeStarter implements ProcessStarter {
     required Map<String, String> environment,
     required bool runInShell,
     Duration? timeout,
+    Future<void>? until,
     void Function(String line)? echo,
   }) async {
     started.add(Started(executable, arguments, workingDirectory));

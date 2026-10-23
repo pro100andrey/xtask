@@ -199,6 +199,7 @@ final class Executor {
     this.keepGoing = false,
     this.concurrency = 1,
     this.reportTo,
+    this.interruption,
   });
 
   /// What each task comes to on this machine.
@@ -241,11 +242,21 @@ final class Executor {
   /// first task begins, again each time tasks begin or end, and last when
   /// the run does.
   ///
-  /// **As it goes, not only at the end.** A Ctrl-C ends this process where
-  /// it stands, with nothing after it run, so the last thing written here is
-  /// all a report of an interrupted run can be. Written as each task
-  /// begins and ends, it is never older than the task that was running.
+  /// **As it goes, not only at the end.** A run can still be ended where it
+  /// stands — a `SIGKILL`, a machine going down — with nothing after it run,
+  /// so the last thing written here is all a report of such a run can be.
+  /// Written as each task begins and ends, it is never older than the task
+  /// that was running.
   final void Function(RunSoFar run)? reportTo;
+
+  /// Where a signal this process receives is told to the run, if anywhere.
+  ///
+  /// When one is: nothing more starts, every process the run started — a
+  /// `run:` body, a member of an `each:` under `-j`, a program a verb started
+  /// — is asked to stop with SIGTERM and made to after a grace, a verb itself
+  /// is waited for, and the run answers [bySignal]. Without this the
+  /// process died where it stood and left them all running, orphaned.
+  final Interruption? interruption;
 
   /// Whether this run has decided the answer is known.
   final _givenUp = GivenUp();
@@ -287,6 +298,16 @@ final class Executor {
 
     _holdUnchanged(plan);
 
+    // A signal ends the run as a failure does, before anything else hears of
+    // it: [Interruption] completes synchronously, so a member asking whether
+    // to begin sees the run over in the same turn the signal arrived in.
+    unawaited(
+      interruption?.reached.then((_) {
+        _givenUp.now();
+        log(stopping(_signal!.name));
+      }),
+    );
+
     final outcomes = _Outcomes();
     final began = now();
     void report() => _report(plan, outcomes, began);
@@ -310,8 +331,29 @@ final class Executor {
       // scrolls.
       summary(outcomes.failed, outcomes.skipped).forEach(log);
     }
+    // Whatever the tasks came to: the run ended because it was told to, and
+    // a shell reading the code is owed the number that says so.
+    if (_signal case (:final number, name: _)) {
+      return bySignal(number);
+    }
     return code;
   }
+
+  /// The signal this process received, or null while there has been none.
+  ({int number, String name})? get _signal => interruption?.signal;
+
+  /// Why a task the run did not begin was not begun: an earlier failure, or a
+  /// signal.
+  Skipped get _notBegun => switch (_signal) {
+    (:final name, number: _) => Signalled(name, began: false),
+    null => const RunStopped(),
+  };
+
+  /// Why a task the run stopped part-way was stopped.
+  Skipped get _partWay => switch (_signal) {
+    (:final name, number: _) => Signalled(name, began: true),
+    null => const Interrupted(),
+  };
 
   /// Hands [reportTo] what the run has come to so far, where there is one.
   ///
@@ -358,7 +400,7 @@ final class Executor {
     }
     final skipped =
         outcomes.skipped[name] ??
-        (outcomes.interrupted.contains(name) ? const Interrupted() : null) ??
+        (outcomes.interrupted.contains(name) ? _partWay : null) ??
         (took == null ? CutOff(began: outcomes.started.contains(name)) : null);
     if (skipped == null) {
       return Ended(name, Result.passed, took: took, members: members);
@@ -529,7 +571,7 @@ final class Executor {
           givenUp: _givenUp.already,
         );
         if (verdict case SkipIt(:final why)) {
-          outcomes.skipped[name] = why;
+          outcomes.skipped[name] = why is RunStopped ? _notBegun : why;
           stopped.add(name);
           waiting.removeAt(at--);
           began = true;
@@ -624,7 +666,7 @@ final class Executor {
             running.values,
           ).catchError((Object _) => const <void>[]);
           for (final step in waiting) {
-            outcomes.skipped[step.task.name] = const RunStopped();
+            outcomes.skipped[step.task.name] = _notBegun;
           }
           waiting.clear();
           rethrow;
@@ -813,7 +855,7 @@ final class Executor {
         if (await _perform(resolved[at], own) == _Ending.stopped) {
           stop = true;
           result = Result.notRun;
-          why = const Interrupted().sentence;
+          why = _partWay.sentence;
           outcomes.interrupted.add(task.name);
         }
       } on XtaskFormatException catch (thrown) {
@@ -825,6 +867,16 @@ final class Executor {
         _givenUp.now();
         (result, code, why) = (Result.failed, ExitCode.invalidFile, '$thrown');
       } on Object catch (thrown) {
+        if (_signal != null) {
+          // A verb that threw once the run was told to stop most likely threw
+          // because what it started was stopped under it — the same ending as
+          // a process stopped, and not a failure beside the signal.
+          own('task `${task.name}`${_at(resolved[at])} was stopped: $thrown');
+          stop = true;
+          (result, why) = (Result.notRun, _partWay.sentence);
+          outcomes.interrupted.add(task.name);
+          return;
+        }
         // Anything, not only a `RunFailure`: a verb can throw whatever it
         // likes, and the tally must still say what its siblings did.
         final failure = failures[at] = thrown is RunFailure
@@ -898,17 +950,16 @@ final class Executor {
               Ended(
                 resolved[at].member ?? task.name,
                 Result.notRun,
-                why: const RunStopped().sentence,
+                why: _notBegun.sentence,
               ),
       ];
     }
     // A task the run gave up on part-way is named, like a task it never
     // reached: two of eight members having run reads exactly like eight.
     if (attempted < resolved.length && failures.isEmpty && malformed == null) {
-      outcomes.skipped[task.name] = PartlyRun(
-        attempted: attempted,
-        members: resolved.length,
-      );
+      outcomes.skipped[task.name] = _signal == null
+          ? PartlyRun(attempted: attempted, members: resolved.length)
+          : _partWay;
     }
     // The file being wrong outranks a task that failed.
     final failure = malformed ?? _tally(task, resolved, failures, attempted);
@@ -957,8 +1008,7 @@ final class Executor {
   /// failed.
   Future<_Ending> _perform(Resolved body, _Lines lines) async {
     final task = body.task;
-    final member = body.member;
-    final where = member == null ? '' : ' at `$member`';
+    final where = _at(body);
 
     final int code;
     try {
@@ -986,6 +1036,17 @@ final class Executor {
 
     if (code == ExitCode.success) {
       return _Ending.finished;
+    }
+
+    // **Any code, once the run has been told to stop.** The process was
+    // asked to, and may have heard it first: a Ctrl-C reaches the terminal's
+    // whole foreground group, so a body can end on its own `SIGINT` — at
+    // `-2`, `130` or whatever its own handler answers — before the engine's
+    // `SIGTERM` is sent. Read as a failure, every Ctrl-C would print one red
+    // line per body for a run that broke nothing.
+    if (_signal case (:final name, number: _)) {
+      lines('task `${task.name}`$where was stopped: the run received $name');
+      return _Ending.stopped;
     }
 
     // Not a failure: it was not allowed to finish, and calling that a failure
@@ -1056,7 +1117,12 @@ final class Executor {
           environment: body.environment,
           runInShell: runInShell,
           timeout: timeout,
-          until: body.task.interruptible ? _givenUp.reached : null,
+          // A failure stops only what said it may be stopped; a signal stops
+          // everything, and gives the run up too, so an `interruptible:` task
+          // hears of it through the first.
+          until: body.task.interruptible
+              ? _givenUp.reached
+              : interruption?.reached,
           // A child writes to the terminal itself only where nothing between
           // it and the terminal is collecting.
           output: lines.live ? null : lines.call,
@@ -1098,12 +1164,19 @@ final class Executor {
             final (:executable, :arguments, :directory, :runInShell) =
                 _prepareForVerb(body, argv, workingDirectory);
             out.flush();
+            // Not started at all once the run has been told to stop: a verb
+            // that runs a program per file would otherwise start each one only
+            // to have it stopped at once.
+            if (_signal != null) {
+              return Future.value(SystemProcessStarter.interrupted);
+            }
             return starter.start(
               executable,
               arguments,
               workingDirectory: directory,
               environment: body.environment,
               runInShell: runInShell,
+              until: interruption?.reached,
               output: lines.live ? null : lines.call,
             );
           },
@@ -1113,6 +1186,9 @@ final class Executor {
             // No flush: a capture shows nothing, so there is no order to
             // keep, and flushing split `out.write('git is: ')` from the
             // version the verb was about to write after it.
+            if (_signal != null) {
+              return Future.value(_capturedNothing);
+            }
             return starter.capture(
               executable,
               arguments,
@@ -1120,6 +1196,7 @@ final class Executor {
               environment: body.environment,
               runInShell: runInShell,
               timeout: timeout,
+              until: interruption?.reached,
             );
           },
           // `collect`, shown where `run` shows a program's output — after
@@ -1128,6 +1205,9 @@ final class Executor {
             final (:executable, :arguments, :directory, :runInShell) =
                 _prepareForVerb(body, argv, workingDirectory);
             out.flush();
+            if (_signal != null) {
+              return Future.value(_capturedNothing);
+            }
             return starter.capture(
               executable,
               arguments,
@@ -1135,6 +1215,7 @@ final class Executor {
               environment: body.environment,
               runInShell: runInShell,
               timeout: timeout,
+              until: interruption?.reached,
               echo: lines.call,
             );
           },
@@ -1212,6 +1293,20 @@ final class Executor {
     return where;
   }
 }
+
+/// What a verb's capture answers once the run has been told to stop: what a
+/// capture stopped part-way answers, with nothing captured.
+const Captured _capturedNothing = (
+  exitCode: SystemProcessStarter.interrupted,
+  stdout: '',
+  stderr: '',
+);
+
+/// ` at `member``, where [body] is a member of an `each:`; nothing otherwise.
+String _at(Resolved body) => switch (body.member) {
+  final member? => ' at `$member`',
+  null => '',
+};
 
 /// What an exception that is not a [RunFailure] comes to.
 ///

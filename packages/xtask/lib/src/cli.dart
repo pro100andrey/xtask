@@ -13,6 +13,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'bodies.dart';
+import 'budget.dart';
 import 'ci.dart';
 import 'completion.dart';
 import 'context.dart';
@@ -74,6 +75,7 @@ Future<int> runCli(
   required ExecutableResolver resolver,
   required ProcessStarter starter,
   Map<String, Verb> verbs = const {},
+  Interruption? interruption,
 }) {
   final request = parseArguments(args);
   Future<int> answer(
@@ -89,6 +91,7 @@ Future<int> runCli(
     starter: starter,
     verbs: verbs,
     reportTo: reportTo,
+    interruption: interruption,
   );
 
   if (request case RunTask(:final task, report: final path?)) {
@@ -199,6 +202,7 @@ Future<int> _answer(
   required ProcessStarter starter,
   required Map<String, Verb> verbs,
   void Function(report.RunSoFar run)? reportTo,
+  Interruption? interruption,
 }) async {
   if (request is ShowUsage) {
     final problem = request.problem;
@@ -437,6 +441,7 @@ Future<int> _answer(
           keepGoing: keepGoing,
           concurrency: concurrency,
           reportTo: reportTo,
+          interruption: interruption,
         ).run(plan);
     }
   } on XtaskFormatException catch (problem) {
