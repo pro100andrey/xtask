@@ -14,6 +14,15 @@
 /// its own, which the install `needs:`.
 library;
 
+export 'src/cli.dart'
+    show
+        CliPlaces,
+        DartCli,
+        cliInstall,
+        cliUninstall,
+        conflictingLibraries,
+        installCli,
+        uninstallCli;
 export 'src/home.dart' show dataHome, homeOf;
 export 'src/linux_app.dart'
     show

@@ -76,6 +76,44 @@ reported as one, and `--dry-run` shows its command line — neither is true of a
 for the application id, and the app's directory. It succeeds on a machine with
 nothing installed.
 
+## Installing command-line tools
+
+What `dart build cli` leaves — a bundle with `bin/` and `lib/` — installed for
+whoever runs the task:
+
+```dart
+const cli = DartCli(
+  name: 'mytool',
+  bundles: ['build/cli/bundle', 'build/server/bundle'],
+  commands: {'mytool': 'mytool', 'mytool-server': 'server'},
+);
+
+exitCode = await runXtask(args, verbs: {
+  'install': cliInstall(cli),
+  'uninstall': cliUninstall(cli),
+});
+```
+
+Every bundle goes into one `~/.local/share/<name>/bin` and one `.../lib`, so
+each executable finds every native library at `../lib`, where a Dart
+executable looks. That makes a library two bundles carry under one name a
+conflict unless it is the same file, and the install refuses one that is not,
+before anything is copied.
+
+Each command goes to `~/.local/bin`: a link on Linux and macOS, a copy on
+Windows — no symlink without developer mode — with the libraries copied to
+`~/.local/lib`, which is `../lib` from the copy. On Windows a running
+executable cannot be deleted but can be renamed, so what the install cannot
+remove it moves aside as `<file>.old-<time>`, and the next install removes
+what nothing holds any more. It is meant to reinstall the
+tool an editor is running; this package's own suite runs on Windows but does
+not hold a file open while it does.
+
+`retired:` names commands an earlier version put on `PATH` and this one does
+not; both verbs remove them. `installCli` and `uninstallCli` are the same work
+as functions, for an install that does more after it: call it first, and go
+on where it answers `0`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

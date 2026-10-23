@@ -1,8 +1,8 @@
 name: xtask_kit
 description: >-
   Verbs for xtask that projects otherwise write again each: installing a Linux
-  app for the person running it under ~/.local, and saying whether what was
-  installed is the command PATH finds.
+  app or the command-line tools `dart build cli` leaves for the person running
+  it, under ~/.local, and saying whether PATH reaches what was installed.
 version: 0.1.0
 repository: https://github.com/pro100andrey/xtask/tree/main/packages/xtask_kit
 issue_tracker: https://github.com/pro100andrey/xtask/issues
