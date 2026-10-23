@@ -353,6 +353,15 @@ const _taskKeys = <String, Map<String, Object?>>{
         'Variables that must already be set. Checked before the body runs; '
         'the engine installs nothing, it only says which one is missing.',
   },
+  'env-unset': {
+    'type': 'array',
+    'items': _envName,
+    'description':
+        'Variables the body must not see, whatever this machine has set — '
+        "removed, not emptied. A name the same task's `env:` sets is "
+        'refused, compared without case: Windows reads `Path` and `PATH` as '
+        'one variable, and there a name is removed whatever its case.',
+  },
   'exclusive': {
     ..._nameList,
     'description':

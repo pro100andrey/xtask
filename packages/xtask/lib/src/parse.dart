@@ -275,6 +275,7 @@ Task _task(YamlNode node, String name, SourceSpan keySpan) {
     envRequired: List.unmodifiable(
       _optionalStringList(map, 'env-required', name),
     ),
+    envUnset: _envNames(map, 'env-unset', name),
     needs: _names(map, 'needs', name),
     then: _names(map, 'then', name),
     gate: _names(map, 'gate', name),
@@ -498,6 +499,40 @@ Map<String, String> _env(YamlMap map, String taskName) {
     env[name] = value;
   }
   return env;
+}
+
+/// A list of environment variable names, held to what an `env:` key is.
+///
+/// **Read by the same function, because it is the same kind of name.** An
+/// empty one removes nothing anybody can point at, one running past a line is
+/// one no report can print, and one holding `=` is not a name the environment
+/// can have — and a second set of rules for names in a list would be the
+/// schema and the parser disagreeing about one of them.
+List<String> _envNames(YamlMap map, String key, String taskName) {
+  final node = map.nodes[key];
+  if (node == null) {
+    return const [];
+  }
+  if (node is! YamlList) {
+    throw XtaskFormatException(
+      '`$key:` of task `$taskName` must be a list',
+      node.span,
+    );
+  }
+  final names = <String>[];
+  for (final entry in node.nodes) {
+    final name = _name(entry, 'an environment variable name');
+    if (name.contains('=')) {
+      throw XtaskFormatException(
+        '`$name` in `$key:` of task `$taskName` has an `=` in it, and an '
+        'environment variable name cannot: it is what separates the name '
+        'from the value',
+        entry.span,
+      );
+    }
+    names.add(name);
+  }
+  return List.unmodifiable(names);
 }
 
 // ── shapes ──────────────────────────────────────────────────────────────────

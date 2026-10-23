@@ -728,5 +728,62 @@ void main() {
       expect(body.environment['HOME'], '/tmp', reason: 'the task wins');
       expect(body.environment['PATH'], '/bin');
     });
+
+    test('is without what `env-unset:` names', () {
+      final body = resolve(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart], env-unset: [CI, NOT_SET]}\n',
+        'a',
+        environment: const {'CI': 'true', 'PATH': '/bin'},
+      ).single;
+      expect(body.environment, {'PATH': '/bin'});
+      expect(body.unsetEnvironment, ['CI', 'NOT_SET']);
+    });
+
+    test('a `do:` body is handed the same environment', () {
+      final body = resolve(
+        'version: 1\ntasks:\n  a: {desc: x, do: v, env-unset: [CI]}\n',
+        'a',
+        verbs: {'v': (_) async => 0},
+        environment: const {'CI': 'true', 'PATH': '/bin'},
+      ).single;
+      expect(body, isA<ResolvedVerb>());
+      expect(body.environment, {'PATH': '/bin'});
+    });
+
+    test('a name is matched as written off Windows', () {
+      final body = resolve(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart], env-unset: [Ci]}\n',
+        'a',
+        environment: const {'CI': 'true', 'PATH': '/bin'},
+      ).single;
+      expect(body.environment, {'CI': 'true', 'PATH': '/bin'});
+    });
+
+    test('and whatever its case on Windows', () {
+      // The variable is spelled `Path` there, and `env-unset: [PATH]` is what
+      // anybody writes.
+      final body = resolve(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart], env-unset: [PATH, ci]}\n',
+        'a',
+        resolver: windowsShims(),
+        environment: const {'Path': r'C:\bin', 'CI': 'true', 'TEMP': 'C:/t'},
+      ).single;
+      expect(body.environment, {'TEMP': 'C:/t'});
+    });
+
+    test('on Windows `env:` replaces a variable spelled in another case', () {
+      // The child is handed this map and nothing else, so two spellings of one
+      // variable would reach it as two, and which one it reads is the
+      // platform's guess.
+      final body = resolve(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart], env: {PATH: D}}\n',
+        'a',
+        resolver: windowsShims(),
+        environment: const {'Path': r'C:\bin'},
+      ).single;
+      expect(body.environment, {'PATH': 'D'});
+    });
   });
 }

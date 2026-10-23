@@ -25,6 +25,7 @@ const taskKeys = <String>{
   'in',
   'env',
   'env-required',
+  'env-unset',
   'needs',
   'then',
   'gate',
@@ -279,6 +280,7 @@ final class Task with Located {
     this.workingDirectory,
     this.env = const {},
     this.envRequired = const [],
+    this.envUnset = const [],
     this.needs = const [],
     this.then = const [],
     this.gate = const [],
@@ -330,6 +332,15 @@ final class Task with Located {
   /// Variables that must already be set. Checked before the body runs; the
   /// engine installs nothing (one invocation per job).
   final List<String> envRequired;
+
+  /// Variables the body must not see, whatever this machine has set.
+  ///
+  /// **Removed, not emptied.** `CI=` is still `CI` to a program that asks
+  /// whether it is set, and asking is what a test runner deciding how to
+  /// behave on a build machine does. A name no `env:` key of the same task
+  /// may also hold — whatever its case, because Windows reads `Path` and
+  /// `PATH` as one variable and the file is the same file there.
+  final List<String> envUnset;
 
   /// Direct requirements only — transitive is the graph's business (a task's
   /// keys).

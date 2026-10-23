@@ -50,8 +50,39 @@ List<XtaskFormatException> incoherences(
   ..._allMarker(task),
   ..._eachMarker(task),
   ..._markerInAName(task),
+  ..._setAndUnset(task, keySpan),
   ..._bodyCannotHonourIt(task, keySpan),
 ];
+
+/// A variable a task's `env:` sets and its `env-unset:` removes.
+///
+/// **Either answer would be a guess.** Applied in one order the task gets the
+/// value, in the other it gets nothing, and the file says both.
+///
+/// **Compared without case, on every host.** Windows reads `Path` and `PATH`
+/// as one variable, so there `env: {Path: x}` beside `env-unset: [PATH]` is
+/// the same contradiction spelled twice. The file is one file wherever it is
+/// read, and a check that held only on Windows would let it validate clean on
+/// the machine it was written on and refuse on the runner. Two variables
+/// differing only in case are legal on POSIX and nobody's convention, so
+/// refusing them here costs a rename at most.
+Iterable<XtaskFormatException> _setAndUnset(
+  Task task,
+  SourceSpan? Function(String key)? keySpan,
+) sync* {
+  final set = {for (final name in task.env.keys) name.toUpperCase()};
+  for (final name in task.envUnset) {
+    if (set.contains(name.toUpperCase())) {
+      yield XtaskFormatException(
+        'task `${task.name}` both sets and removes `$name` — `env:` gives it '
+        'a value and `env-unset:` takes it away, and which one the body gets '
+        'would be the order they were applied in. Keep one (names are '
+        'compared without case, because Windows reads them that way)',
+        keySpan?.call('env-unset') ?? task.span,
+      );
+    }
+  }
+}
 
 /// A deadline or a stop written on a body that cannot be given one.
 ///
@@ -106,18 +137,19 @@ Iterable<XtaskFormatException> _bodyCannotHonourIt(
 
 /// A marker written where nothing stands for it.
 ///
-/// `exclusive:`, `env-required:`, `needs:`, `then:`, `gate:` and the KEYS of
-/// `env:` hold names, and a name is looked for as written: a token is taken
-/// when the walk admits a task, before its set has been read, so there is no
-/// member yet for `$each` to stand for; a variable, a task or a gate set
+/// `exclusive:`, `env-required:`, `env-unset:`, `needs:`, `then:`, `gate:` and
+/// the KEYS of `env:` hold names, and a name is looked for as written: a token
+/// is taken when the walk admits a task, before its set has been read, so there
+/// is no member yet for `$each` to stand for; a variable, a task or a gate set
 /// called `$each` is one nobody has. Neither refused nor expanded is the one
-/// combination that says nothing — `exclusive: [lock-$each]` validated
-/// clean and made every member hold the same token, and `env: {$each: '1'}`
-/// set a variable literally called `$each` once per member.
+/// combination that says nothing — `exclusive: [lock-$each]` validated clean
+/// and made every member hold the same token, and `env: {$each: '1'}` set a
+/// variable literally called `$each` once per member.
 Iterable<XtaskFormatException> _markerInAName(Task task) sync* {
   for (final (key, names) in [
     ('exclusive', task.exclusive),
     ('env-required', task.envRequired),
+    ('env-unset', task.envUnset),
     ('needs', task.needs),
     ('then', task.then),
     ('gate', task.gate),

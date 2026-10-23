@@ -1342,6 +1342,57 @@ tasks: {}
   });
 
   group('a name is a name, and a set has members', () {
+    test('`env-unset:` is read as a list of names', () {
+      final file = parseXtaskFile(
+        'version: 1\ntasks:\n'
+        '  a: {desc: x, run: [dart], env-unset: [CI, PUB_HOSTED_URL]}\n',
+      );
+      expect(file.tasks['a']!.envUnset, ['CI', 'PUB_HOSTED_URL']);
+    });
+
+    test('a name in `env-unset:` cannot hold an `=` either', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], env-unset: ["A=B"]}\n',
+        ),
+      );
+      expect(message, contains('`A=B` in `env-unset:` of task `a`'));
+    });
+
+    test('a variable a task both sets and removes is refused', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], env: {CI: "1"}, env-unset: [CI]}\n',
+        ),
+      );
+      expect(message, contains('task `a` both sets and removes `CI`'));
+    });
+
+    test('and so is one spelled differently only in case', () {
+      // Windows reads `Path` and `PATH` as one variable, and the file is the
+      // same file there: refused on every host, or valid here and a
+      // contradiction on the runner.
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], env: {Path: x}, env-unset: [PATH]}\n',
+        ),
+      );
+      expect(message, contains('task `a` both sets and removes `PATH`'));
+    });
+
+    test('a marker in `env-unset:` names nothing', () {
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\nsets:\n  s: [a]\ntasks:\n'
+          '  a: {desc: x, each: s, run: [b, \$each], env-unset: [\$each]}\n',
+        ),
+      );
+      expect(message, contains('in `env-unset:`'));
+    });
+
     test('an environment variable name cannot hold an `=`', () {
       final message = refusalOf(
         () => parseXtaskFile(

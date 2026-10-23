@@ -43,6 +43,7 @@ sealed class Resolved {
     required this.environment,
     required this.declaredEnvironment,
     required this.arguments,
+    required this.unsetEnvironment,
   });
 
   /// The task this body belongs to.
@@ -58,8 +59,10 @@ sealed class Resolved {
   /// root, with `$each` substituted.
   final String workingDirectory;
 
-  /// The ambient environment with the task's `env:` applied: what the body
-  /// actually sees, rather than what the file adds.
+  /// The ambient environment without the task's `env-unset:` and with its
+  /// `env:` applied: what the body actually sees, rather than what the file
+  /// adds — and **the whole of it**, because a child is handed this map and
+  /// nothing else. A variable removed here is one the body does not have.
   final Map<String, String> environment;
 
   /// Only what the task's own `env:` adds, with markers already standing for
@@ -70,6 +73,11 @@ sealed class Resolved {
   /// terminal, and shows it substituted — `FLAVOR=dev`, as the child sees it,
   /// not `FLAVOR=$each` as the file wrote it.
   final Map<String, String> declaredEnvironment;
+
+  /// The task's `env-unset:`, as written — for a report, which says what was
+  /// taken away as it says what was added, and cannot find it in
+  /// [environment] by what is no longer there.
+  final List<String> unsetEnvironment;
 
   /// Everything after the program name: for a `run:` body the rest of its
   /// `argv`, then `args:`, each with its markers already standing for what
@@ -86,6 +94,7 @@ final class ResolvedProcess extends Resolved {
     required super.environment,
     required super.declaredEnvironment,
     required super.arguments,
+    required super.unsetEnvironment,
     required this.executable,
     required this.runInShell,
     this.timeout,
@@ -116,6 +125,7 @@ final class ResolvedVerb extends Resolved {
     required super.environment,
     required super.declaredEnvironment,
     required super.arguments,
+    required super.unsetEnvironment,
     required this.verb,
     required this.implementation,
   });
@@ -168,6 +178,36 @@ typedef _Shared = ({
   Map<String, String> declared,
   Map<String, String> environment,
 });
+
+/// [ambient] without [unset], with [declared] over it.
+///
+/// **Names compared the way the host compares them.** Windows reads `Path`
+/// and `PATH` as one variable, so `env-unset: [PATH]` has to take away the
+/// `Path` this machine actually has, and `env: {PATH: …}` has to replace it
+/// rather than sit beside it: the child is handed this map and nothing else,
+/// and two spellings of one variable would reach it as two, with which one it
+/// reads left to the platform. Off Windows they are two variables, and each
+/// is matched as written.
+Map<String, String> _bodyEnvironment(
+  Map<String, String> ambient, {
+  required List<String> unset,
+  required Map<String, String> declared,
+  required bool windows,
+}) {
+  String folded(String name) => windows ? name.toUpperCase() : name;
+  final gone = {
+    for (final name in unset) folded(name),
+    // Only matters on Windows: elsewhere a declared key replaces the ambient
+    // one by being the same key.
+    if (windows)
+      for (final name in declared.keys) folded(name),
+  };
+  return Map.unmodifiable({
+    for (final MapEntry(:key, :value) in ambient.entries)
+      if (!gone.contains(folded(key))) key: value,
+    ...declared,
+  });
+}
 
 /// What a task comes to on this machine.
 final class BodyResolver {
@@ -338,10 +378,12 @@ final class BodyResolver {
         if (passed != null && passed.task == task.name) ...passed.arguments,
       ]),
       declared: declared,
-      environment: Map<String, String>.unmodifiable({
-        ...environment,
-        ...declared,
-      }),
+      environment: _bodyEnvironment(
+        environment,
+        unset: task.envUnset,
+        declared: declared,
+        windows: resolver.windows,
+      ),
     );
   }
 
@@ -359,6 +401,7 @@ final class BodyResolver {
       workingDirectory: common.where,
       environment: common.environment,
       declaredEnvironment: common.declared,
+      unsetEnvironment: task.envUnset,
       arguments: common.args,
       verb: verb,
       implementation: implementation,
@@ -398,6 +441,7 @@ final class BodyResolver {
       workingDirectory: common.where,
       environment: common.environment,
       declaredEnvironment: common.declared,
+      unsetEnvironment: task.envUnset,
       arguments: arguments,
       executable: executable,
       runInShell: runInShell,

@@ -495,6 +495,16 @@ void main() {
       expect(output(), isNot(contains('HOME')));
     });
 
+    test('what `env-unset:` removes is printed too', () async {
+      await dry(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, test], env-unset: [CI]}\n',
+        'a',
+        environment: const {'CI': 'true', 'PATH': '/bin'},
+      );
+      expect(output(), contains('  env  unset CI'));
+    });
+
     test(r'with $each already standing for the member', () async {
       // Every other line of this block was substituted, so it promised
       // `FLAVOR=$each` while the run exported `FLAVOR=dev`.

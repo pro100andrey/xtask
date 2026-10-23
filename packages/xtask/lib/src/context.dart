@@ -73,8 +73,9 @@ final class VerbContext {
   /// verb that wants to tell them apart cannot, and has not needed to.
   final List<String> args;
 
-  /// The environment the body would see: this machine's, with the task's own
-  /// `env:` applied over it — and winning where both name the same variable.
+  /// The environment the body would see: this machine's, without what the
+  /// task's `env-unset:` names, with its own `env:` applied over it — and
+  /// winning where both name the same variable.
   ///
   /// **Not the task's `env:` on its own**, which is what the name suggests and
   /// what this doc comment said until somebody read it beside the code. A verb
@@ -344,6 +345,10 @@ final class LogSink implements StringSink {
 /// process streams, and that has its own test against a real one.
 abstract interface class ProcessStarter {
   /// Runs [executable] with [arguments] and answers with its exit code.
+  ///
+  /// [environment] is **everything the child sees**, not an addition to this
+  /// process's own: the engine has already built it from this machine's, and
+  /// a variable missing from it is one `env-unset:` asked to be gone.
   ///
   /// Output goes straight through as it arrives, and is never buffered to
   /// the end, because a long test run has to be watchable.

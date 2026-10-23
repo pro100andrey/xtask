@@ -150,7 +150,8 @@ Future<int> regen(VerbContext context) async {
   //                  one; a last line without a newline is flushed for you
   // context.args     `args:` with `$all` expanded, then anything
   //                  the command line passed after `--`
-  // context.env      this machine's environment, with `env:` winning a clash
+  // context.env      this machine's environment, without `env-unset:`,
+  //                  with `env:` winning a clash
   // context.root     the repository root, absolute — what a set's members
   //                  and `in:` are relative to
   // context.file('packages/a/x.dart'), context.directory(...)
@@ -810,6 +811,7 @@ registry will not accept that version again.
 | `in` | where the body runs, relative to the root — may end with `$each` |
 | `env` | environment for this task only |
 | `env-required` | variables that must already be set, checked before the body runs |
+| `env-unset` | variables the body must not see — removed, not emptied |
 | `needs` | direct requirements, run before this task, once per invocation |
 | `then` | continuations, run **after** this task's body |
 | `gate` | the gate sets this task belongs to |
@@ -910,7 +912,18 @@ many tasks ask for it"; `then:` is "after, and only if the body worked" —
 which is the whole reason exit code `4` exists, because `publish` succeeding
 and `announce` failing is a third ending and not a failure to publish.
 `env-required:` is checked before that task's body runs — not at the start of
-the run — so a missing token is a sentence rather than a broken upload. `do:`
+the run — so a missing token is a sentence rather than a broken upload.
+`env-unset:` is the other direction: variables this machine has that the body
+must not, such as the `CI` a test runner changes its behaviour for, or a
+`PUB_HOSTED_URL` that points `dart pub` somewhere else. They are removed, not
+emptied — `CI=` is still set to a program that asks — and the body is handed
+the environment without them, a verb and every program it starts included;
+`--dry-run` prints each as `env  unset CI`. On Windows a name is matched
+whatever its case, as Windows matches it, so `env-unset: [Path]` removes the
+`PATH` the machine has. A name the same task's `env:` sets is refused when the
+file is read — the file says both — and compared without case on every host,
+because a file that validated here and contradicted itself on the Windows
+runner would be the one checked in. `do:`
 names a verb the project wrote in Dart and handed to `runXtask`, and
 `all:` hands it the expanded set, wherever `$all` is written.
 
@@ -1104,6 +1117,7 @@ The path is read from where the command runs — the root, for a task without
 | `$(MAKE) next` at the end of a recipe | `then: [next]` |
 | a phony target that only lists others | a gate set: `gates:` at the top, `gate:` on each task |
 | `VAR=x` before a command | `env:` |
+| `env -u VAR` before a command | `env-unset:` |
 | a variable holding a file list | a set, named by `all:` or `each:` |
 | `make help` | `xtask --list` |
 | `make -j` | `xtask <task> -j <n>` |

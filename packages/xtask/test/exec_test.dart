@@ -3309,6 +3309,36 @@ void main() {
       expect(code, 0);
     });
 
+    test(
+      'the environment it is handed is the whole of it',
+      () async {
+        // `env-unset:` is a variable the child must not see, and a starter
+        // that added this process's environment back under the map would
+        // hand every one of them over again.
+        final without = {...Platform.environment}..remove('HOME');
+        const script = r'printf "%s\n" "${HOME-gone}"';
+        final lines = <String>[];
+        await SystemProcessStarter().start(
+          '/bin/sh',
+          ['-c', script],
+          workingDirectory: Directory.current.path,
+          environment: without,
+          runInShell: false,
+          output: lines.add,
+        );
+        expect(lines, ['gone']);
+        final captured = await SystemProcessStarter().capture(
+          '/bin/sh',
+          ['-c', script],
+          workingDirectory: Directory.current.path,
+          environment: without,
+          runInShell: false,
+        );
+        expect(captured.stdout.trim(), 'gone');
+      },
+      testOn: '!windows',
+    );
+
     test('a missing working directory throws rather than answering', () {
       // What makes the wrapper above necessary rather than defensive: the
       // real starter cannot report this as a code, because there is no

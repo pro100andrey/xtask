@@ -127,6 +127,10 @@ final class SystemProcessStarter implements ProcessStarter {
       arguments,
       workingDirectory: workingDirectory,
       environment: environment,
+      // The map is the whole environment, already built from this machine's
+      // (see [ProcessStarter.start]). Dart's default lays it over this
+      // process's own, which hands back every variable `env-unset:` took away.
+      includeParentEnvironment: false,
       runInShell: runInShell,
       // Inheriting streams live output for free: the child writes to this
       // process's stdout with no copy and no buffer. Two children writing to
@@ -259,6 +263,8 @@ final class SystemProcessStarter implements ProcessStarter {
       arguments,
       workingDirectory: workingDirectory,
       environment: environment,
+      // For `start`'s reason: the map is the whole of it.
+      includeParentEnvironment: false,
       runInShell: runInShell,
     );
     // Closed at once: a program that reads its input when it is not a

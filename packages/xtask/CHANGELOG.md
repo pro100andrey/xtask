@@ -46,6 +46,13 @@
   the command was run, and made absolute for a project's entry point started
   elsewhere; one that cannot be written is a `2` before anything runs.
 
+- `env-unset: [names]` takes variables away from a task's body — a `run:` and
+  a `do:` alike, and everything a verb starts — so `dart test` need not see
+  `CI` or `PUB_HOSTED_URL`. Removed, not emptied. On Windows a name is matched
+  whatever its case, so `[Path]` removes `PATH`; a name the same task's
+  `env:` sets is refused when the file is read, compared without case on
+  every host. `--dry-run` prints each as `env  unset CI`.
+
 ### Changed
 
 - The package lives in `packages/xtask` of a workspace repository, and
