@@ -404,7 +404,7 @@ void main() {
         );
         expect(code, ExitCode.success);
         expect(starter.started, isEmpty);
-        expect(logged, contains('skipped  install — linux only'));
+        expect(logged, contains('⊘ install  linux only'));
         // `skipped`, not `passed`: nothing ran, and a report that said it
         // passed would say something about this machine that is not true.
         expect(tasks.single.result, Result.skipped);
@@ -597,7 +597,10 @@ void main() {
             '  build: {desc: x, needs: [install], run: [dart, compile]}\n',
         'build',
       );
-      expect(logged, containsAllInOrder(['install  0.1s', 'build    0.1s']));
+      expect(
+        logged,
+        containsAllInOrder(['✓ install  0.1s', '✓ build    0.1s']),
+      );
     });
 
     test('and a total, once there is more than one of them', () async {
@@ -607,14 +610,14 @@ void main() {
             '  build: {desc: x, needs: [install], run: [dart, compile]}\n',
         'build',
       );
-      expect(logged.last, 'total    0.2s');
+      expect(logged.last, '  total    0.2s');
     });
 
     test(
       'but no total for a single task, which would just repeat it',
       () async {
         await runFile('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n', 'a');
-        expect(logged.last, 'a  0.1s');
+        expect(logged.last, '✓ a  0.1s');
         expect(logged.join('\n'), isNot(contains('total')));
       },
     );
@@ -627,7 +630,7 @@ void main() {
         'version: 1\ntasks:\n  boom: {desc: x, run: [dart, test]}\n',
         'boom',
       );
-      expect(logged.last, 'boom  0.1s');
+      expect(logged.last, '✗ boom  0.1s  exit 1');
     });
 
     test('a long one is minutes and seconds, not 154.0s', () async {
@@ -636,7 +639,7 @@ void main() {
         'a',
         step: const Duration(seconds: 94),
       );
-      expect(logged.last, 'a  1m 34s');
+      expect(logged.last, '✓ a  1m 34s');
     });
 
     test('and it lands AFTER the last section closes', () async {
@@ -650,7 +653,7 @@ void main() {
       );
       expect(
         logged.lastIndexOf('::endgroup::'),
-        lessThan(logged.indexWhere((l) => l.startsWith('a  '))),
+        lessThan(logged.indexWhere((l) => l.startsWith('✓ a  '))),
       );
     });
   });
@@ -825,11 +828,11 @@ void main() {
       await runFile(three, 'all', keepGoing: true);
       expect(
         logged.join('\n'),
-        contains('skipped  lint — needs `fmt`, which did not pass'),
+        summaryRow('⊘', 'lint', 'needs `fmt`, which did not pass'),
       );
       expect(
         logged.join('\n'),
-        contains('skipped  unit — needs `fmt`, which did not pass'),
+        summaryRow('⊘', 'unit', 'needs `fmt`, which did not pass'),
       );
     });
 
@@ -838,7 +841,7 @@ void main() {
       await runFile(three, 'all', keepGoing: true);
       expect(
         logged.join('\n'),
-        contains('skipped  all — needs `lint`, which did not pass'),
+        summaryRow('⊘', 'all', 'needs `lint`, which did not pass'),
       );
     });
 
@@ -879,22 +882,29 @@ void main() {
     test('the summary lists what failed and what did not run', () async {
       starter = FakeStarter({'ruff': 1, 'pytest': 1});
       await runFile(three, 'all', keepGoing: true);
-      expect(logged, contains('failed   lint (exit 1)'));
-      expect(logged, contains('failed   unit (exit 1)'));
+      final summary = logged.join('\n');
+      expect(summary, summaryRow('✗', 'lint', 'exit 1'));
+      expect(summary, summaryRow('✗', 'unit', 'exit 1'));
       expect(
-        logged,
-        contains('skipped  all — needs `lint`, which did not pass'),
+        summary,
+        summaryRow('⊘', 'all', 'needs `lint`, which did not pass'),
       );
     });
 
-    test('and it is the last thing printed, after the timing', () async {
+    test('and it is the last thing printed, one row per task', () async {
+      // It was two blocks, the timing and then what failed and was skipped;
+      // a task's time and its fate now share its row, in plan order.
       starter = FakeStarter({'ruff': 1, 'pytest': 1});
       await runFile(three, 'all', keepGoing: true);
-      expect(logged.last, startsWith('skipped'));
-      expect(
-        logged.indexWhere((l) => l.startsWith('total')),
-        lessThan(logged.indexWhere((l) => l.startsWith('failed'))),
-      );
+      final tree = logged.sublist(logged.lastIndexOf('') + 1);
+      // Each row up to its first column gap: the mark and the name.
+      expect(tree.map((l) => l.trimLeft().split(RegExp(' {2,}')).first), [
+        '✓ fmt',
+        '✗ lint',
+        '✗ unit',
+        '⊘ all',
+        'total',
+      ]);
     });
 
     test(
@@ -913,21 +923,24 @@ void main() {
         );
         expect(
           logged.join('\n'),
-          contains('skipped  lint — needs `fmt`, which did not pass'),
+          summaryRow('⊘', 'lint', 'needs `fmt`, which did not pass'),
         );
       },
     );
 
     test(
-      'a single failure gets no summary, which would summarise nothing',
+      'a single failure has its row, as every task does',
       () async {
+        // It used to get no summary: it had printed itself already. The row
+        // is also its time, which was printed for it anyway, and a tree with
+        // every task but the red one reads as a run with nothing red.
         starter = FakeStarter({'dart': 1});
         await runFile(
           'version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n',
           'a',
           keepGoing: true,
         );
-        expect(logged.join('\n'), isNot(contains('failed   a')));
+        expect(logged.last, '✗ a  0.1s  exit 1');
       },
     );
 
@@ -945,7 +958,7 @@ void main() {
         keepGoing: true,
       );
       expect(code, ExitCode.missingTool);
-      expect(logged.join('\n'), contains('failed   unit (exit 1)'));
+      expect(logged.join('\n'), summaryRow('✗', 'unit', 'exit 1'));
     });
 
     test('a failed publish is not announced anyway', () async {
@@ -964,7 +977,7 @@ void main() {
       expect(starter.started.map((s) => p.basename(s.executable)), ['publish']);
       expect(
         logged.join('\n'),
-        contains('skipped  announce — follows `publish`, which did not pass'),
+        summaryRow('⊘', 'announce', 'follows `publish`, which did not pass'),
       );
     });
 
@@ -1143,7 +1156,7 @@ void main() {
       expect(starter.started, hasLength(1), reason: 'it still stops');
       expect(
         logged.join('\n'),
-        contains('skipped  other — the run stopped at an earlier failure'),
+        summaryRow('·', 'other', 'the run stopped at an earlier failure'),
       );
     });
   });
@@ -1260,7 +1273,7 @@ void main() {
       expect(starter.started, hasLength(2));
       expect(
         logged.join('\n'),
-        contains('skipped  types — the run stopped at an earlier failure'),
+        summaryRow('·', 'types', 'the run stopped at an earlier failure'),
       );
     });
 
@@ -1286,9 +1299,10 @@ void main() {
       expect(starter.started, isEmpty);
       expect(
         logged.join('\n'),
-        contains(
-          'skipped  early — nothing that would let it start ever '
-          'finished',
+        summaryRow(
+          '·',
+          'early',
+          'nothing that would let it start ever finished',
         ),
       );
     });
@@ -1323,7 +1337,7 @@ void main() {
       expect(starter.started, hasLength(2));
       expect(
         logged.join('\n'),
-        contains('skipped  types — the run stopped at an earlier failure'),
+        summaryRow('·', 'types', 'the run stopped at an earlier failure'),
       );
     });
 
@@ -1349,9 +1363,10 @@ void main() {
       expect(starter.started, isEmpty);
       expect(
         logged.join('\n'),
-        contains(
-          'skipped  early — nothing that would let it start ever '
-          'finished',
+        summaryRow(
+          '·',
+          'early',
+          'nothing that would let it start ever finished',
         ),
       );
     });
@@ -1400,7 +1415,7 @@ void main() {
       expect(members(), hasLength(2), reason: 'the other six never began');
       expect(
         logged.join('\n'),
-        contains('skipped  suite — stopped after 2 of 8 members'),
+        summaryRow('⏹', 'suite', 'stopped after 2 of 8 members'),
       );
     });
 
@@ -1910,6 +1925,9 @@ void main() {
             r'  a: {desc: x, each: pkgs, in: $each, run: [ruff]}'
             '\n',
         'a',
+        // Only where the members could run together: one after another,
+        // their work is the row, and the rows under it say each part.
+        concurrency: 3,
       );
       expect(logged.join('\n'), contains('over 3 members'));
     });
@@ -2143,7 +2161,7 @@ void main() {
         contains('task `slow` was stopped'),
         reason: 'stopped, and not reported as a second failure',
       );
-      expect(logged.join('\n'), isNot(contains('failed   slow')));
+      expect(logged.join('\n'), isNot(summaryRow('✗', 'slow')));
     });
 
     test('a task exiting 130 on its own is a failure, not a stop', () async {
@@ -3204,8 +3222,8 @@ void main() {
         ),
         throwsA(isA<XtaskFormatException>()),
       );
-      expect(logged.join('\n'), contains('skipped  c'));
-      expect(logged.join('\n'), contains('skipped  all'));
+      expect(logged.join('\n'), summaryRow('·', 'c'));
+      expect(logged.join('\n'), summaryRow('·', 'all'));
     });
 
     test('is a task failure, not exit 255', () async {

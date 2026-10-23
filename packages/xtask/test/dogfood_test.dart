@@ -10,6 +10,7 @@ import 'package:xtask/src/model.dart';
 import 'package:xtask/src/parse.dart';
 import 'package:xtask/src/primitives.dart';
 import 'package:xtask/src/reading.dart';
+import 'package:xtask/src/report.dart';
 import 'package:xtask/src/request.dart';
 import 'package:xtask/src/schema.dart';
 import 'package:xtask/src/sets.dart';
@@ -237,6 +238,51 @@ void main() {
         reason:
             'the README shows entry points for `$asked` that this file does '
             'not have. `--why` keys a gate set entry as `gate <name>`.',
+      );
+    });
+  });
+
+  group('the summary the README shows is the one this engine prints', () {
+    // A run's last lines are what a person reads first, and the README's copy
+    // of them is written by hand: padded columns and marks that a change to
+    // the rendering moves, and a hand-kept copy does not. Rendered here from
+    // the values it shows, so the copy is checked rather than trusted.
+    test('a `--keep-going` run, one row per task and member', () {
+      Duration ms(int n) => Duration(milliseconds: n);
+      final tree = summary((
+        tasks: [
+          Ended('format', Result.passed, took: ms(400)),
+          Ended('analyze', Result.passed, took: ms(2300)),
+          Ended(
+            'test',
+            Result.failed,
+            took: ms(11900),
+            code: 1,
+            members: [
+              Ended('packages/xtask', Result.passed, took: ms(9600)),
+              Ended(
+                'packages/xtask_kit',
+                Result.failed,
+                took: ms(2300),
+                code: 1,
+              ),
+            ],
+          ),
+          const Ended(
+            'publishable',
+            Result.skipped,
+            why: 'needs `test`, which did not pass',
+          ),
+        ],
+        took: ms(14600),
+      ), concurrent: false);
+      final readme = File(p.join(package, 'README.md')).readAsStringSync();
+      expect(
+        _fencedBlocks(readme, 'shell'),
+        contains('${tree.skip(1).join('\n')}\n'),
+        reason:
+            'README.md no longer shows the summary this engine prints for '
+            'that run:\n${tree.join('\n')}',
       );
     });
   });

@@ -359,7 +359,7 @@ member as text: `packages/twk` keeps that one and not `packages/twk_rich`, and
 `packages/twk*` keeps both, as does `packages/{twk,twk_rich}`: a comma inside
 braces is the pattern's, not a separator. Written again for the same set, the patterns add
 up. `--dry-run` prints the narrowed plan, and the summary says how much of the
-set ran — `over 2 of 17 members`. Each of these is a `2` rather than a smaller
+set ran — `2 of 17 members` on the task's row. Each of these is a `2` rather than a smaller
 run: a set the file has not got, a set nothing in the plan expands, a pattern
 that is not one, and a pattern that matches no member — the last when the set
 is read, since that is when its members are known. `--check-ci` reports a step
@@ -596,26 +596,37 @@ What a run tells you while it happens and when it ends — and what changes
 about that when you ask it to go faster.
 
 A run has one duration, which answers nothing on its own, and a CI job that is
-one invocation has only that one. So the run prints what each task took at the
-end — after the last section, because a line inside a fold is invisible in
-exactly the state somebody is in when they want a number:
+one invocation has only that one. So the run ends with one row per task — how
+it ended and what it took — after the last section, because a line inside a
+fold is invisible in exactly the state somebody is in when they want a number:
 
 ```shell
-format    0.4s
-analyze   2.3s
-test     11.7s
-total    14.4s
+✓ format    0.4s
+✓ analyze   2.3s
+✓ test     11.7s
+  total    14.4s
 ```
+
+A row's mark is the result `--report` writes for the task: `✓` passed, `✗`
+failed — with the code it failed with — `⊘` skipped, and for one that did not
+run because the run stopped, `⏹` where it had begun and `·` where it had not.
+Every task gets its row, a lone failure too: the row is also its time.
 
 `--keep-going` is for the local loop. A gate that stops at the first failure
 makes you fix, rerun, fix, rerun — the same argument `--validate` is built on,
 which is why it collects every problem rather than throwing at the first. With
-the flag, independent tasks still run and the run ends with a summary:
+the flag, independent tasks still run, and the rows say what broke and what
+did not run because of it — the members of an `each:` under their task, where
+there is more than one:
 
 ```shell
-failed   lint (exit 1)
-failed   unit (exit 1)
-skipped  check — needs `lint`, which did not pass
+✓ format                 0.4s
+✓ analyze                2.3s
+✗ test                  11.9s
+  ✓ packages/xtask       9.6s
+  ✗ packages/xtask_kit   2.3s  exit 1
+⊘ publishable                  needs `test`, which did not pass
+  total                 14.6s
 ```
 
 A task whose requirement failed does **not** run: its own failure would be a
@@ -640,11 +651,14 @@ explaining itself is indistinguishable from one that has hung.
 The summary then says both numbers, because they answer different questions:
 
 ```shell
-lint   1.0s
-unit   1.0s
-types  1.0s
-total  3.1s spent, 1.1s taken
+✓ lint   1.0s
+✓ unit   1.0s
+✓ types  1.0s
+  total  3.1s spent, 1.1s taken
 ```
+
+A fanned-out task's row says the same of its members: how long you waited,
+then `9.0s over 4 members` — the work they added up to.
 
 Declaration order still decides which of the ready tasks starts first — cheap
 gates before slow ones — but nothing makes them finish in that order. A failure
@@ -653,9 +667,9 @@ killing a task would leave whatever it was half-way through in whatever state
 that half is. Whichever way it ran, the summary then names what did not run:
 
 ```shell
-failed   format (exit 1)
-skipped  analyze — the run stopped at an earlier failure
-skipped  check — needs `format`, which did not pass
+✗ format       0.4s  exit 1
+· analyze            the run stopped at an earlier failure
+⊘ publishable        needs `format`, which did not pass
 ```
 
 `interruptible: true` gives back some of what `-j` costs. A run does not reach
@@ -936,7 +950,7 @@ tasks:
 ```
 
 On any other machine the task does not run, and is not said to have passed:
-the summary prints `skipped  install-desktop — linux only`, `--report` writes
+the summary prints `⊘ install-desktop  linux only`, `--report` writes
 it as `skipped` with that `why`, and `--dry-run` prints the same line in its
 place without resolving its body — a program or a variable the run would not
 look for is not missing. The names are exactly `linux`, `macos` and `windows`;

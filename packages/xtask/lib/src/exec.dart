@@ -188,22 +188,16 @@ final class _Lines {
 
 // ── the run ─────────────────────────────────────────────────────────────────
 
-/// What one run has recorded about its tasks, for the summary.
+/// What one run has recorded about its tasks, for the summary and the
+/// report — both read it through `_ended`, so the two cannot disagree about
+/// how a task ended.
 final class _Outcomes {
   final took = <String, Duration>{};
   final failed = <String, int>{};
   final skipped = <String, Skipped>{};
 
-  /// How much work each fanned-out task's members added up to — the number
-  /// `-j` is for, beside how long the task took.
-  final work = <String, ({Duration spent, int members})>{};
-
   /// What `--only` left of the set each narrowed task expanded.
   final narrowed = <String, ({int kept, int of})>{};
-
-  // What only `--report` says. Kept apart from the maps above because the
-  // summary is built from those, and a person reading it has already been
-  // told each of these where it happened.
 
   /// The tasks that have begun, so a report written while one runs can say
   /// it was running rather than never reached.
@@ -213,7 +207,7 @@ final class _Outcomes {
   final why = <String, String>{};
 
   /// The tasks the file was found wrong in part-way, with what was said. The
-  /// run answers 2 for them, which the summary has no line for.
+  /// run answers 2 for them.
   final refused = <String, String>{};
 
   /// The tasks a member of which was stopped part-way, because the run had
@@ -375,16 +369,16 @@ final class Executor {
       // Printed on the way out, whichever way that is: a file found wrong
       // mid-run unwinds through here, and the tasks that had already
       // finished, failed or been skipped are still worth their lines.
-      timing(
-        outcomes.took,
-        now().difference(began),
-        outcomes.work,
+      summary(
+        (
+          tasks: [
+            for (final step in plan.steps) _ended(step.task.name, outcomes),
+          ],
+          took: now().difference(began),
+        ),
         concurrent: concurrent,
         narrowed: outcomes.narrowed,
       ).forEach(log);
-      // Last, because it is the part somebody has to act on and the terminal
-      // scrolls.
-      summary(outcomes.failed, outcomes.skipped).forEach(log);
     }
     // Whatever the tasks came to: the run ended because it was told to, and
     // a shell reading the code is owed the number that says so.
@@ -899,7 +893,6 @@ final class Executor {
     // run giving up: under `--keep-going` a failed member stops nothing.
     var stop = false;
     XtaskFormatException? malformed;
-    ({Duration spent, int members})? work;
     // What each member came to, for the report; null for one never begun.
     final ended = List<Ended?>.filled(resolved.length, null);
 
@@ -913,8 +906,9 @@ final class Executor {
       }
       final own = lines.into(collected: together);
       attempted++;
-      // Measured only where it is reported: the members' work is a line of
-      // its own when there is more than one of them.
+      // Measured only where it is reported: a member has a row of its own in
+      // the summary, and a time in the report, when there is more than one of
+      // them — and the task's work is what those times add up to.
       final began = resolved.length > 1 ? now() : null;
       var result = Result.passed;
       int? code;
@@ -960,12 +954,6 @@ final class Executor {
       } finally {
         place.release();
         final took = began == null ? null : now().difference(began);
-        if (took != null) {
-          work = (
-            spent: (work?.spent ?? Duration.zero) + took,
-            members: (work?.members ?? 0) + 1,
-          );
-        }
         ended[at] = Ended(
           resolved[at].member ?? task.name,
           result,
@@ -1004,11 +992,6 @@ final class Executor {
       }
     }
 
-    // Recorded before anything is raised: where the run spent itself before
-    // it broke is most of what somebody wants from a red job.
-    if (work case final done?) {
-      outcomes.work[task.name] = done;
-    }
     // Every member, the ones never begun too: a report that listed only what
     // ran would read, for a run stopped after two of eight, as a set of two.
     if (task.each != null) {

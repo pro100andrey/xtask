@@ -92,9 +92,10 @@ final class NeverStartable extends Skipped {
 /// It was running when an earlier failure answered the run, and it was
 /// `interruptible:`, so it was stopped part-way.
 ///
-/// **Only the report says it in the list.** The summary has no line for it:
-/// the task's own section already says it was stopped, and a person reading
-/// both is told twice. A program reading the report has only this.
+/// The task's own section already says it was stopped; its row in the
+/// summary says it again, because the row is also the task's time, and a
+/// tree missing one task reads as a run that did not have it. A program
+/// reading the report has only this.
 final class Interrupted extends Skipped {
   const Interrupted();
 
@@ -176,26 +177,175 @@ Result resultOf(Skipped why) => switch (why) {
   CutOff() => Result.notRun,
 };
 
-/// Everything that failed and everything that therefore did not run.
+/// What the run came to: one row per task in plan order — its status, how
+/// long it took, and why where it did not pass — with the members of an
+/// `each:` under it and the total last.
 ///
-/// **A skip is always reported; a lone failure is not.** A failure has
-/// already printed itself where it happened, so a heading over one of them
-/// summarises nothing — but a skipped task prints nothing of its own, and
-/// this is the only place it is ever mentioned. Left out, a run that answered
-/// 0 has silently not done something, which is the failure this tool is
-/// about.
-List<String> summary(Map<String, int> failed, Map<String, Skipped> skipped) {
-  if (skipped.isEmpty && failed.length < 2) {
+/// **Printed after the last task and outside every section**, which is the
+/// whole design of it: a CI job runs one invocation, so the job's own
+/// duration is the duration of everything and "which task took four minutes"
+/// has no answer anywhere else. Beside the task is the wrong place, because a
+/// line inside a `::group::` is folded away with it, and the moment somebody
+/// wants a duration is exactly the moment they have expanded nothing. Last,
+/// too, because it is the part somebody has to act on and the terminal
+/// scrolls.
+///
+/// **Rendered from [Ended], what `--report` writes, and nothing else.** The
+/// status a row shows is the report's [Result]; a second reckoning of which
+/// tasks failed, here, is a summary that can disagree with the report about
+/// the same run.
+///
+/// **Every task, a lone failure too.** It used to be left out — it had
+/// printed itself where it happened — but that was a rule about a heading
+/// over a list of failures. A row is also the task's time, printed for it
+/// anyway, and a tree with every task but the red one in it reads as a run
+/// with nothing red. A skipped task is the reason the rows exist at all: it
+/// prints nothing of its own, and this is the only place it is ever named.
+///
+/// [narrowed] is what `--only` left of each narrowed task's set, which no
+/// [Ended] carries; [concurrent] is whether two units could have run at once.
+List<String> summary(
+  RunSoFar run, {
+  required bool concurrent,
+  Map<String, ({int kept, int of})> narrowed = const {},
+}) {
+  if (run.tasks.isEmpty) {
     return const [];
   }
+
+  /// The members [ended] has a row for each of — none where there is one,
+  /// which is the task said twice.
+  List<Ended> listed(Ended ended) =>
+      ended.members.length > 1 ? ended.members : const [];
+
+  /// The members that began: each of those has a time, and only those.
+  Iterable<Ended> began(Ended ended) =>
+      listed(ended).where((member) => member.took != null);
+
+  /// How much work [ended] was, which is not how long it took when its
+  /// members ran together.
+  ///
+  /// A fanned-out task's row is how long you waited: four members of a second
+  /// each at `-j 4` is a one-second row and four seconds of work. Summing the
+  /// rows would report a run that gained nothing from `-j`. Where fewer than
+  /// two members began, the row IS the work.
+  Duration workOf(Ended ended) {
+    final timed = began(ended);
+    return timed.length < 2
+        ? ended.took!
+        : timed.map((member) => member.took!).reduce((a, b) => a + b);
+  }
+
+  /// What a fanned-out task's members added up to, and how much of its set
+  /// that was.
+  ///
+  /// **The work only where the members could run together.** Over forty
+  /// packages at four at a time, how much work there was is the half of the
+  /// answer the row does not give, and without it a run that halved its wall
+  /// clock looks exactly like one that had less to do. One after another the
+  /// work is the row, give or take the gaps, and `0.8s  0.8s over 2 members`
+  /// was one number printed twice.
+  ///
+  /// **How much of the set, wherever `--only` narrowed it**: two packages of
+  /// seventeen is not the gate, and a summary reading as though it were is
+  /// the green nobody checked.
+  String note(Ended ended) {
+    final part = narrowed[ended.name];
+    final of = part == null ? '' : ' of ${part.of}';
+    final timed = began(ended).length;
+    if (concurrent && timed > 1) {
+      return '${asTime(workOf(ended))} over $timed$of members';
+    }
+    // How many RAN, where that is known: `--only` keeping five and the first
+    // failing is one of seventeen, not five. Without `each:` the kept members
+    // went to one invocation, and all of them reached it.
+    return part == null ? '' : '${timed > 0 ? timed : part.kept}$of members';
+  }
+
+  /// Why [ended] did not pass, as its row says it: the code it failed with,
+  /// or the sentence for why it did not run.
+  ///
+  /// A task's code is left to the member that failed with it, where that
+  /// member has a row of its own: one red member under a red task is one
+  /// failure, and two `exit 1`s read as two.
+  String reason(Ended ended) => switch (ended.result) {
+    Result.passed => '',
+    Result.failed when listed(ended).any((m) => m.result == Result.failed) =>
+      '',
+    Result.failed => 'exit ${ended.code}',
+    Result.skipped || Result.notRun => ended.why ?? '',
+  };
+
+  final rows = <({String label, String? time, String detail})>[];
+  void add(Ended ended, {required String indent, String note = ''}) {
+    rows.add((
+      label: '$indent${_mark(ended)} ${ended.name}',
+      time: ended.took == null ? null : asTime(ended.took!),
+      detail: [note, reason(ended)].where((s) => s.isNotEmpty).join('  '),
+    ));
+  }
+
+  for (final ended in run.tasks) {
+    add(ended, indent: '', note: note(ended));
+    for (final member in listed(ended)) {
+      add(member, indent: '  ');
+    }
+  }
+
+  final timed = [
+    for (final ended in run.tasks)
+      if (ended.took != null) ended,
+  ];
+  // A total under one number is that number written twice, so a run with
+  // one timed task gets none.
+  if (timed.length > 1) {
+    rows.add((
+      label: '  total',
+      time: asTime(timed.map(workOf).reduce((a, b) => a + b)),
+      detail: '',
+    ));
+  }
+
+  // One column for every name, the members' and the total's with them, so
+  // each time sits under the one above it whatever depth it is at.
+  final width = _widest(rows.map((row) => row.label));
+  final column = _widest(rows.map((row) => row.time ?? ''));
+  // **Two numbers, and only where they differ**, after the total's own.
+  // Sequentially the sum of the tasks IS how long the run took. Run together
+  // they are different questions — how much work there was, and how long you
+  // waited — and printing only the first would report three minutes for a
+  // run that took one. Only ever on the last row, which is then the total.
+  final sum = timed.length > 1 && concurrent
+      ? ' spent, ${asTime(run.took)} taken'
+      : '';
   return [
     '',
-    for (final MapEntry(key: name, value: code) in failed.entries)
-      'failed   $name (exit $code)',
-    for (final MapEntry(key: name, value: why) in skipped.entries)
-      'skipped  $name — ${why.sentence}',
+    for (final (at, row) in rows.indexed)
+      [
+        row.label.padRight(width),
+        // No column at all where nothing has a time — a run of tasks that
+        // are all for other platforms — rather than a gap with nothing in it.
+        if (column > 0) '  ${(row.time ?? '').padLeft(column)}',
+        if (at == rows.length - 1) sum,
+        if (row.detail.isNotEmpty) '  ${row.detail}',
+      ].join().trimRight(),
   ];
 }
+
+/// The mark a row begins with: the report's [Result], and for `not-run`
+/// whether it began.
+///
+/// **Two marks for one result, from what the result already carries.** A
+/// task that began and was stopped has a time and may have left work half
+/// done; one never begun has neither, and the two are read differently by
+/// whoever looks for what to rerun. Whether it began is whether it has a
+/// time — nothing new is reckoned to tell them apart.
+String _mark(Ended ended) => switch (ended.result) {
+  Result.passed => '✓',
+  Result.failed => '✗',
+  Result.skipped => '⊘',
+  Result.notRun => ended.took == null ? '·' : '⏹',
+};
 
 // ── --report ────────────────────────────────────────────────────────────────
 
@@ -352,92 +502,6 @@ List<String> starting(int tasks, int concurrency) {
       : 'running $tasks tasks, up to $concurrency at once — '
             "each task's output arrives when that task ends";
   return [line, ''];
-}
-
-/// What each task took, and what the run took.
-///
-/// Printed after the last task and outside every section, which is the whole
-/// design of it: a CI job runs one invocation, so the job's own
-/// duration is the duration of everything and "which task took four minutes"
-/// has no answer anywhere else. The obvious place — beside the task — is the
-/// wrong one, because a line inside a `::group::` is folded away with it, and
-/// the moment somebody wants a duration is exactly the moment they have
-/// expanded nothing.
-List<String> timing(
-  Map<String, Duration> took,
-  Duration wall,
-  Map<String, ({Duration spent, int members})> work, {
-  required bool concurrent,
-  Map<String, ({int kept, int of})> narrowed = const {},
-}) {
-  if (took.isEmpty) {
-    return const [];
-  }
-  const total = 'total';
-  // A total under one number is that number written twice, so a single task
-  // gets none — and then the column must not be widened for a word that is
-  // not going to be printed.
-  final sums = took.length > 1;
-
-  /// How much work [name] was, which is not how long it took when its members
-  /// ran together.
-  ///
-  /// A fanned-out task's row is how long you waited: four members of a second
-  /// each at `-j 4` is a one-second row and four seconds of work. Summing the
-  /// rows would report a run that gained nothing from `-j`.
-  ///
-  /// Where there was one member the row IS the work, which is the condition
-  /// the per-row `over` line is printed under.
-  Duration workOf(String name) {
-    final done = work[name];
-    return done == null || done.members < 2 ? took[name]! : done.spent;
-  }
-
-  final numbers = [
-    ...took.values.map(asTime),
-    if (sums) asTime(took.keys.map(workOf).reduce((a, b) => a + b)),
-  ];
-  final width = _widest([...took.keys, if (sums) total]);
-  final column = _widest(numbers);
-  final spent = '${total.padRight(width)}  ${numbers.last.padLeft(column)}';
-  final sum = concurrent ? '$spent spent, ${asTime(wall)} taken' : spent;
-
-  /// What a fanned-out task's members added up to, beside how long it took.
-  ///
-  /// **The number `-j` is for.** One row says how long you waited; over forty
-  /// packages at four at a time, how much work there WAS is the other half,
-  /// and without it a run that halved its wall clock looks exactly like one
-  /// that had less to do.
-  String over(String name) {
-    final done = work[name];
-    // `--only` said which part of the set ran, and the row says how much of
-    // it that was: two packages of seventeen is not the gate, and a summary
-    // reading as though it were is the green nobody checked.
-    final part = narrowed[name];
-    final of = part == null ? '' : ' of ${part.of}';
-    if (done == null || done.members < 2) {
-      // One member is the row already, said twice — and `over 1 members` is
-      // not a sentence. A task whose first member failed without
-      // `--keep-going` has exactly one attempted.
-      // How many RAN, where that is known: `--only` keeping five and the
-      // first failing is one of seventeen, not five. Without `each:` the
-      // kept members went to one invocation, and all of them reached it.
-      return part == null ? '' : '  ${done?.members ?? part.kept}$of members';
-    }
-    return '  ${asTime(done.spent)} over ${done.members}$of members';
-  }
-
-  return [
-    '',
-    for (final (index, name) in took.keys.indexed)
-      '${name.padRight(width)}  ${numbers[index].padLeft(column)}${over(name)}',
-    // **Two numbers, and only where they differ.** Sequentially the sum of the
-    // tasks IS how long the run took. Run together they are different
-    // questions — how much work there was, and how long you waited — and
-    // printing only the first would report three minutes for a run that took
-    // one.
-    if (sums) sum,
-  ];
 }
 
 /// A duration a person reads, not one a machine parses.

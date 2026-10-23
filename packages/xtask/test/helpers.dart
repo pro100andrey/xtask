@@ -40,3 +40,15 @@ Directory tempRepo(String tag) {
   });
   return root;
 }
+
+/// Matches the summary's row for [name], marked [mark], that says [rest].
+///
+/// The row's padding is the widest name's in that run, which is
+/// `report_test.dart`'s to pin; a suite running a whole plan asks only which
+/// row is there and what it says. Matched against the joined output.
+Matcher summaryRow(String mark, String name, [String rest = '']) => matches(
+  RegExp(
+    '^ *${RegExp.escape('$mark $name')} .*${RegExp.escape(rest)}',
+    multiLine: true,
+  ),
+);

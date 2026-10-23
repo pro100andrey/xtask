@@ -381,7 +381,12 @@ void main() {
         isFalse,
         reason: 'a failure stops what has not started: ${it.out}',
       );
-      expect(it.out, contains('skipped'), reason: it.out);
+      // A row for the task the failure stopped, marked as never begun.
+      expect(
+        it.out,
+        matches(RegExp('^[⊘·] ', multiLine: true)),
+        reason: it.out,
+      );
     }, testOn: '!windows');
 
     test('and with --keep-going it says so and carries on', () async {

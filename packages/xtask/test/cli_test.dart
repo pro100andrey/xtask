@@ -1104,12 +1104,12 @@ tasks:
 ''');
           expect(await run(['check', '--keep-going']), ExitCode.taskFailed);
           expect(starter.started, hasLength(2));
-          expect(printed(), contains('failed   lint (exit 1)'));
-          expect(printed(), contains('failed   unit (exit 1)'));
+          expect(printed(), summaryRow('✗', 'lint', 'exit 1'));
+          expect(printed(), summaryRow('✗', 'unit', 'exit 1'));
           // Nothing is skipped: a gate set has no composite standing after
           // its members, so both failures are reported and neither blocks a
           // third thing that does not exist.
-          expect(printed(), isNot(contains('skipped')));
+          expect(printed(), isNot(contains('⊘')));
         },
       );
 
@@ -1276,8 +1276,10 @@ tasks:
         expect(
           out.where((line) => line.endsWith('of 3 members')),
           [
-            matches(RegExp(r'^pkg-test .* over 2 of 3 members$')),
-            matches(RegExp(r'^docs .*s  2 of 3 members$')),
+            // One after another: how much of the set, and not the work,
+            // which the member rows under it already add up to.
+            matches(RegExp(r'^✓ pkg-test .*s  2 of 3 members$')),
+            matches(RegExp(r'^✓ docs .*s  2 of 3 members$')),
           ],
           reason: printed(),
         );

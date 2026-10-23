@@ -111,6 +111,18 @@
   point at its root, which the installed `xtask` now hands runs to like any
   other project's.
 
+- A run ends with one tree instead of two blocks — what each task took, then
+  what failed and was skipped. Each task in plan order has one row: a mark
+  for the result `--report` writes (`✓` passed, `✗` failed, `⊘` skipped, and
+  for a task the run stopped `⏹` where it had begun and `·` where it had
+  not), its time, and the exit code or the reason it did not run. The members
+  of an `each:` are rows under their task where there are more than one, the
+  total is last, and a lone failure has its row like any other task. A
+  fanned-out task's `over N members` is printed when its members could run
+  together, and `N of M members` wherever `--only` narrowed its set. `--report`,
+  `--names`, `--gate-members` and the GitHub `::group::`/`::error::` lines are
+  unchanged.
+
 ## 0.4.0
 
 ### Added

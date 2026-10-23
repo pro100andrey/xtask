@@ -92,41 +92,231 @@ void main() {
     });
   });
 
+  group('the summary is one tree: status, time and why on one line', () {
+    // It was two blocks: what each task took, and under it what failed and
+    // what was skipped. A task was looked for in both and its time and its
+    // fate read from different places, and a skipped task had no time to
+    // line up with. One row per task, each saying all three.
+    Duration ms(int n) => Duration(milliseconds: n);
+
+    test('every task in plan order, members under their task', () {
+      final lines = summary((
+        tasks: [
+          Ended('format', Result.passed, took: ms(400)),
+          Ended('analyze', Result.passed, took: ms(300)),
+          Ended(
+            'test',
+            Result.failed,
+            took: ms(14700),
+            code: 1,
+            why: 'task `test` at `packages/xtask_kit` failed with exit code 1',
+            members: [
+              Ended('packages/xtask', Result.passed, took: ms(11200)),
+              Ended(
+                'packages/xtask_kit',
+                Result.failed,
+                took: ms(3500),
+                code: 1,
+                why: 'task `test` at `packages/xtask_kit` failed',
+              ),
+            ],
+          ),
+          const Ended(
+            'publishable',
+            Result.skipped,
+            why: 'needs `test`, which did not pass',
+          ),
+          const Ended('install', Result.skipped, why: 'linux only'),
+          const Ended(
+            'announce',
+            Result.notRun,
+            why: 'the run stopped at an earlier failure',
+          ),
+        ],
+        took: ms(15400),
+      ), concurrent: false);
+      expect(lines, [
+        '',
+        '✓ format                 0.4s',
+        '✓ analyze                0.3s',
+        '✗ test                  14.7s',
+        '  ✓ packages/xtask      11.2s',
+        '  ✗ packages/xtask_kit   3.5s  exit 1',
+        '⊘ publishable                  needs `test`, which did not pass',
+        '⊘ install                      linux only',
+        '· announce                     the run stopped at an earlier failure',
+        '  total                 15.4s',
+      ]);
+    });
+
+    test('a lone failure gets its row like any other task', () {
+      // It used to get no summary at all — it had printed itself already.
+      // That was a rule about a block of failures; a row is the task's time
+      // too, which was printed for it anyway, and leaving the one red task
+      // out of the tree would make the tree a list of everything but it.
+      expect(
+        summary((
+          tasks: [Ended('a', Result.failed, took: ms(1000), code: 1)],
+          took: ms(1000),
+        ), concurrent: false),
+        ['', '✗ a  1.0s  exit 1'],
+      );
+    });
+
+    test('a single task gets no total, which would repeat it', () {
+      expect(
+        summary((
+          tasks: [Ended('a', Result.passed, took: ms(1000))],
+          took: ms(1000),
+        ), concurrent: false),
+        ['', '✓ a  1.0s'],
+      );
+    });
+
+    test('and nothing in the plan, nothing to say', () {
+      expect(
+        summary((tasks: const [], took: Duration.zero), concurrent: false),
+        isEmpty,
+      );
+    });
+
+    test('a task stopped part-way is told from one never begun', () {
+      // Both are `not-run` in the report; what tells them apart is whether
+      // the task has a time, which is whether it began.
+      final lines = summary((
+        tasks: [
+          Ended(
+            'slow',
+            Result.notRun,
+            took: ms(2000),
+            why: 'stopped part-way: the run received SIGINT',
+          ),
+          const Ended(
+            'next',
+            Result.notRun,
+            why: 'the run received SIGINT before it began',
+          ),
+        ],
+        took: ms(2000),
+      ), concurrent: false);
+      expect(lines[1], startsWith('⏹ slow  2.0s  stopped part-way'));
+      expect(lines[2], startsWith('· next        the run received'));
+    });
+
+    test('members only where there is more than one of them', () {
+      // One member is the task, said twice.
+      final lines = summary((
+        tasks: [
+          Ended(
+            'a',
+            Result.passed,
+            took: ms(1000),
+            members: const [Ended('packages/a', Result.passed)],
+          ),
+        ],
+        took: ms(1000),
+      ), concurrent: false);
+      expect(lines, ['', '✓ a  1.0s']);
+    });
+
+    test("a task's code is on its own row unless a member's row says it", () {
+      // A set changed under a task whose members all passed is the task's
+      // failure, and no member row would carry it.
+      final lines = summary((
+        tasks: [
+          Ended(
+            'gen',
+            Result.failed,
+            took: ms(2000),
+            code: 1,
+            members: [
+              Ended('a', Result.passed, took: ms(1000)),
+              Ended('b', Result.passed, took: ms(1000)),
+            ],
+          ),
+        ],
+        took: ms(2000),
+      ), concurrent: false);
+      expect(lines[1], '✗ gen  2.0s  exit 1');
+    });
+
+    test('a member that never began says why', () {
+      final lines = summary((
+        tasks: [
+          Ended(
+            'suite',
+            Result.notRun,
+            took: ms(1000),
+            why: 'stopped after 1 of 2 members, at an earlier failure',
+            members: [
+              Ended('a', Result.passed, took: ms(1000)),
+              const Ended(
+                'b',
+                Result.notRun,
+                why: 'the run stopped at an earlier failure',
+              ),
+            ],
+          ),
+        ],
+        took: ms(1000),
+      ), concurrent: false);
+      expect(lines[3], '  · b          the run stopped at an earlier failure');
+    });
+  });
+
   group('the total is how much work there was', () {
+    Duration s(int n) => Duration(seconds: n);
+    List<Ended> four(Duration each) => [
+      for (final at in [1, 2, 3, 4]) Ended('m$at', Result.passed, took: each),
+    ];
+
     test('and a fanned-out task contributes its members, not its row', () {
       // It summed the ROWS, and a fanned-out task's row is how long you
       // waited: four members of a second each at `-j 4` is a one-second row
       // and four seconds of work. A plan of two such tasks then reported two
       // seconds spent against two taken, which reads as a run that gained
       // nothing from `-j` when it had done eight seconds of work in two.
-      final lines = timing(
-        {'a': const Duration(seconds: 1), 'b': const Duration(seconds: 1)},
-        const Duration(seconds: 2),
-        {
-          'a': (spent: const Duration(seconds: 4), members: 4),
-          'b': (spent: const Duration(seconds: 4), members: 4),
-        },
-        concurrent: true,
-      );
+      final lines = summary((
+        tasks: [
+          Ended('a', Result.passed, took: s(1), members: four(s(1))),
+          Ended('b', Result.passed, took: s(1), members: four(s(1))),
+        ],
+        took: s(2),
+      ), concurrent: true);
       expect(lines.last, contains('8.0s spent'));
       expect(lines.last, contains('2.0s taken'));
     });
 
-    test('and a task with one member is its row, said once', () {
-      final lines = timing(
-        {'a': const Duration(seconds: 1), 'b': const Duration(seconds: 3)},
-        const Duration(seconds: 4),
-        const {},
-        concurrent: false,
-      );
-      expect(lines.last, 'total  4.0s');
+    test('and run together, both numbers, because they answer differently', () {
+      // How much work there was, and how long you waited. Printing only the
+      // first would report three seconds for a run that took two.
+      final lines = summary((
+        tasks: [
+          Ended('a', Result.passed, took: s(1)),
+          Ended('b', Result.passed, took: s(2)),
+        ],
+        took: s(2),
+      ), concurrent: true);
+      expect(lines.last, '  total  3.0s spent, 2.0s taken');
+    });
+
+    test('and a task that never began adds nothing and is not a total', () {
+      final lines = summary((
+        tasks: [
+          Ended('a', Result.failed, took: s(1), code: 1),
+          const Ended(
+            'b',
+            Result.skipped,
+            why: 'needs `a`, which did not pass',
+          ),
+        ],
+        took: s(1),
+      ), concurrent: false);
+      expect(lines.join('\n'), isNot(contains('total')));
     });
   });
 
   group('how long each task took', () {
-    // A whole `Executor`, a temporary directory, a YAML parse, a plan, a fake
-    // resolver and a fake process starter used to stand between this suite and
-    // a `Duration → String`.
     test('seconds to a tenth, which is what a person compares', () {
       expect(asTime(const Duration(milliseconds: 2340)), '2.3s');
       expect(asTime(Duration.zero), '0.0s');
@@ -138,98 +328,41 @@ void main() {
       expect(asTime(const Duration(minutes: 1)), '1m 00s');
     });
 
-    test('one line per task, in the order they ran', () {
-      final lines = timing(
-        {
-          'install': const Duration(seconds: 1),
-          'build': const Duration(seconds: 2),
-        },
-        const Duration(seconds: 3),
-        const {},
-        concurrent: false,
-      );
-      expect(lines, ['', 'install  1.0s', 'build    2.0s', 'total    3.0s']);
-    });
-
     test('the numbers line up under each other', () {
-      final lines = timing(
-        {
-          'a': const Duration(seconds: 1),
-          'bbbbbbbb': const Duration(minutes: 2),
-        },
-        const Duration(minutes: 2, seconds: 1),
-        const {},
-        concurrent: false,
-      );
-      expect(lines[1], 'a           1.0s');
-      expect(lines[2], 'bbbbbbbb  2m 00s');
-    });
-
-    test('a single task gets no total, which would repeat it', () {
-      final lines = timing(
-        {'a': const Duration(seconds: 1)},
-        const Duration(seconds: 1),
-        const {},
-        concurrent: false,
-      );
-      expect(lines, ['', 'a  1.0s']);
-    });
-
-    test('and run together, both numbers, because they answer differently', () {
-      // How much work there was, and how long you waited. Printing only the
-      // first would report three seconds for a run that took two.
-      final lines = timing(
-        {'a': const Duration(seconds: 1), 'b': const Duration(seconds: 2)},
-        const Duration(seconds: 2),
-        const {},
-        concurrent: true,
-      );
-      expect(lines.last, 'total  3.0s spent, 2.0s taken');
-    });
-
-    test('nothing ran, nothing to say', () {
-      expect(
-        timing(const {}, Duration.zero, const {}, concurrent: false),
-        isEmpty,
-      );
+      final lines = summary((
+        tasks: [
+          const Ended('a', Result.passed, took: Duration(seconds: 1)),
+          const Ended('bbbbbbbb', Result.passed, took: Duration(minutes: 2)),
+        ],
+        took: const Duration(minutes: 2, seconds: 1),
+      ), concurrent: false);
+      expect(lines[1], '✓ a           1.0s');
+      expect(lines[2], '✓ bbbbbbbb  2m 00s');
     });
   });
 
-  group('what failed and what therefore did not run', () {
-    test('a lone failure gets no summary — it printed itself already', () {
-      expect(summary(const {'a': 1}, const {}), isEmpty);
-    });
-
-    test('but a lone SKIP does: nothing else ever mentions it', () {
-      expect(
-        summary(const {}, const {'a': RunStopped()}),
-        contains('skipped  a — the run stopped at an earlier failure'),
-      );
-    });
-
+  group('why a task did not run', () {
     test('each reason gets a sentence that is true of it', () {
       // They were free text in one map through one template, which produced
       // `skipped third (needs a failure elsewhere)` for a task that needs
       // nothing.
-      final lines = summary(
-        const {'boom': 1},
-        const {
-          'dependent': NeedsStopped('boom'),
-          'announcement': FollowsStopped('publish'),
-          'untouched': RunStopped(),
-          'stranded': NeverStartable(),
-        },
+      expect(
+        const NeedsStopped('boom').sentence,
+        'needs `boom`, which did not pass',
       );
-      expect(lines, [
-        '',
-        'failed   boom (exit 1)',
-        'skipped  dependent — needs `boom`, which did not pass',
-        'skipped  announcement — follows `publish`, which did not pass',
-        'skipped  untouched — the run stopped at an earlier failure',
-        'skipped  stranded — nothing that would let it start ever finished',
-      ]);
+      expect(
+        const FollowsStopped('publish').sentence,
+        'follows `publish`, which did not pass',
+      );
+      expect(
+        const RunStopped().sentence,
+        'the run stopped at an earlier failure',
+      );
+      expect(
+        const NeverStartable().sentence,
+        'nothing that would let it start ever finished',
+      );
     });
-
     test('a `then:` is never described as a requirement', () {
       // Opposite answers to "why did this not run", and one wording for both
       // would misdescribe the file.
@@ -495,36 +628,56 @@ tasks:
   });
 
   group('what a fanned-out task added up to', () {
-    test('is said beside how long it took', () {
-      final lines = timing(
-        {'a': const Duration(seconds: 3)},
-        const Duration(seconds: 3),
-        const {'a': (spent: Duration(seconds: 9), members: 4)},
-        concurrent: true,
-      );
-      expect(lines[1], contains('9.0s over 4 members'));
+    Duration s(int n) => Duration(seconds: n);
+    List<Ended> four(Duration each) => [
+      for (final at in [1, 2, 3, 4]) Ended('m$at', Result.passed, took: each),
+    ];
+
+    test('is said beside how long it took, when the members ran together', () {
+      final lines = summary((
+        tasks: [
+          Ended(
+            'a',
+            Result.passed,
+            took: s(3),
+            members: four(const Duration(milliseconds: 2250)),
+          ),
+        ],
+        took: s(3),
+      ), concurrent: true);
+      expect(lines[1], endsWith('3.0s  9.0s over 4 members'));
     });
 
-    test('and one member says nothing — it is the row already', () {
-      // A task whose first member failed without `--keep-going` has exactly
-      // one attempted, and `over 1 members` is not a sentence.
-      final lines = timing(
-        {'a': const Duration(seconds: 1)},
-        const Duration(seconds: 1),
-        const {'a': (spent: Duration(seconds: 1), members: 1)},
-        concurrent: false,
-      );
-      expect(lines, ['', 'a  1.0s']);
+    test('and one after another it says nothing: the rows below add up', () {
+      // Sequentially the members' work IS the task's row, and `0.8s  0.8s
+      // over 2 members` was one number printed twice.
+      final lines = summary((
+        tasks: [Ended('a', Result.passed, took: s(4), members: four(s(1)))],
+        took: s(4),
+      ), concurrent: false);
+      expect(lines[1], '✓ a     4.0s');
     });
 
     test('and under `--only` it says how much of the set that was', () {
       const narrowed = {'a': (kept: 5, of: 17), 'b': (kept: 2, of: 9)};
-      final lines = timing(
-        {'a': const Duration(seconds: 1), 'b': const Duration(seconds: 1)},
-        const Duration(seconds: 2),
-        const {
-          'a': (spent: Duration(seconds: 1), members: 1),
-        },
+      final lines = summary(
+        (
+          tasks: [
+            Ended(
+              'a',
+              Result.failed,
+              took: s(1),
+              code: 1,
+              members: [
+                Ended('m1', Result.failed, took: s(1), code: 1),
+                for (final at in [2, 3, 4, 5])
+                  Ended('m$at', Result.notRun, why: 'the run stopped'),
+              ],
+            ),
+            Ended('b', Result.passed, took: s(1)),
+          ],
+          took: s(2),
+        ),
         concurrent: false,
         narrowed: narrowed,
       );
@@ -534,7 +687,7 @@ tasks:
         reason: 'five were kept and the first failed: one ran',
       );
       expect(
-        lines[2],
+        lines.firstWhere((line) => line.startsWith('✓ b')),
         endsWith('  2 of 9 members'),
         reason: 'without `each:`, the kept members went to one invocation',
       );
