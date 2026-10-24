@@ -7,7 +7,6 @@
 /// at all.
 library;
 
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -29,6 +28,7 @@ import 'model.dart';
 import 'primitives.dart';
 import 'reading.dart';
 import 'report.dart' as report;
+import 'report_file.dart';
 import 'request.dart';
 import 'schema.dart';
 import 'secrets.dart';
@@ -102,17 +102,35 @@ Future<int> runCli(
   if (request case RunTask(:final task, report: final path?)) {
     return _reporting(
       task,
-      path,
-      workingDirectory: workingDirectory,
-      secrets: secrets,
+      ReportFile(path, workingDirectory: workingDirectory, secrets: secrets),
       err: said,
       answer: (err, reportTo) => answer(err, reportTo: reportTo),
     );
   }
+  // **A command line refused still answers the report it asked for.** Left
+  // unwritten, the file is the last run's, and whatever waits on it reads
+  // that run's code as this one's.
+  if (request case ShowUsage(:final problem?)) {
+    if (reportAskedIn(args) case final asked?) {
+      return answer(said).then((code) {
+        reportRefusal(
+          asked,
+          workingDirectory: workingDirectory,
+          secrets: secrets,
+          code: code,
+          // The problem, and not the usage printed after it: that is help
+          // for a person, and the same screenful in every refusal.
+          refusal: 'xtask: $problem',
+          err: said,
+        );
+        return code;
+      });
+    }
+  }
   return answer(said);
 }
 
-/// A run with `--report`: the run as [answer] gives it, written to [path]
+/// A run with `--report`: the run as [answer] gives it, written to [file]
 /// before it begins, as it goes, and once it has its code.
 ///
 /// **Written before anything is looked at**, file included: a run refused
@@ -124,14 +142,9 @@ Future<int> runCli(
 ///
 /// What the run says on [err] is the refusal the report carries: in a run,
 /// only what refused it goes there.
-///
-/// Every string in it is masked by [secrets] before it is encoded: what a
-/// task failed with is the reproduction line, argv and all.
 Future<int> _reporting(
   String task,
-  String path, {
-  required String workingDirectory,
-  required Secrets secrets,
+  ReportFile file, {
   required void Function(String line) err,
   required Future<int> Function(
     void Function(String line) err,
@@ -139,32 +152,10 @@ Future<int> _reporting(
   )
   answer,
 }) async {
-  // Against where the command was run, as `--check-schema` reads its path:
-  // that is where the person typing it is looking.
-  final file = File(p.join(workingDirectory, path));
-  final part = File('${file.path}.part');
-
-  // Whole or not at all: a reader that opens it while the run is writing,
-  // or after a run cut off mid-write, finds the last report and not half of
-  // the next one.
-  void write(Map<String, Object?> json) {
-    file.parent.createSync(recursive: true);
-    part
-      ..writeAsStringSync(
-        '${const JsonEncoder.withIndent('  ').convert(secrets.maskJson(json))}'
-        '\n',
-      )
-      ..renameSync(file.path);
-  }
-
-  String failure(FileSystemException e) =>
-      'xtask: cannot write the report to `$path`: '
-      '${e.osError?.message ?? e.message}';
-
   try {
-    write(report.runReport(task, null));
+    file.write(report.runReport(task, null));
   } on FileSystemException catch (e) {
-    err(failure(e));
+    err(file.cannotWrite(e));
     return ExitCode.invalidFile;
   }
 
@@ -173,11 +164,11 @@ Future<int> _reporting(
   var said = false;
   void keep(Map<String, Object?> json) {
     try {
-      write(json);
+      file.write(json);
     } on FileSystemException catch (e) {
       if (!said) {
         said = true;
-        err(failure(e));
+        err(file.cannotWrite(e));
       }
     }
   }
@@ -429,7 +420,7 @@ Future<int> _answer(
               file,
               name: name,
               host: resolver.os,
-              fanOf: (task) => _fanOf(file, sets, task),
+              fanOf: (task) => _fanOf(file, sets, task, named: name != null),
               style: style,
             )
             .forEach(out);
@@ -484,9 +475,16 @@ Future<int> _answer(
 ///
 /// **Expanded as the run expands it**, so the tree names the members a run
 /// started now would reach. Empty because its `produced-by:` task has not
-/// run is "not yet", as `--dry-run` says; every other refusal is the run's
-/// own, and answered 2 as the run would.
-report.Fan _fanOf(XtaskFile file, SetExpander sets, Task task) {
+/// run is "not yet", as `--dry-run` says. Empty otherwise, it is a row's
+/// detail where nothing was [named] — a picture of the whole file is not
+/// refused for one task in it — and the run's refusal where a name was.
+/// Every other refusal is the run's own, and answered 2 as the run would.
+report.Fan _fanOf(
+  XtaskFile file,
+  SetExpander sets,
+  Task task, {
+  required bool named,
+}) {
   final name = task.each!;
   final set = file.sets[name];
   if (set == null) {
@@ -500,6 +498,9 @@ report.Fan _fanOf(XtaskFile file, SetExpander sets, Task task) {
   } on EmptySetException catch (empty) {
     if (empty.onlyYet && set is GlobSet) {
       return report.MembersNotYet(set.producedBy!);
+    }
+    if (!named) {
+      return report.NoMembers(name);
     }
     rethrow;
   }

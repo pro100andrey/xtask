@@ -52,6 +52,8 @@ List<XtaskFormatException> incoherences(
   ..._markerInAName(task),
   ..._setAndUnset(task, keySpan),
   ..._setTwice(task, keySpan),
+  ..._requiredAndUnset(task, keySpan),
+  ..._spelledTwice(task, keySpan),
   ..._bodyCannotHonourIt(task, keySpan),
 ];
 
@@ -110,6 +112,72 @@ Iterable<XtaskFormatException> _setTwice(
         'without case, because Windows reads them that way)',
         keySpan?.call('env-paths') ?? task.span,
       );
+    }
+  }
+}
+
+/// A variable a task's `env-required:` demands and its `env-unset:` removes.
+///
+/// **The check would pass and the body would get nothing.** `env-required:`
+/// is asked of the environment the run was given, and `env-unset:` then
+/// takes the value away from the body — so the one thing the check exists
+/// to promise, that the body sees the variable, is the one thing it does not
+/// get. Compared without case, for [_setAndUnset]'s reason.
+Iterable<XtaskFormatException> _requiredAndUnset(
+  Task task,
+  SourceSpan? Function(String key)? keySpan,
+) sync* {
+  final required = {for (final name in task.envRequired) name.toUpperCase()};
+  for (final name in task.envUnset) {
+    if (required.contains(name.toUpperCase())) {
+      yield XtaskFormatException(
+        'task `${task.name}` both requires and removes `$name` — '
+        '`env-required:` checks that the run was given it and `env-unset:` '
+        'then keeps it from the body, so the check passes and the body gets '
+        'nothing. Keep one (names are compared without case, because Windows '
+        'reads them that way)',
+        keySpan?.call('env-unset') ?? task.span,
+      );
+    }
+  }
+}
+
+/// One variable spelled twice within one of `env:`, `env-paths:` or
+/// `env-unset:`, in two cases.
+///
+/// **Two keys to YAML, one variable to Windows.** The document has `Path`
+/// and `PATH` as two entries, so nothing before this refuses them; the body
+/// on Windows is handed both, and which one it reads is the platform's
+/// choice rather than the file's. Refused on every host for
+/// [_setAndUnset]'s reason: a check that held only on Windows would let the
+/// file validate clean where it was written and refuse on the runner.
+Iterable<XtaskFormatException> _spelledTwice(
+  Task task,
+  SourceSpan? Function(String key)? keySpan,
+) sync* {
+  for (final (key, names) in [
+    ('env', task.env.keys),
+    ('env-paths', task.envPaths.keys),
+    ('env-unset', task.envUnset),
+  ]) {
+    final seen = <String, String>{};
+    for (final name in names) {
+      final first = seen[name.toUpperCase()];
+      if (first == null) {
+        seen[name.toUpperCase()] = name;
+      } else {
+        yield XtaskFormatException(
+          'task `${task.name}` names one variable twice in `$key:` — '
+          '`$first` and `$name`, which Windows reads as one, '
+          '${key == 'env-unset' ? 'so one of them removes nothing the other '
+                    'does not, or was meant to be another variable' : 'so '
+                    'the body there would be handed both and read whichever '
+                    'the platform picks'}. Keep one (names are compared '
+          'without case, because Windows reads them that way)',
+          keySpan?.call(key) ?? task.span,
+        );
+        break;
+      }
     }
   }
 }

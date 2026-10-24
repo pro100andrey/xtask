@@ -211,9 +211,14 @@ final class _Outcomes {
   /// run answers 2 for them.
   final refused = <String, String>{};
 
-  /// The tasks a member of which was stopped part-way, because the run had
-  /// given up and the task was `interruptible:`.
-  final interrupted = <String>{};
+  /// The tasks a member of which was stopped part-way, with why — the run
+  /// had given up and the task was `interruptible:`, or a signal.
+  ///
+  /// **The why is kept from the moment of the stop**, not worked out when
+  /// the run ends: a task a failure stopped, in a run a signal reached a
+  /// while later, was otherwise said — in the summary and the report — to
+  /// have been stopped by the signal.
+  final interrupted = <String, Skipped>{};
 
   /// What each member of an `each:` task came to, in the set's order.
   final members = <String, List<Ended>>{};
@@ -326,7 +331,7 @@ final class Executor {
   final _found = <String, Holding>{};
 
   /// Why a task's `unchanged:` could not be read when the run began, by task.
-  /// Said when the run reaches the task, as any refusal of its own is.
+  /// Said before anything runs: see [_refuseUnreadable].
   final _unreadable = <String, RunFailure>{};
 
   /// What an `unchanged:` set is expanded with, under the resolver's rules.
@@ -369,7 +374,9 @@ final class Executor {
     report();
     final int code;
     try {
-      code = await _walk(plan, outcomes, report, concurrent: concurrent);
+      code =
+          _refuseUnreadable(plan, outcomes) ??
+          await _walk(plan, outcomes, report, concurrent: concurrent);
     } finally {
       report();
       // Printed on the way out, whichever way that is: a file found wrong
@@ -456,7 +463,7 @@ final class Executor {
     }
     final skipped =
         outcomes.skipped[name] ??
-        (outcomes.interrupted.contains(name) ? _partWay : null) ??
+        outcomes.interrupted[name] ??
         (took == null ? CutOff(began: outcomes.started.contains(name)) : null);
     if (skipped == null) {
       return Ended(name, Result.passed, took: took, members: members);
@@ -500,21 +507,55 @@ final class Executor {
       if (name == null || !task.isFor(bodies.resolver.os)) {
         continue;
       }
-      if (unchangedRefusal(task, bodies.sets) case final refusal?) {
-        _unreadable[task.name] = RunFailure(ExitCode.invalidFile, refusal);
-        continue;
-      }
       try {
+        final reach = unchangedReach(_expander, task, bodies.sets);
         _found[task.name] = read[name] ??= holding(
           _expander,
           task,
           name,
           bodies.sets[name]!,
+          reach: reach,
         );
       } on RunFailure catch (failure) {
         _unreadable[task.name] = failure;
       }
     }
+  }
+
+  /// Refuses the run, before any task in it has started, where a task's
+  /// `unchanged:` set could not be read when it began; null where every one
+  /// could.
+  ///
+  /// **Before the walk, not when the run reaches the task.** The task that
+  /// holds a set is usually the composite over the steps that write it, and
+  /// those are its `needs:`: refused on arrival, it was refused after the
+  /// generator had rewritten the files — the gate that could not compare had
+  /// run the generator and said nothing about what it did. Every task of the
+  /// plan that cannot compare is named, each in its own section, and the rest
+  /// are not begun.
+  ///
+  /// Answered with the first refusal in the plan's order. Not a
+  /// continuation's 4, even for a task in a `then:`: nothing has run, so
+  /// nothing was published.
+  int? _refuseUnreadable(Plan plan, _Outcomes outcomes) {
+    if (_unreadable.isEmpty) {
+      return null;
+    }
+    int? code;
+    for (final step in plan.steps) {
+      final name = step.task.name;
+      if (_unreadable[name] case final failure?) {
+        markers.open(name, style).forEach(log);
+        markers.error(failure.message).forEach(log);
+        outcomes.failed[name] = failure.code;
+        outcomes.why[name] = failure.message;
+        code ??= failure.code;
+      } else {
+        outcomes.skipped[name] = const RunStopped();
+      }
+    }
+    _givenUp.now();
+    return code;
   }
 
   /// Refuses [task] if its set changed since the run began.
@@ -838,11 +879,6 @@ final class Executor {
     final List<Resolved> resolved;
     try {
       resolved = bodies.resolveTask(task);
-      // Before the body, with the task's other refusals: a gate that cannot
-      // compare must not run the generator and then say nothing about it.
-      if (_unreadable[task.name] case final failure?) {
-        throw failure;
-      }
     } on Object catch (thrown) {
       // **Said before the place is given back, for the reason `_runMembers`
       // gives when a member fails:** whoever is waiting for the place must
@@ -903,11 +939,19 @@ final class Executor {
     // What each member came to, for the report; null for one never begun.
     final ended = List<Ended?>.filled(resolved.length, null);
 
+    // Why this task was cut short, as it was when it was: a signal that
+    // reaches the run afterwards did not stop what a failure had already
+    // stopped, and asking only once the task has ended would say it did.
+    ({Skipped notBegun, Skipped partWay})? cut;
+    ({Skipped notBegun, Skipped partWay}) cutNow() =>
+        cut ??= (notBegun: _notBegun, partWay: _partWay);
+
     Future<void> member(int at, Lease? given) async {
       final place = given ?? await _slots.take();
       // The one check, at the moment a unit has a place: a failure anywhere
       // — a sibling's, another task's — stops what has not started.
       if (stop || _givenUp.already) {
+        cutNow();
         place.release();
         return;
       }
@@ -924,8 +968,7 @@ final class Executor {
         if (await _perform(resolved[at], own) == _Ending.stopped) {
           stop = true;
           result = Result.notRun;
-          why = _partWay.sentence;
-          outcomes.interrupted.add(task.name);
+          why = (outcomes.interrupted[task.name] ??= cutNow().partWay).sentence;
         }
       } on XtaskFormatException catch (thrown) {
         // The file being wrong is not a thing more members can fix, and it
@@ -942,8 +985,10 @@ final class Executor {
           // a process stopped, and not a failure beside the signal.
           own('task `${task.name}`${_at(resolved[at])} was stopped: $thrown');
           stop = true;
-          (result, why) = (Result.notRun, _partWay.sentence);
-          outcomes.interrupted.add(task.name);
+          (result, why) = (
+            Result.notRun,
+            (outcomes.interrupted[task.name] ??= cutNow().partWay).sentence,
+          );
           return;
         }
         // Anything, not only a `RunFailure`: a verb can throw whatever it
@@ -988,6 +1033,7 @@ final class Executor {
         if (at > 0 && (stop || _givenUp.already)) {
           // Checked before a place is taken rather than after: a member that
           // takes one only to give it back is a place the walk could not see.
+          cutNow();
           break;
         }
         inFlight.add(member(at, at == 0 ? first : await _slots.take()));
@@ -1008,16 +1054,17 @@ final class Executor {
               Ended(
                 resolved[at].member ?? task.name,
                 Result.notRun,
-                why: _notBegun.sentence,
+                why: (cut?.notBegun ?? _notBegun).sentence,
               ),
       ];
     }
     // A task the run gave up on part-way is named, like a task it never
     // reached: two of eight members having run reads exactly like eight.
     if (attempted < resolved.length && failures.isEmpty && malformed == null) {
-      outcomes.skipped[task.name] = _signal == null
-          ? PartlyRun(attempted: attempted, members: resolved.length)
-          : _partWay;
+      outcomes.skipped[task.name] = switch (cut?.partWay ?? _partWay) {
+        final Signalled signalled => signalled,
+        _ => PartlyRun(attempted: attempted, members: resolved.length),
+      };
     }
     // The file being wrong outranks a task that failed.
     final failure = malformed ?? _tally(task, resolved, failures, attempted);

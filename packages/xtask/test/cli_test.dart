@@ -1081,6 +1081,39 @@ tasks:
         expect(report['why'], contains('lnit'));
       });
 
+      test('a command line refused leaves a report saying so, in place of '
+          'the last run’s', () async {
+        // A report left from the run before reads, to whatever waits on it,
+        // as this run's answer: green, for a run that never happened.
+        writeFile('version: 1\ntasks:\n  lint: {desc: a, run: [ruff]}\n');
+        final at = p.join(root.path, 'run.json');
+        for (final (args, says, task) in [
+          (['-j', '0', '--report', at, 'lint'], '`-j 0`', 'lint'),
+          (['lint', '--bogus', '--report=$at'], '`--bogus`', 'lint'),
+          (['--list', '--report', at], '`--list`', null),
+        ]) {
+          expect(await run(['lint', '--report', at]), ExitCode.success);
+          expect(await run(args), ExitCode.invalidFile, reason: '$args');
+          final report = reportAt(at);
+          expect(report['complete'], isTrue, reason: '$args');
+          expect(report['code'], ExitCode.invalidFile, reason: '$args');
+          expect(report['why'], contains(says), reason: '$args');
+          expect(report['why'], isNot(contains('usage:')), reason: '$args');
+          expect(report['task'], task, reason: '$args');
+          expect(report['tasks'], isEmpty, reason: '$args');
+        }
+      });
+
+      test('but not for a `--report` after `--`, which is a task’s', () async {
+        writeFile('version: 1\ntasks:\n  lint: {desc: a, run: [ruff]}\n');
+        final at = p.join(root.path, 'run.json');
+        expect(
+          await run(['-j', '0', 'lint', '--', '--report', at]),
+          ExitCode.invalidFile,
+        );
+        expect(File(at).existsSync(), isFalse);
+      });
+
       test('and so does a file the engine cannot read', () async {
         writeFile('version: 1\ntasks: [\n');
         final at = p.join(root.path, 'run.json');
@@ -1570,6 +1603,30 @@ tasks:
       ]);
       expect(await run(['--graph', 'chek']), ExitCode.invalidFile);
       expect(complained(), contains('did you mean `check`?'));
+    });
+
+    test('a bare --graph draws an empty set on its own row, rather than '
+        'refusing the whole file for it', () async {
+      // The set is only `e2e`'s, and `e2e` is in no gate set: the picture of
+      // `check` has nothing to do with it. Named, the task is refused as a
+      // run of it would be.
+      writeFile(r'''
+version: 1
+gates: [check]
+sets:
+  art: {include: ['artifacts/*.js']}
+tasks:
+  test: {desc: t, gate: [check], run: [dart]}
+  e2e: {desc: e, each: art, run: [cat, $each]}
+''');
+      expect(await run(['--graph']), ExitCode.success, reason: complained());
+      expect(printed(), contains('gate check'));
+      expect(
+        out.singleWhere((line) => line.contains('e2e')),
+        matches(RegExp(r'e2e +set `art` is empty$')),
+      );
+      expect(await run(['--graph', 'e2e']), ExitCode.invalidFile);
+      expect(complained(), contains('set `art` is empty'));
     });
 
     group('running with `-j`', () {

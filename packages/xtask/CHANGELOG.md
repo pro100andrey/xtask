@@ -25,8 +25,9 @@
   three members (all four where there are four), a set whose `produced-by:`
   task has not run as `cannot be resolved yet`, and a task for another OS
   as `⊘ linux only`. With no name, every gate set and then, under
-  `ungated`, the tasks none of them reaches. A name a run refuses is
-  refused with the run's sentence and `2`. Shells complete a gate set or
+  `ungated`, the tasks none of them reaches; any other empty set is said on
+  its task's row rather than refusing the whole picture. A name a run
+  refuses is refused with the run's sentence and `2`, an empty set included. Shells complete a gate set or
   task after it; `--check-ci` reads it as a question, as it reads `--why`.
 
 - `findRoot(from)` and `gateMembers(gate, {workingDirectory})` are exported
@@ -85,7 +86,12 @@
   before the file form runs. A failed `dart pub get` is a `1`; an entry point
   that does not compile is `dart run`'s `254` or `255`. A batch-file `dart`
   refuses a command line `cmd.exe` would read before any `pub get`, and says
-  to put the SDK's `dart.exe` ahead of it.
+  to put the SDK's `dart.exe` ahead of it. A run the hand-over refuses before
+  it starts — a loop, no `dart`, a command line `cmd.exe` would read, a
+  failed `pub get`, a `dart` that would not start — writes the `--report` the command line asked
+  for, as the engine's own refusals do. On Windows a Ctrl-C is not passed on,
+  since `Process.kill` there ends the project's engine outright: the console
+  delivers it to that engine too, and the installed `xtask` waits for it.
 
 - `entry:` names the project's entry point, from the root, where it is not
   `bin/xtask.dart` — `tools/bin/xtask.dart` in a tools package of its own, or
@@ -101,16 +107,21 @@
   the packages with a suite. Paths, not patterns, and nothing reads what a
   file says. A path that is absolute or climbs through `..` is refused, by
   `--validate` too; a set the filter leaves empty is refused as any empty set
-  is, saying that the patterns matched and the filter took them.
+  is, saying that the patterns matched and the filter took them. A link along
+  the way is not followed, as one at the end is not: `link/test` through a
+  link to another tree is not held.
 
 - `unchanged: <set>` fails a task that changed the files a set of paths
   reaches, naming each file changed, added or removed. Compared byte for byte,
   not asked of git, so it answers the same in a dirty tree and outside a
   repository; a directory member is every file beneath it. The set is first
   read when the run begins — before every `needs:`, including one another
-  branch of the graph reaches first — and again when the task ends. A missing
-  set or a `values:` set is refused by `--validate`, `--dry-run` and the run,
-  before the body starts; `--dry-run` says which set a task holds.
+  branch of the graph reaches first — and again when the task ends. A set it
+  cannot compare — missing, `values:`, reaching outside the root, a pattern
+  that is none, or empty with no `produced-by:` task to fill it — is refused
+  by `--dry-run` and by the run with the same `2` and sentence, before
+  anything in the run has started, its `needs:` included; `--validate`
+  refuses each too. `--dry-run` says which set a task holds.
 
 - `--report <file>` writes a run as JSON, `version: 1`: the task asked for,
   whether the run got to its end, its code and seconds, and every task of the
@@ -120,14 +131,19 @@
   code: a run refused before it began says why, and one killed where it
   stands leaves the last report with `complete: false`. The path is read from where
   the command was run; one that cannot be written is a `2` before anything
-  runs.
+  runs. A command line refused — `-j 0`, an option there is not — still
+  writes the report it asked for, with the `2` and the problem, rather than
+  leaving the last run's in its place; `task` is left out where it named
+  none. A `--report` after `--` is a task's and not looked for.
 
 - `env-unset: [names]` takes variables away from a task's body — a `run:` and
   a `do:` alike, and everything a verb starts — so `dart test` need not see
   `CI` or `PUB_HOSTED_URL`. Removed, not emptied. On Windows a name is matched
   whatever its case, so `[Path]` removes `PATH`; a name the same task's
-  `env:` sets is refused when the file is read, compared without case on
-  every host. `--dry-run` prints each as `env  unset CI`.
+  `env:` sets or `env-required:` demands is refused when the file is read,
+  compared without case on every host. So is one variable spelled twice in
+  two cases within one `env:`, `env-paths:` or `env-unset:` — `Path` and
+  `PATH` — which Windows would hand the body as two. `--dry-run` prints each as `env  unset CI`.
 
 - A run stopped by Ctrl-C or `SIGTERM` stops what it started instead of
   leaving it running: nothing more starts, every process the run started — a
@@ -137,7 +153,9 @@
   reported as stopped, not failed. A `do:` verb is waited for; what it asks
   to start after the signal is answered `130` and not started. Its last
   `--report` is written with `complete: true` and the signal's code, and the
-  task running says it was stopped. On Windows, Ctrl-C only.
+  task running says it was stopped. A task an earlier failure had already
+  stopped still says so when the signal comes later: the reason is kept from
+  the moment of the stop. On Windows, Ctrl-C only.
 
 ### Changed
 

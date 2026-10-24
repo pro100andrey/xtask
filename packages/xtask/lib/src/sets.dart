@@ -164,12 +164,25 @@ final class SetExpander {
   /// A link counts as what is there, not as what it points at: the walk does
   /// not follow one either, and a link to a directory elsewhere is not this
   /// member holding it.
-  bool _holds(String member, String path) =>
-      FileSystemEntity.typeSync(
-        p.joinAll([root, ...p.posix.split(member), ...p.posix.split(path)]),
-        followLinks: false,
-      ) !=
-      FileSystemEntityType.notFound;
+  ///
+  /// **Every step of the way, not only the last.** `followLinks: false`
+  /// speaks for the final name alone: the operating system resolves every
+  /// directory before it, so `link/test/x_test.dart` through a link to
+  /// another tree — outside the repository, even — was held. Each step
+  /// before the last has to be a directory in its own right, the member
+  /// included.
+  bool _holds(String member, String path) {
+    var at = p.joinAll([root, ...p.posix.split(member)]);
+    for (final step in p.posix.split(p.posix.normalize(path))) {
+      if (FileSystemEntity.typeSync(at, followLinks: false) !=
+          FileSystemEntityType.directory) {
+        return false;
+      }
+      at = p.join(at, step);
+    }
+    return FileSystemEntity.typeSync(at, followLinks: false) !=
+        FileSystemEntityType.notFound;
+  }
 
   /// [path] from `containing:`, refused unless it names something inside a
   /// member.

@@ -141,6 +141,46 @@ void main() {
     );
   }
 
+  test('a task a failure stopped is not said to have been stopped by a '
+      'signal that came later', () async {
+    // `b` is stopped when `a` fails; the signal comes while `c` still runs.
+    // Asked when the run ended, the cause was the signal for both.
+    file(
+      'version: 1\n'
+      'tasks:\n'
+      "  a: {desc: x, run: [sh, -c, 'while [ ! -f b.pid ]; do sleep 0.05; "
+      "done; exit 1']}\n"
+      r"  b: {desc: x, interruptible: true, run: [sh, -c, 'echo $$ > b.pid; "
+      "exec sleep 60']}\n"
+      r"  c: {desc: x, run: [sh, -c, 'echo $$ > c.pid; exec sleep 60']}"
+      '\n'
+      '  all: {desc: x, needs: [a, b, c]}\n',
+    );
+    final started = await engine(['all', '-j', '3', '--report', 'run.json']);
+    final b = await pidIn('b.pid');
+    await pidIn('c.pid');
+    for (var tries = 0; alive(b) && tries < 300; tries++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    expect(alive(b), isFalse, reason: '`a` failing stops `b`');
+
+    expect(await send(ProcessSignal.sigint, started), 130);
+    final report =
+        jsonDecode(File(p.join(root.path, 'run.json')).readAsStringSync())
+            as Map<String, Object?>;
+    final why = {
+      for (final task
+          in (report['tasks']! as List<Object?>).cast<Map<String, Object?>>())
+        task['task']: task['why'],
+    };
+    expect(
+      why['b'],
+      'stopped part-way: an earlier failure had already answered the run',
+      reason: '${started.said}',
+    );
+    expect(why['c'], 'stopped part-way: the run received SIGINT');
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
   test('under -j every member of an `each:` is stopped', () async {
     for (final member in ['a', 'b']) {
       Directory(p.join(root.path, 'pkg', member)).createSync(recursive: true);

@@ -8,6 +8,7 @@ import 'exit_codes.dart';
 import 'graph.dart';
 import 'primitives.dart';
 import 'report.dart';
+import 'sets.dart';
 import 'unchanged.dart';
 
 /// Prints [plan] and everything in it, and runs nothing.
@@ -31,6 +32,22 @@ Future<int> dryRun({
   // task names a program this machine has not got is exactly when somebody
   // wants to see the order, and printing it afterwards would print nothing.
   log('plan: ${plan.names.join(', ')}');
+
+  // Where the run refuses it: before any step, by the same call and in the
+  // same words. Not a continuation's 4 even for a task in a `then:`, because
+  // the run that refuses it has run no body yet.
+  final expander = SetExpander(root: bodies.root);
+  for (final step in plan.steps) {
+    if (step.task.unchanged == null || !step.task.isFor(bodies.resolver.os)) {
+      continue;
+    }
+    try {
+      unchangedReach(expander, step.task, bodies.sets);
+    } on RunFailure catch (failure) {
+      log('error: ${failure.message}');
+      return failure.code;
+    }
+  }
 
   for (final step in plan.steps) {
     // Not resolved: the run would not look for its program or its variables
@@ -62,15 +79,6 @@ Future<int> dryRun({
       // The same code the run would answer with, including the third outcome:
       // a body that would have succeeded and a continuation that would not.
       return step.isContinuation ? ExitCode.continuationFailed : failure.code;
-    }
-
-    // Where the run refuses it: before the body, with the task's other
-    // refusals, and in the same words.
-    if (unchangedRefusal(step.task, bodies.sets) case final refusal?) {
-      log('error: $refusal');
-      return step.isContinuation
-          ? ExitCode.continuationFailed
-          : ExitCode.invalidFile;
     }
 
     if (resolved.isEmpty) {

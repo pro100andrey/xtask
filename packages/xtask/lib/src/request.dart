@@ -652,6 +652,59 @@ Request parseArguments(
         );
 }
 
+/// The `--report` [args] asked for, read without the rest of the grammar,
+/// and the task they named where they named one; null where they asked for
+/// none.
+///
+/// **For a command line [parseArguments] refused.** A report asked for and
+/// not written leaves the last run's in its place, which reads to whatever
+/// waits on it as this run's answer — green, for a run that never happened.
+/// So the path is looked for in a command line that is not otherwise
+/// understood: `--report <path>` or `--report=<path>`, the last one written,
+/// as the parser keeps it. Only before `--`: after it, the words are a
+/// task's.
+///
+/// The task is the one operand where there is exactly one and no mode was
+/// written; anything else names no run, and a report that guessed one would
+/// be a report about a run nobody asked for.
+({String path, String? task})? reportAskedIn(List<String> args) {
+  String? path;
+  final operands = <String>[];
+  var mode = false;
+  final rest = args.takeWhile((argument) => argument != '--').toList();
+  while (rest.isNotEmpty) {
+    final argument = rest.removeAt(0);
+    if (argument.startsWith('--report=')) {
+      final written = argument.substring('--report='.length);
+      path = written.isEmpty ? path : written;
+    } else if (argument == '-j' || argument == '--jobs') {
+      // The parser takes the next word whatever it is.
+      if (rest.isNotEmpty) {
+        rest.removeAt(0);
+      }
+    } else if (runOptionsTakingAValue.contains(argument)) {
+      if (rest.isNotEmpty && !rest.first.startsWith('-')) {
+        final value = rest.removeAt(0);
+        if (argument == '--report') {
+          path = value;
+        }
+      }
+    } else if (modes.contains(argument) ||
+        modes.any((name) => argument.startsWith('$name='))) {
+      mode = true;
+    } else if (!argument.startsWith('-')) {
+      operands.add(argument);
+    }
+  }
+  if (path == null) {
+    return null;
+  }
+  return (
+    path: path,
+    task: !mode && operands.length == 1 ? operands.single : null,
+  );
+}
+
 /// [written] split into patterns at each comma outside braces.
 ///
 /// **Not at every comma**, because a glob set's own patterns take braces and

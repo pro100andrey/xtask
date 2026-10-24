@@ -1383,6 +1383,51 @@ tasks: {}
       expect(message, contains('task `a` both sets and removes `PATH`'));
     });
 
+    test('a variable a task both requires and removes is refused, without '
+        'case', () {
+      // The run checks `env-required:` against the environment it was
+      // given, and `env-unset:` then takes the value away: the check passes
+      // and the body gets nothing, which is the one thing the check was for.
+      for (final unset in ['TOKEN', 'token']) {
+        final message = refusalOf(
+          () => parseXtaskFile(
+            'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart], env-required: [TOKEN], '
+            'env-unset: [$unset]}\n',
+          ),
+        );
+        expect(
+          message,
+          contains('task `a` both requires and removes `$unset`'),
+          reason: unset,
+        );
+      }
+    });
+
+    test('one name spelled twice within `env:`, `env-paths:` or `env-unset:` '
+        'is refused on every host', () {
+      // Windows reads `Path` and `PATH` as one variable, and both spellings
+      // would reach the child there, with which one it reads left to the
+      // platform.
+      for (final (key, written) in [
+        ('env', '{Path: a, PATH: b}'),
+        ('env-paths', '{Cache: a, CACHE: b}'),
+        ('env-unset', '[Path, PATH]'),
+      ]) {
+        final message = refusalOf(
+          () => parseXtaskFile(
+            'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart], $key: $written}\n',
+          ),
+        );
+        expect(
+          message,
+          contains('task `a` names one variable twice in `$key:`'),
+          reason: key,
+        );
+      }
+    });
+
     test('a marker in `env-unset:` names nothing', () {
       final message = refusalOf(
         () => parseXtaskFile(

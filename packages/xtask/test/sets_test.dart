@@ -418,6 +418,32 @@ void main() {
       expect(expandContaining(['*'], ['pubspec.yaml']), ['a']);
     });
 
+    test('a link part-way along the path is not followed', () {
+      // `link/test/x_test.dart` through a link to somewhere else — outside
+      // the repository here — is not this member holding it, any more than a
+      // link at the end of the path would be what it points at.
+      final outside = tempRepo('containing_outside');
+      File(p.join(outside.path, 'test', 'x_test.dart'))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('');
+      given(['packages/a/pubspec.yaml', 'packages/b/test/x_test.dart']);
+      Link(
+        p.join(root.path, 'packages', 'a', 'link'),
+      ).createSync(outside.path);
+      Link(
+        p.join(root.path, 'packages', 'a', 'test'),
+      ).createSync(p.join(outside.path, 'test'));
+      expect(expandContaining(['packages/*'], ['test/x_test.dart']), [
+        'packages/b',
+      ]);
+      expect(
+        refusalOf(
+          () => expandContaining(['packages/*'], ['link/test/x_test.dart']),
+        ),
+        contains('set `s` is empty'),
+      );
+    });
+
     test('left empty by it, the set is refused and says why', () {
       given(['packages/a/pubspec.yaml']);
       expect(

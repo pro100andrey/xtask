@@ -488,11 +488,12 @@ typedef RunSoFar = ({List<Ended> tasks, Duration took});
 /// written during the run says it is not complete, so that one left behind
 /// by a run that was cut off cannot be read as a run that ended. [refusal]
 /// is what refused the run when it never began, which is when [run] is null.
+/// [task] is null for a command line refused before it named one.
 ///
 /// Fields are left out where they have nothing to say rather than written as
 /// null, the way a reader in any language finds easiest to ask about them.
 Map<String, Object?> runReport(
-  String task,
+  String? task,
   RunSoFar? run, {
   int? code,
   String? refusal,
@@ -508,7 +509,7 @@ Map<String, Object?> runReport(
   };
   return {
     'version': reportVersion,
-    'task': task,
+    'task': ?task,
     'complete': code != null,
     'code': ?code,
     'seconds': ?_seconds(run?.took),
@@ -672,6 +673,20 @@ final class MembersNotYet extends Fan {
   final String producer;
 }
 
+/// A set that is empty, in a picture of the whole file.
+///
+/// **A row's detail, not the answer's refusal.** Bare `--graph` draws every
+/// gate set and every task none of them reaches; refusing all of it for an
+/// empty set that one task outside every gate set fans out over drew
+/// nothing at all about the gates the person asked to see. The set is still
+/// refused where the task is named, as a run of it would be.
+final class NoMembers extends Fan {
+  const NoMembers(this.set);
+
+  /// The set's name.
+  final String set;
+}
+
 /// How many members of an `each:` the tree names before it counts the rest.
 ///
 /// **Three, and never "and 1 more".** The members share one line with the
@@ -766,6 +781,7 @@ List<String> graph(
                 Tint.faint,
               ),
             ),
+            NoMembers(:final set) => ('', ('set `$set` is empty', Tint.failed)),
           };
     rows.add((label: '$label$count', detail: detail));
     final edges = [

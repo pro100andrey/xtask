@@ -377,6 +377,7 @@ tasks:
         entry: 'bin/xtask.dart',
         arguments: ['run', 'bin/xtask.dart', '--', _token],
         resolveIn: null,
+        report: null,
       ),
       environment: const {'TOKEN': _token},
       err: err.add,

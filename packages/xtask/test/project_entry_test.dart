@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -330,6 +331,98 @@ void main() {
       ExitCode.missingTool,
       reason: 'past the check, to the lookup of `dart`',
     );
+  });
+
+  test('a hand-over refused before the run starts leaves the report the '
+      'command line asked for, as the engine refuses one', () async {
+    repository();
+    resolution(root, {'shop': ''});
+    final at = p.join(root, 'out', 'run.json');
+    final absent = ExecutableResolver(
+      environment: const {'PATH': ''},
+      windows: false,
+      isRunnable: (_) => false,
+    );
+    for (final (depth, code, says) in [
+      (handOverLimit, ExitCode.invalidFile, 'loop'),
+      (0, ExitCode.missingTool, 'takes `dart` to run it'),
+    ]) {
+      File(at)
+        ..createSync(recursive: true)
+        ..writeAsStringSync('{"code": 0}');
+      final answered = await runProjectEntry(
+        entryFrom(root, ['check', '--report', at, '--', '--report', 'x'])!,
+        environment: {handOverVariable: '$depth'},
+        err: (_) {},
+        resolver: absent,
+      );
+      expect(answered, code);
+      final report =
+          jsonDecode(File(at).readAsStringSync()) as Map<String, Object?>;
+      expect(report, containsPair('complete', true));
+      expect(report, containsPair('code', code));
+      expect(report, containsPair('task', 'check'));
+      expect(report['why'], contains(says));
+      expect(File(p.join(root, 'x')).existsSync(), isFalse);
+    }
+  });
+
+  group('the signals the installed `xtask` receives', () {
+    late List<ProcessSignal> sent;
+    late StreamController<ProcessSignal> interrupts;
+    late StreamController<ProcessSignal> terminations;
+
+    setUp(() {
+      sent = [];
+      interrupts = StreamController();
+      terminations = StreamController();
+      // Not awaited: a controller nothing listened to never finishes
+      // closing, and on Windows nothing listens for a `SIGTERM`.
+      addTearDown(() {
+        unawaited(interrupts.close());
+        unawaited(terminations.close());
+      });
+    });
+
+    Future<void> wired({required bool windows}) async {
+      final watching = passSignalsOn(
+        ([signal = ProcessSignal.sigterm]) {
+          sent.add(signal);
+          return true;
+        },
+        windows: windows,
+        interrupts: interrupts.stream,
+        terminations: terminations.stream,
+      );
+      addTearDown(() async {
+        for (final watch in watching) {
+          await watch.cancel();
+        }
+      });
+      interrupts.add(ProcessSignal.sigint);
+      if (!windows) {
+        terminations.add(ProcessSignal.sigterm);
+      }
+      await pumpEventQueue();
+    }
+
+    test('off Windows, reach the run as a SIGTERM', () async {
+      await wired(windows: false);
+      expect(sent, [ProcessSignal.sigterm, ProcessSignal.sigterm]);
+    });
+
+    test('on Windows, a Ctrl-C is only heard, and the run is not ended '
+        'under itself', () async {
+      // `Process.kill` on Windows ignores the signal and terminates the
+      // process (the SDK documents it so): the project's engine, which the
+      // console's Ctrl-C reaches as well, would be ended before it could
+      // stop its run, print its summary or write its report. The interrupt
+      // is listened to, so that this process outlives it, and the run ends
+      // itself.
+      await wired(windows: true);
+      expect(interrupts.hasListener, isTrue);
+      expect(sent, isEmpty);
+    });
   });
 
   test("a batch-file `dart` refuses a metacharacter the person's command "

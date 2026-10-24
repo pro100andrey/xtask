@@ -333,6 +333,81 @@ void main() {
       );
     });
 
+    test("before the task's `needs:` have run", () async {
+      // The generator is the composite's `needs:`, and a refusal said only
+      // on reaching the composite came after it had written.
+      final ran = <String>[];
+      Verb step(String name) => (_) async {
+        ran.add(name);
+        return ExitCode.success;
+      };
+      for (final (what, sets) in [
+        ('no such set', ''),
+        ('a set of values', '  nothing: {values: [a]}\n'),
+        ('a set outside the root', '  nothing: [../outside]\n'),
+      ]) {
+        ran.clear();
+        logged.clear();
+        final code = await run(
+          'version: 1\n'
+              'sets:\n'
+              '  other: [a]\n'
+              '$sets'
+              'tasks:\n'
+              '  gen: {desc: x, do: gen}\n'
+              '  codegen: {desc: x, needs: [gen], unchanged: nothing}\n',
+          'codegen',
+          verbs: {'gen': step('gen')},
+        );
+        expect(code, ExitCode.invalidFile, reason: what);
+        expect(ran, isEmpty, reason: what);
+        expect(output(), contains('codegen'), reason: what);
+      }
+    });
+
+    for (final (what, sets) in [
+      (
+        'an empty set nothing in the run produces',
+        "  generated: {include: ['lib/**.g.dart']}\n",
+      ),
+      ('a set outside the root', '  generated: [../outside]\n'),
+      ('a pattern that is no pattern', "  generated: {include: ['[']}\n"),
+    ]) {
+      test('$what: `--dry-run` answers what the run answers', () async {
+        final yaml =
+            'version: 1\nsets:\n$sets'
+            'tasks:\n'
+            '  codegen: {desc: x, do: gen, unchanged: generated}\n';
+        final file = parseXtaskFile(yaml);
+        final dry = await dryRun(
+          plan: planRun(file, 'codegen'),
+          bodies: bodiesFor(file, {'gen': writing({})}),
+          log: logged.add,
+        );
+        final ran = await run(yaml, 'codegen', verbs: {'gen': writing({})});
+        expect(ran, ExitCode.invalidFile);
+        expect(dry, ran);
+      });
+    }
+
+    test('while a set its producer has not made yet is not refused before '
+        'the run', () async {
+      final file = parseXtaskFile(
+        'version: 1\n'
+        'sets:\n'
+        "  generated: {include: ['lib/**.g.dart'], produced-by: gen}\n"
+        'tasks:\n'
+        '  codegen: {desc: x, needs: [gen], unchanged: generated}\n'
+        '  gen: {desc: x, do: gen}\n',
+      );
+      final code = await dryRun(
+        plan: planRun(file, 'codegen'),
+        bodies: bodiesFor(file, {'gen': writing({})}),
+        log: logged.add,
+      );
+      expect(code, ExitCode.success);
+    });
+
     test('and by `--dry-run`, with the code the run would give', () async {
       final file = parseXtaskFile(values);
       final code = await dryRun(

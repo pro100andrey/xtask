@@ -244,14 +244,22 @@ is the project's, and an entry point that does not compile is `dart run`'s
 `PATH`), a command line carrying a character `cmd.exe` would read — `&`, `|`,
 `%`, … — is refused with `2` before anything runs; the SDK's `dart.exe`
 ahead of it on `PATH` has no such limit. In this package itself there is
-nothing to hand over to: its `bin/xtask.dart` is the installed one.
+nothing to hand over to: its `bin/xtask.dart` is the installed one. Each of
+those refusals writes the `--report` the command line asked for, as the
+engine's own refusals do: the run that would have written it never starts.
 
-Not verified on Windows: with a batch-file `dart`, the run is started through
-`cmd.exe`, and an interrupt passed on ends that `cmd.exe` — Windows ends a
-process without its children. Ctrl-C at a console reaches every process on
-it, the project's run among them, so that case is expected to stop the run
-all the same; an interrupt sent to the installed `xtask` alone may leave the
-run going.
+On Linux and macOS an interrupt the installed `xtask` receives is passed on
+to the run as a `SIGTERM`, and a `SIGTERM` as it is. On Windows nothing is
+passed on: `Process.kill` there does not deliver a signal, it ends the
+process, as the Dart SDK documents it — which would end the project's engine
+before it had stopped its run, printed its summary or written its report. A
+Ctrl-C at a console reaches every process attached to it, the project's
+engine among them, which stops its run itself; the installed `xtask` only
+hears it, so as not to end first, and waits for the run to end. This is
+read from the SDK's documentation and decided by a test that names the
+platform, not measured on a Windows console. An interrupt sent to the
+installed `xtask` alone, from outside the console, does not reach the run on
+Windows.
 
 `dart run` pays the JIT's start-up — around half a second, every invocation. It
 is nothing against a gate that spends seconds inside a test runner, and it is
@@ -480,7 +488,10 @@ publish
   three, and then how many more; a fourth is named rather than counted,
   since "and 1 more" is no shorter. Its set is expanded as a run would
   expand it now. One whose `produced-by:` task has not run yet says it
-  `cannot be resolved yet`, as `--dry-run` does.
+  `cannot be resolved yet`, as `--dry-run` does. Any other empty set is
+  refused with `2` where a name was given, as the run would refuse it; with
+  no name it is said on the task's own row — set `art` is empty — since a
+  picture of the whole file is not one task's to withhold.
 - **A task for another OS is marked** `⊘ linux only`, the summary's mark
   for it, and its set is not expanded: the run would not expand it here.
 
@@ -847,7 +858,7 @@ xtask publish --keep-going --report out/run.json
 | field | what it says |
 | --- | --- |
 | `version` | the shape, `1`. Raised when a field changes meaning or goes away, not when one is added — pass over a field you do not know |
-| `task` | the task or gate set the run was asked for |
+| `task` | the task or gate set the run was asked for; absent where a refused command line named none |
 | `complete` | whether the run got to its end. `false` in a report written while it runs, and in one a run cut off left behind |
 | `code` | what the run answered, from the [exit code table](#exit-codes); only when `complete` |
 | `seconds` | how long the run took, to the millisecond; absent when it never began |
@@ -871,7 +882,12 @@ A task that changed its `unchanged:` set is `failed` with every member
 The path is read against where you run the command, as `--check-schema`'s is,
 and its directory is made. It is written before anything else is looked at —
 so a run refused before a task began still leaves one, saying why — then each
-time a task begins or ends, and last with the code. A file that cannot be
+time a task begins or ends, and last with the code. A command line refused
+outright — `-j 0`, an option `xtask` has not got, `--report` beside a mode
+that runs nothing — still writes the report it asked for, `complete` with the
+`2` and the problem as `why`: left alone, the file would be the last run's,
+read as this one's answer. A `--report` after `--` is a task's argument and
+is not looked for. A file that cannot be
 written there is a `2` before anything runs: a report asked for and missing
 reads, to whatever waits for it, as a run that never happened. Each write
 replaces the file whole, so it is never read half-written.
@@ -1035,8 +1051,9 @@ to have them caught.
 
 `unchanged:` naming a set the file has not got, or a `values:` set — whose
 members are not files there is anything to compare — is refused by `--validate`
-and by `--dry-run`, and by a run when it reaches the task, before the body
-starts: a gate that cannot compare must not run the generator and say nothing.
+and by `--dry-run`, and by a run before any of its tasks starts, the task's own
+`needs:` included: a gate that cannot compare must not run the generator and
+say nothing.
 
 ### Platforms
 
@@ -1182,10 +1199,14 @@ emptied — `CI=` is still set to a program that asks — and the body is handed
 the environment without them, a verb and every program it starts included;
 `--dry-run` prints each as `env  unset CI`. On Windows a name is matched
 whatever its case, as Windows matches it, so `env-unset: [Path]` removes the
-`PATH` the machine has. A name the same task's `env:` sets is refused when the
-file is read — the file says both — and compared without case on every host,
-because a file that validated here and contradicted itself on the Windows
-runner would be the one checked in.
+`PATH` the machine has. A name the same task's `env:` sets, or its
+`env-required:` demands, is refused when the file is read — the file says both,
+and a required variable the body is then kept from passes the check and
+reaches nothing. Names are compared without case on every host, because a file
+that validated here and contradicted itself on the Windows runner would be the
+one checked in; for that reason one variable written in two cases within one
+`env:` or `env-unset:` — `Path` and `PATH` — is refused too, which Windows
+would hand the body as two.
 
 `env-paths:` is for the value that is a path in the repository — a cache, a
 config, a binary a task built:
@@ -1214,7 +1235,8 @@ string: a value is a path from the root or it is text. Nothing absolute and no
 is. `$each` may end one, as it ends `in:` — `build/$each` — and a member of a
 `values:` set that takes it out of the root is refused by `--validate` and by
 the run. A name the same task's `env:` sets, or its `env-unset:` removes, is
-refused, compared without case. A name in `secret-env:` is masked in the form
+refused, compared without case; so is one name written in two cases within
+`env-paths:`, as within `env:`. A name in `secret-env:` is masked in the form
 the body gets it. `do:`
 names a verb the project wrote in Dart and handed to `runXtask`, and
 `all:` hands it the expanded set, wherever `$all` is written.
@@ -1261,7 +1283,9 @@ patterns, and existence is the whole question: nothing asks what a
 `pubspec.yaml` says, because a query over manifests is what a monorepo tool is
 (see [what it deliberately is not](#what-it-deliberately-is-not)). A path is
 refused if it is absolute or climbs through `..`, since it is about the member
-and not its siblings. A set the filter leaves empty is refused like any other,
+and not its siblings. A link is not followed anywhere along the path, as the
+set walk follows none: `link/test` through a link to another tree is not this
+member holding it. A set the filter leaves empty is refused like any other,
 and the refusal says the patterns matched and the filter took them.
 
 `values:` is a declaration, not decoration. Every other kind of set holds
@@ -1357,8 +1381,13 @@ unchanged.
 `--only` does not narrow it: a generator run for one member can rewrite
 another's files. A run that has already given up does not compare, since what
 it stopped part-way is not the question; a body that failed has its own
-answer. A set that held nothing when the run began and holds nothing at the end
-is refused as an empty set is, since nothing was compared. `--dry-run` says
+answer. A set that cannot be compared is refused before anything in the run
+starts — by `--dry-run` with the same `2` and sentence: one the file has not
+got, a `values:` set, one reaching outside the root or written with a pattern
+that is no pattern, and one that is empty with no `produced-by:` task to fill
+it. A `produced-by:` set may be empty when the run begins; if it still holds
+nothing at the end, nothing was compared, and it is refused as an empty set
+is. `--dry-run` says
 which set a task holds, and when it is read.
 
 ## Editor support

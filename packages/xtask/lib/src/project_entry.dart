@@ -24,6 +24,7 @@ import 'executables.dart';
 import 'exit_codes.dart';
 import 'parse.dart';
 import 'reading.dart';
+import 'report_file.dart';
 import 'request.dart';
 import 'secrets.dart';
 
@@ -46,7 +47,10 @@ const handOverLimit = 8;
 /// How the project's entry point is started: `dart` with `arguments`, for
 /// the project at `root` whose entry point is `entry` (from the root, with
 /// `/`). Where `resolveIn` is set, the package there has no resolution yet,
-/// and `dart pub get` is run in it first.
+/// and `dart pub get` is run in it first. `report` is the `--report` the
+/// person's command line asked for, which is written here only where the
+/// run is refused before it starts: once started, the project's engine
+/// writes it.
 ///
 /// There is no working directory to name: the run is started in this
 /// process's own, where the person stands, because that is what every
@@ -56,6 +60,7 @@ typedef ProjectEntry = ({
   String entry,
   List<String> arguments,
   String? resolveIn,
+  ({String path, String? task})? report,
 });
 
 /// Where an entry point is when `xtask.yaml` does not say: the file `dart run
@@ -163,6 +168,7 @@ ProjectEntry? projectEntry(
       entry: entry,
       arguments: ['run', '$name:xtask', ...args],
       resolveIn: null,
+      report: reportAskedIn(args),
     );
   }
   return (
@@ -178,6 +184,7 @@ ProjectEntry? projectEntry(
     // pull that brought a dependency fails to compile until the person runs
     // `dart pub get` themselves.
     resolveIn: resolved && _current(home, package) ? null : package,
+    report: reportAskedIn(args),
   );
 }
 
@@ -218,7 +225,8 @@ String? _entryOf(String root) {
 /// and it counts only the first signal it receives, so the `SIGTERM` behind
 /// it changes nothing — the run answers `130` either way. A `SIGTERM` is
 /// passed on as it is; an interrupt sent to this process alone reaches the
-/// engine only as that `SIGTERM`, and is answered `143`.
+/// engine only as that `SIGTERM`, and is answered `143`. On Windows nothing
+/// is passed on — see [passSignalsOn].
 ///
 /// What it says itself is masked as the engine's lines are (`secrets.dart`):
 /// it quotes the command line, which is where a value typed after `--` is.
@@ -237,24 +245,43 @@ Future<int> runProjectEntry(
     windows: paths.windows,
   );
   void say(String line) => err(secrets.mask(line));
+  final from = Directory.current.path;
+  // **Every refusal here leaves the report the command line asked for**, as
+  // the engine's own refusals do, and by the same function: the run that
+  // would have written it never starts, and the file left in its place is
+  // the last run's, which reads to whatever waits on it as this one's.
+  int refuse(int code, String message) {
+    say(message);
+    if (entry.report case final asked?) {
+      reportRefusal(
+        asked,
+        workingDirectory: from,
+        secrets: secrets,
+        code: code,
+        refusal: message,
+        err: say,
+      );
+    }
+    return code;
+  }
+
   final depth = int.tryParse(environment[handOverVariable] ?? '') ?? 0;
   if (depth >= handOverLimit) {
-    say(
+    return refuse(
+      ExitCode.invalidFile,
       'xtask: this run has been handed to a project entry point $depth times '
       'over, which is a loop rather than a run — an entry point at '
       '`${entry.root}` that hands over again instead of calling `runXtask`',
     );
-    return ExitCode.invalidFile;
   }
-  final from = Directory.current.path;
   final dart = paths.resolve('dart', from: from);
   if (dart == null) {
-    say(
+    return refuse(
+      ExitCode.missingTool,
       'xtask: `${entry.root}` has an entry point of its own, '
       '`${entry.entry}`, where its verbs are, and it takes `dart` to run it. '
       '${paths.missingToolMessage('dart', from: from)}',
     );
-    return ExitCode.missingTool;
   }
   final shell = paths.needsShell(dart);
   // The batch-shim rule, for the person's own command line this time:
@@ -267,13 +294,13 @@ Future<int> runProjectEntry(
       :final argument,
       :final character,
     )) {
-      say(
+      return refuse(
+        ExitCode.invalidFile,
         'xtask: `$argument` cannot be handed to `$dart`, which is a batch '
         'file: `cmd.exe` would read `$character` in it before the project '
         "does. Put the Dart SDK's `dart.exe` ahead of it on PATH, or run "
         '`${entry.entry}` with that `dart.exe` yourself',
       );
-      return ExitCode.invalidFile;
     }
   }
   if (entry.resolveIn case final package?) {
@@ -291,16 +318,18 @@ Future<int> runProjectEntry(
         runInShell: shell,
       );
     } on ProcessException catch (failure) {
-      say('xtask: `$dart pub get` could not be started: ${failure.message}');
-      return ExitCode.taskFailed;
+      return refuse(
+        ExitCode.taskFailed,
+        'xtask: `$dart pub get` could not be started: ${failure.message}',
+      );
     }
     if (got.exitCode != ExitCode.success) {
-      say(
+      return refuse(
+        ExitCode.taskFailed,
         'xtask: the entry point `${entry.entry}` is in a package with no '
         'resolution, and `dart pub get` in `$package` exited with '
         '${got.exitCode}:\n${got.stdout}${got.stderr}',
       );
-      return ExitCode.taskFailed;
     }
   }
   final Process process;
@@ -316,16 +345,13 @@ Future<int> runProjectEntry(
   } on ProcessException catch (failure) {
     // 1 and not 3, as the engine answers a task that could not be started:
     // the resolver found `dart`, so this is not the proof of absence 3 is.
-    say(
+    return refuse(
+      ExitCode.taskFailed,
       'xtask: `$dart ${entry.arguments.join(' ')}` could not be started: '
       '${failure.message}',
     );
-    return ExitCode.taskFailed;
   }
-  final watching = <StreamSubscription<ProcessSignal>>[
-    ProcessSignal.sigint.watch().listen((_) => process.kill()),
-    if (!Platform.isWindows) ProcessSignal.sigterm.watch().listen(process.kill),
-  ];
+  final watching = passSignalsOn(process.kill, windows: Platform.isWindows);
   try {
     final code = await process.exitCode;
     // A run ended by a signal answers as a shell would say it, 128 and the
@@ -338,6 +364,37 @@ Future<int> runProjectEntry(
     }
   }
 }
+
+/// Passes the signals this process receives on to the run it started, by
+/// [kill]; the subscriptions are the caller's to cancel.
+///
+/// Off Windows, an interrupt goes on as a `SIGTERM` and a `SIGTERM` as it
+/// is — [runProjectEntry] says why.
+///
+/// **On Windows, an interrupt is only listened to.** `Process.kill` there
+/// ignores the signal it is given and terminates the process, as the Dart
+/// SDK documents it: passing a Ctrl-C on would end the project's engine
+/// before it had stopped its run, printed its summary or written its last
+/// report — the run answering whatever a terminated process answers, and
+/// not `130`. A Ctrl-C at a console reaches every process attached to it,
+/// the project's engine among them, which stops its run itself. Listening
+/// is what keeps this process from ending first and handing the prompt back
+/// over a run still printing; it then waits for the run as it always does.
+/// There is no `SIGTERM` to watch on Windows.
+///
+/// [windows] and the two streams are parameters so that the decision can be
+/// tested on a machine that is not the one it is about.
+List<StreamSubscription<ProcessSignal>> passSignalsOn(
+  bool Function([ProcessSignal signal]) kill, {
+  required bool windows,
+  Stream<ProcessSignal>? interrupts,
+  Stream<ProcessSignal>? terminations,
+}) => [
+  (interrupts ?? ProcessSignal.sigint.watch()).listen(
+    windows ? (_) {} : (_) => kill(),
+  ),
+  if (!windows) (terminations ?? ProcessSignal.sigterm.watch()).listen(kill),
+];
 
 bool _isCompletionScript(String argument) =>
     argument == '--completion' || argument.startsWith('--completion=');
