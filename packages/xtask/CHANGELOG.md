@@ -19,18 +19,21 @@
   killed. [A run as JSON](doc/running.md#a-run-as-json).
 - `unchanged: <set>` fails a task that changed the files a set reaches, naming
   each — compared byte for byte, not asked of git.
+  [`unchanged`](doc/reference.md#unchanged).
 - `containing: [paths]` on a glob set keeps the members that hold every path:
   `include: [packages/*]` with `containing: [test]` is the packages with a
-  suite.
+  suite. [`containing`](doc/reference.md#containing).
 - `platforms: [linux|macos|windows]`: on another machine the task is skipped,
   `linux only`, and what needs it runs as though it had passed.
+  [`platforms`](doc/reference.md#platforms).
 - `secret-env: [NAMES]` prints those variables' values as `***` in everything
   the engine writes, and on GitHub Actions hands each to `::add-mask::`. What a
   body prints itself is not filtered.
   [Secrets](doc/internals-and-platforms.md#secrets).
 - `env-unset: [names]` takes variables away from a task's body, and
   `env-paths: {NAME: path}` sets them to paths from the root, absolute and in
-  the machine's separators.
+  the machine's separators. [`env-unset`](doc/reference.md#env-unset),
+  [`env-paths`](doc/reference.md#env-paths).
 - On a terminal the summary, the task headings and `--graph` are coloured, by
   `TERM`, `NO_COLOR` and `FORCE_COLOR`; a pipe gets the bytes it got before. A
   Windows console without ANSI gets ASCII marks.

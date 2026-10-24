@@ -97,9 +97,101 @@ dart run xtask:xtask <task>
 The second, and the only thing here that needs Dart code, is a **verb**: a
 function of your own for a job with real logic in it. An engine somebody else
 shipped cannot contain your function, so you hand it over from a file of yours,
-`bin/xtask.dart`, and run `dart run :xtask <task>`.
-[Dart verbs](doc/dart-verbs.md) is that file, the verb, and how the installed
-`xtask` hands a run to it.
+`bin/xtask.dart` (the [last recipe](#recipes) is one), and run `dart run :xtask
+<task>`. [Dart verbs](doc/dart-verbs.md) is that file, the verb, and how the
+installed `xtask` hands a run to it.
+
+## Recipes
+
+Each is a whole `xtask.yaml`, with a link to where its keys are explained.
+
+**Check the file and the workflow before a commit, in the gate CI runs too.**
+The job is one step, `xtask check`. [`--check-ci`](doc/ci-integration.md)
+```yaml
+version: 1
+gates: [check]
+tasks:
+  validate:
+    desc: refuse a broken xtask.yaml
+    gate: [check]
+    run: [xtask, --validate]
+  workflows:
+    desc: fail if a CI step runs anything but a gate set
+    gate: [check]
+    run: [xtask, --check-ci]
+```
+
+**Run the tests in every package that has some.** [`containing:`](doc/reference.md#containing)
+```yaml
+version: 1
+sets:
+  tested: {include: [packages/*], containing: [test]}
+tasks:
+  test:
+    desc: run each package's suite
+    each: tested
+    in: $each
+    run: [dart, test]
+```
+
+**Regenerate code, and fail if the committed copy was stale.** [`unchanged:`](doc/reference.md#unchanged)
+```yaml
+version: 1
+sets:
+  generated: {include: ['lib/**.g.dart']}
+tasks:
+  codegen:
+    desc: regenerate, and fail if that changed a committed file
+    unchanged: generated
+    run: [dart, run, build_runner, build, --delete-conflicting-outputs]
+```
+
+**A step for one OS only.** Elsewhere it is skipped, and a task that needs it
+runs as though it had passed. [`platforms:`](doc/reference.md#platforms)
+```yaml
+version: 1
+tasks:
+  sign:
+    desc: sign the macOS bundle
+    platforms: [macos]
+    run: [codesign, --sign, '-', build/App.app]
+```
+
+**A token that must never reach the log.** Run it as `xtask upload -- v1.2.0
+dist/app.tgz`. [`secret-env:`](doc/reference.md#secret-env)
+```yaml
+version: 1
+secret-env: [GH_TOKEN]
+tasks:
+  upload:
+    desc: attach the files after -- to a GitHub release
+    env-required: [GH_TOKEN]
+    run: [gh, release, upload]
+```
+
+**Logic of your own: a loop, a condition.** A verb in `bin/xtask.dart`; the
+installed `xtask regen` hands the run to it. [Dart verbs](doc/dart-verbs.md)
+```yaml
+version: 1
+tasks:
+  regen:
+    desc: regenerate every proto, stopping at the first that fails
+    do: regen
+    args: [protos/a.proto, protos/b.proto]
+```
+```dart
+Future<void> main(List<String> args) async {
+  exitCode = await runXtask(args, verbs: {'regen': regen});
+}
+
+Future<int> regen(VerbContext context) async {
+  for (final proto in context.args) {
+    final code = await context.run(['protoc', '--dart_out=lib', proto]);
+    if (code != 0) return code;
+  }
+  return 0;
+}
+```
 
 ## Guides
 
@@ -135,7 +227,8 @@ Each is one page, and each opens by saying who it is for:
 
 Two things have no counterpart, on purpose: a file's timestamp deciding whether
 a recipe runs (see [what it deliberately is not](#what-it-deliberately-is-not)),
-and one target's output captured into another's command line (R1).
+and one target's output captured into another's command line
+([R1](#three-rules)).
 
 ## Three rules
 
