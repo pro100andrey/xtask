@@ -39,7 +39,21 @@ void main() {
           installed: r'/home/my "name"/$x\.local/100%/demo',
         ),
         'Exec="/home/my \\\\"name\\\\"/\\\\\$x\\\\\\\\.local/100%%/demo" %U\n'
-        'TryExec=/home/my "name"/\$x\\.local/100%/demo\n',
+        'TryExec=/home/my "name"/\$x\\\\.local/100%/demo\n',
+      );
+    });
+
+    test(r'writing `\` in TryExec= as `\\`, since its value is a string', () {
+      // The specification's string type escapes a backslash, so a reader
+      // unescaping the value would not find `/home/a\b` written plainly.
+      expect(
+        installedDesktopEntry(
+          'TryExec=demo\n',
+          binary: 'demo',
+          installed: r'/home/a\b/demo',
+        ),
+        r'TryExec=/home/a\\b/demo'
+        '\n',
       );
     });
 

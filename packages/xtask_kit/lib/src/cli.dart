@@ -98,23 +98,26 @@ Verb cliUninstall(DartCli cli) =>
 /// copied into `<name>.new` first and the earlier install is replaced only
 /// once that copy is whole, as [replaceDirectory] does — so a full disk or an
 /// unreadable file halfway through leaves the earlier install working, and
-/// is a `1` naming the file rather than an exception.
+/// is a `1` naming the file rather than an exception. Once the new one is in
+/// place the install has succeeded: an earlier one that cannot be removed is
+/// left as `<name>.old-<time>`, which the next install removes.
 ///
 /// **Only its own files on `PATH` are replaced.** `~/.local/bin` is not this
 /// tool's alone, and a file of the command's name there may be somebody
-/// else's. On POSIX that is anything but a link ([notALink]), as
-/// [replaceDirectory]'s callers take it; on Windows, where the command is a
-/// copy, it is anything other than a copy of an executable the earlier
-/// install holds. Either is refused before anything changes, retired commands
-/// included.
+/// else's. On POSIX that is anything but a link into `~/.local/share/<name>`;
+/// on Windows, where the command is a copy, it is anything other than a copy
+/// of an executable the earlier install holds — which is why a copy is
+/// written as `<command>.new` and renamed into place, so that one cut off
+/// halfway is not mistaken for somebody else's. Either is refused before
+/// anything changes, retired commands included.
 ///
 /// **Windows holds what is running.** A file a running process has open
 /// cannot be deleted there — the very tool being reinstalled, serving an
 /// editor — but it can be renamed, and the process keeps running from the
 /// renamed file. So what cannot be removed is moved aside to
 /// `<file>.old-<time>`, and the next install removes what nothing holds any
-/// more. Neither happens on POSIX, where nothing is ever moved aside: a file
-/// there named `.old-` is somebody's backup, and is left alone.
+/// more. Neither happens on POSIX, where nothing on `PATH` is ever moved
+/// aside: a file there named `.old-` is somebody's backup, and is left alone.
 ///
 /// It refuses, naming why, without a home, when a bundle has no `bin/` or a
 /// command's executable is in none of them, and when two bundles carry
@@ -199,10 +202,17 @@ Future<int> installCliOn(
         in cli.commands.entries) {
       final target = p.join(places.bin, places.exe(executable));
       final onPath = p.join(places.bindir, places.exe(command));
-      _retire(onPath, aside, windows);
       if (windows) {
-        File(target).copySync(onPath);
+        // Copied under a name of its own and renamed into place: a copy cut
+        // off halfway at the command's own name is a file no install made,
+        // and would refuse every install after it.
+        final part = '$onPath.new';
+        _retire(part, aside, windows);
+        File(target).copySync(part);
+        _retire(onPath, aside, windows);
+        File(part).renameSync(onPath);
       } else {
+        _retire(onPath, aside, windows);
         Link(onPath).createSync(target);
       }
     }
@@ -276,6 +286,9 @@ Future<int> uninstallCliOn(
         continue;
       }
       _retire(onPath, aside, windows);
+      if (windows) {
+        _retire('$onPath.new', aside, windows);
+      }
     }
     if (windows && Directory(places.lib).existsSync()) {
       for (final library in Directory(
@@ -288,6 +301,9 @@ Future<int> uninstallCliOn(
         );
       }
     }
+    // With what a failed install left beside it, which is this install's
+    // too and nothing else removes.
+    _clear(Directory('${places.share}.new'), aside, windows: windows);
     _clear(Directory(places.share), aside, windows: windows);
   } on FileSystemException catch (error) {
     context.log('${_failure(error)}; fix that and uninstall again');
@@ -330,13 +346,28 @@ String? _conflicting(List<String> bundles, String part) {
 /// Why [path], a command on `PATH`, is not one this install may replace or
 /// remove, or null where it is — or where nothing is there.
 ///
-/// On POSIX the install lays down links, so anything else is somebody
-/// else's ([notALink]). On Windows it lays down copies, and a copy is told
+/// On POSIX the install lays down links into [CliPlaces.share], so anything
+/// else is somebody else's: a file ([notALink]), and a link to anywhere else
+/// — pipx, `uv tool` and others link into `~/.local/bin` as well. Read from
+/// the link, dangling or not, since an earlier install's may point at what
+/// is no longer there. On Windows it lays down copies, and a copy is told
 /// from somebody else's file only by its bytes: it is the install's where it
 /// is the same file as an executable the earlier install holds.
 String? _notOurs(String path, CliPlaces places) {
   if (!places.windows) {
-    return notALink(path);
+    if (notALink(path) case final why?) {
+      return why;
+    }
+    if (FileSystemEntity.isLinkSync(path)) {
+      final target = p.normalize(
+        p.join(p.dirname(path), Link(path).targetSync()),
+      );
+      if (!p.isWithin(places.share, target)) {
+        return '$path is not a link this install made — it points at '
+            '$target; move it away first';
+      }
+    }
+    return null;
   }
   final type = FileSystemEntity.typeSync(path, followLinks: false);
   if (type == FileSystemEntityType.notFound) {
@@ -361,9 +392,10 @@ String? _notOurs(String path, CliPlaces places) {
 void _swapIn(String fresh, CliPlaces places, String aside) {
   final windows = places.windows;
   final share = Directory(places.share);
-  if (windows) {
-    _sweep(share.path);
-  }
+  // On POSIX too: `<share>.old-<digits>` is the name this install gives the
+  // earlier one on every platform, and one is left wherever removing it
+  // failed.
+  _sweep(share.path);
   if (share.existsSync()) {
     final old = '${share.path}$aside';
     try {
@@ -388,8 +420,14 @@ void _swapIn(String fresh, CliPlaces places, String aside) {
       Directory(old).renameSync(share.path);
       rethrow;
     }
-    // Left where something still holds it, for the next install's sweep.
-    _clear(Directory(old), aside, windows: windows);
+    // The new install is in place, so a failure here is no failure of the
+    // install: what could not be removed is left, at a name the next
+    // install's sweep takes.
+    try {
+      _clear(Directory(old), aside, windows: windows);
+    } on FileSystemException {
+      // Left for the next install's sweep.
+    }
     return;
   }
   Directory(p.dirname(share.path)).createSync(recursive: true);

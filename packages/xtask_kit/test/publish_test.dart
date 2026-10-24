@@ -116,11 +116,8 @@ void main() {
     asked = [];
     porcelain = '';
     env = {};
-    tracked = [
-      'packages/demo/CHANGELOG.md',
-      'packages/demo/lib/demo.dart',
-      'packages/demo/pubspec.yaml',
-    ];
+    // As `git ls-files` answers in the package: from it.
+    tracked = ['CHANGELOG.md', 'lib/demo.dart', 'pubspec.yaml'];
     listing = _listing;
     published = ExitCode.success;
     registry = [
@@ -211,13 +208,14 @@ void main() {
       expect(started, isEmpty);
       expect(
         captured.map((c) => c.argv.take(4).join(' ')),
-        containsAll([
-          'git ls-files -z --',
-          'dart pub publish --dry-run',
-        ]),
+        containsAll(['git ls-files -z', 'dart pub publish --dry-run']),
       );
       expect(
         captured.firstWhere((c) => c.argv[0] == 'dart').workingDirectory,
+        'packages/demo',
+      );
+      expect(
+        captured.firstWhere((c) => c.argv[1] == 'ls-files').workingDirectory,
         'packages/demo',
       );
     });
@@ -299,6 +297,18 @@ void main() {
       expect(said.last, contains('serves demo 1.2.0'));
     });
 
+    test('failing otherwise and not served is a 4: it may still be', () async {
+      // Pub answers 65 for a refusal before the upload — its validation, its
+      // credentials — and 1 for an upload that failed, which the connection
+      // can do after the archive went up.
+      published = 1;
+      registry = [
+        {'1.1.0'},
+      ];
+      expect(await run(), ExitCode.continuationFailed);
+      expect(said.last, contains('may have been uploaded'));
+    });
+
     test('and a 4 where the registry cannot say', () async {
       published = 1;
       registry = [
@@ -359,6 +369,131 @@ void main() {
       expect(await run(), ExitCode.continuationFailed);
       expect(paused, _package.waits);
       expect(said.join('\n'), contains('the upload succeeded'));
+    });
+  });
+
+  group('against a real git', () {
+    // Git itself, because what these are about is what git answers — for a
+    // submodule, for a link — and a fake would answer what the test assumed.
+    // The dry run stays faked: what pub lists is read from [listing].
+    late VerbContext real;
+
+    void git(String directory, List<String> args) {
+      final result = Process.runSync('git', [
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        '-c',
+        'protocol.file.allow=always',
+        ...args,
+      ], workingDirectory: directory);
+      if (result.exitCode != 0) {
+        fail('git ${args.join(' ')}: ${result.stderr}');
+      }
+    }
+
+    setUp(() {
+      real = VerbContext(
+        args: const [],
+        env: env,
+        root: root.path,
+        workingDirectory: root.path,
+        log: said.add,
+        start: (argv, {workingDirectory}) async {
+          started.add((argv: argv, workingDirectory: workingDirectory));
+          return published;
+        },
+        collect: (argv, {workingDirectory, timeout}) async {
+          if (argv case ['dart', 'pub', 'publish', '--dry-run']) {
+            return (exitCode: 0, stdout: listing, stderr: '');
+          }
+          final result = await Process.run(
+            argv.first,
+            argv.skip(1).toList(),
+            workingDirectory: p.join(root.path, workingDirectory ?? '.'),
+          );
+          return (
+            exitCode: result.exitCode,
+            stdout: result.stdout as String,
+            stderr: result.stderr as String,
+          );
+        },
+      );
+    });
+
+    Future<int> publish() => publishToPub(
+      real,
+      _package,
+      probe: probe,
+      pause: (delay) async => paused.add(delay),
+    );
+
+    test('a submodule package is read from its own repository', () async {
+      // From the superproject `git ls-files -- packages/demo` lists the
+      // gitlink alone, which would leave every file of the package untracked.
+      write('packages/demo/lib/demo.dart', 'void demo() {}\n');
+      final demo = p.join(root.path, 'packages', 'demo');
+      final source = Directory.systemTemp.createTempSync('xtask_kit_sub_');
+      addTearDown(() => source.deleteSync(recursive: true));
+      for (final file in Directory(demo).listSync(recursive: true)) {
+        if (file is File) {
+          File(p.join(source.path, p.relative(file.path, from: demo)))
+            ..createSync(recursive: true)
+            ..writeAsStringSync(file.readAsStringSync());
+        }
+      }
+      Directory(demo).deleteSync(recursive: true);
+      git(source.path, ['init', '-q']);
+      git(source.path, ['add', '.']);
+      git(source.path, ['commit', '-qm', 'demo']);
+      git(root.path, ['init', '-q']);
+      git(root.path, ['submodule', 'add', '-q', source.path, 'packages/demo']);
+      git(root.path, ['commit', '-qm', 'with demo']);
+
+      expect(await publish(), ExitCode.success, reason: said.join('\n'));
+    });
+
+    test('a committed link to a directory covers what is under it', () async {
+      // Git keeps `lib/linked` as one entry; pub follows it and lists the
+      // files under it, each of which git knows only through the link.
+      write('packages/demo/lib/demo.dart', 'void demo() {}\n');
+      write('packages/demo/extra/e.dart', 'void e() {}\n');
+      Link(
+        p.join(root.path, 'packages/demo/lib/linked'),
+      ).createSync('../extra');
+      git(root.path, ['init', '-q']);
+      git(root.path, ['add', '.']);
+      git(root.path, ['commit', '-qm', 'demo']);
+      listing = _listing.replaceFirst(
+        '├── lib\n│   └── demo.dart (<1 KB)\n',
+        '├── extra\n'
+            '│   └── e.dart (<1 KB)\n'
+            '├── lib\n'
+            '│   ├── demo.dart (<1 KB)\n'
+            '│   └── linked\n'
+            '│       └── e.dart (<1 KB)\n',
+      );
+      expect(publishedFiles(listing), contains('lib/linked/e.dart'));
+
+      expect(await publish(), ExitCode.success, reason: said.join('\n'));
+    });
+
+    test('and a file under no tracked entry still refuses', () async {
+      write('packages/demo/lib/demo.dart', 'void demo() {}\n');
+      write('packages/demo/.gitignore', 'secret.env\n');
+      write('packages/demo/secret.env', 'TOKEN=1\n');
+      git(root.path, ['init', '-q']);
+      git(root.path, ['add', '.']);
+      git(root.path, ['commit', '-qm', 'demo']);
+      listing = _listing.replaceFirst(
+        '└── pubspec.yaml (<1 KB)',
+        '├── pubspec.yaml (<1 KB)\n└── secret.env (<1 KB)',
+      );
+
+      expect(await publish(), ExitCode.taskFailed);
+      expect(said.last, contains('secret.env'));
+      expect(started, isEmpty);
     });
   });
 

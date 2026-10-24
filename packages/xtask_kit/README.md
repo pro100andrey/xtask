@@ -61,7 +61,8 @@ tasks:
   command — a session started by a display manager often has no
   `~/.local/bin` on its `PATH`. In `Exec=` the path is quoted where it has a
   space or another character the desktop entry specification reserves;
-  `TryExec=` is a plain path and takes it as it is;
+  `TryExec=` is a plain path, unquoted, with a `\` written `\\` as in any
+  string of the entry;
 - the icons in `$XDG_DATA_HOME/icons/hicolor`.
 
 It refuses, saying why, off Linux, without `HOME`, when the bundle lacks a
@@ -103,14 +104,18 @@ under one name a conflict unless it is the same file, and the install refuses
 one that is not, before anything is copied. The bundles are copied into
 `<name>.new` beside the earlier install and swapped in once the copy is whole,
 so a copy that fails halfway leaves the earlier install working and answers
-`1`, naming the file.
+`1`, naming the file; an uninstall removes the `<name>.new` it leaves. Once
+the new install is in place it has succeeded: an earlier one that cannot be
+removed stays as `<name>.old-<time>`, and the next install removes it.
 
 Each command goes to `~/.local/bin`: a link on Linux and macOS, a copy on
 Windows — no symlink without developer mode — with the libraries copied to
 `~/.local/lib`, which is `../lib` from the copy. That directory is not only
 this tool's, so the install replaces only what it laid down there: on Linux
-and macOS a link, on Windows a copy of an executable the earlier install
-holds. Anything else of a command's name is somebody else's; the install
+and macOS a link into `~/.local/share/<name>` — not one pipx or `uv tool`
+made — on Windows a copy of an executable the earlier install holds, written
+as `<command>.new` and renamed into place so that a copy cut off halfway does
+not pass for somebody else's. Anything else of a command's name is somebody else's; the install
 refuses, naming it, and the uninstall leaves it and says so. On Windows a
 running executable cannot be deleted but can be renamed, so what the install
 cannot remove it moves aside as `<file>.old-<time>`, and the next install
@@ -294,7 +299,9 @@ before it the verb checks:
 - that every file `dart pub publish --dry-run` lists is one git tracks — a
   `.pubignore` stops pub reading the `.gitignore` beside it, and pub never
   reads `.git/info/exclude`, so a file git ignores can be in the archive
-  without `git status` showing it;
+  without `git status` showing it. Git is asked in the package, so a package
+  that is a submodule is read from its own repository, and a tracked link to
+  a directory covers the files pub lists under it;
 - that the registry does not already serve the version, and could be asked.
 
 Then `dart pub publish --force` in the package, and a bounded wait,
@@ -309,8 +316,9 @@ Three endings. Nothing was uploaded: `2` where there is no package to publish
 refusal. Uploaded and served: `0`. Uploaded, and the registry
 has not served it in time: `4`. Pub answering other than `0` is not proof
 that nothing went up, so the registry is asked once then: serving the version
-is a `0`, not serving it a `1`, not answering a `4` — it may have been
-uploaded. The upload is not undone, and a pipeline must
+is a `0`. Not serving it is a `1` only after pub's `65`, its refusal before
+the upload (validation, credentials); after any other failure, and where the
+registry does not answer, it is a `4` — it may have been uploaded. The upload is not undone, and a pipeline must
 not read that as a failed publish — the registry will not take the version
 again. `publishToPub` is the same as a function.
 

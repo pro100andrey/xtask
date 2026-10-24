@@ -162,7 +162,8 @@ Verb linuxAppUninstall(LinuxApp app) =>
 /// `/home/my name` starts `/home/my` — with `"`, `` ` ``, `$` and `\`
 /// escaped inside the quotes, every `\` then doubled because the value is a
 /// string, and `%` written `%%` because it would start a field code.
-/// `TryExec=` is the path as it is.
+/// `TryExec=` is the path unquoted, but a string all the same, so its `\` is
+/// written `\\` too.
 String installedDesktopEntry(
   String text, {
   required String binary,
@@ -171,7 +172,7 @@ String installedDesktopEntry(
   RegExp('^(Exec|TryExec)=${RegExp.escape(binary)}(?=\\s|\$)', multiLine: true),
   (match) => switch (match[1]) {
     'Exec' => 'Exec=${_execArgument(installed)}',
-    _ => 'TryExec=$installed',
+    _ => 'TryExec=${installed.replaceAll(r'\', r'\\')}',
   },
 );
 

@@ -13,8 +13,8 @@
   and `lib/` under `~/.local/share` with each command on `PATH` — a link, or
   on Windows a copy, with what a running process holds moved aside rather
   than failed on. Copied beside the earlier install and swapped in, and a
-  file on `PATH` the install did not lay down is refused rather than
-  replaced. `conflictingLibraries` is the check that two bundles can share
+  file on `PATH` the install did not lay down — a link somewhere other than
+  its own directory included — is refused rather than replaced. `conflictingLibraries` is the check that two bundles can share
   one `lib/`; executables of one name are checked the same way.
 - `replaceDirectory`, `notALink` and `pointLink`, which the install is made
   of: an installed directory replaced whole, and a link replaced only where it
@@ -39,5 +39,7 @@
   the package matches HEAD and git tracks every file pub would upload
   (`publishedFiles`, `untrackedRefusal`); then a wait until the registry
   serves it, answering `4` where the upload happened and the registry has not
-  caught up, or where pub failed and the registry cannot say whether it did.
+  caught up, or where pub failed other than by refusing (`65`) and the
+  registry does not show whether it went up. Git is asked from the package,
+  so a submodule package and a committed link to a directory publish.
   The registry is pub's: `publish_to:`, `PUB_HOSTED_URL`, pub.dev.

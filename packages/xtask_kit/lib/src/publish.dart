@@ -28,6 +28,11 @@ const registryWaits = <Duration>[
   Duration(minutes: 1),
 ];
 
+/// What `dart pub publish` answers when it refuses before uploading — a
+/// package its validation fails, a registry that turns its credentials down:
+/// `EX_DATAERR`, as pub's `exit_codes.dart` names it.
+const _pubRefused = 65;
+
 /// A package to publish, and what [pubPublish] needs to know beyond its
 /// manifest.
 ///
@@ -182,8 +187,9 @@ Verb pubPublish(
 /// answer; pub still refuses what it would refuse. That it answered other
 /// than `0` does not prove nothing went up — the connection can fail after
 /// the archive did — so the registry is asked once: serving the version is a
-/// `0`, not serving it a `1`, and not answering a `4`, since the upload may
-/// have happened.
+/// `0`. Not serving it is a `1` only after pub's `65`, its refusal before the
+/// upload (validation, credentials); after any other failure, and where the
+/// registry does not answer, it is a `4`, since the upload may have happened.
 ///
 /// **Everything passed**, `0`: the registry serves the version — looked for
 /// after each of [PubPackage.waits], because pub answers when the archive is
@@ -317,13 +323,15 @@ Future<int> publishToPub(
     );
     return ExitCode.taskFailed;
   }
+  // From the package, not the root: a package that is a git submodule is
+  // tracked by its own repository, of which the superproject's
+  // `git ls-files` sees only the gitlink. Asked in the package, git answers
+  // from whichever repository the package belongs to, with paths from it.
   final tracked = await context.capture([
     'git',
     'ls-files',
     '-z',
-    '--',
-    package.directory,
-  ], workingDirectory: context.root);
+  ], workingDirectory: package.directory);
   if (tracked.exitCode != 0) {
     context.log(
       '`git ls-files` failed (exit ${tracked.exitCode}), so whether git '
@@ -370,7 +378,7 @@ Future<int> publishToPub(
     '--force',
   ], workingDirectory: package.directory);
   if (published != ExitCode.success) {
-    final String why;
+    String why;
     try {
       if ((await probe(registry, name)).contains(version)) {
         context.log(
@@ -379,11 +387,18 @@ Future<int> publishToPub(
         );
         return ExitCode.success;
       }
-      context.log(
-        '`dart pub publish` answered $published and $registry does not serve '
-        '$release, so it was not uploaded',
-      );
-      return ExitCode.taskFailed;
+      // 65 is pub refusing before anything went up — its validation, its
+      // credentials — and only that is proof of nothing uploaded. Any other
+      // failure, the 1 of an upload that broke, can come after the archive
+      // was accepted and before the registry lists it.
+      if (published == _pubRefused) {
+        context.log(
+          '`dart pub publish` refused $release ($published) and $registry '
+          'does not serve it, so it was not uploaded',
+        );
+        return ExitCode.taskFailed;
+      }
+      why = '$registry does not list it yet';
     } on Object catch (error) {
       why = error is RegistryUnavailable ? error.reason : '$error';
     }
@@ -443,21 +458,32 @@ String? uncommittedRefusal(String package, List<String> porcelain) {
 /// Why what pub would upload of [package] is not what git tracks, or null
 /// when every file of it is tracked.
 ///
-/// [shipped] is [publishedFiles], from the package; [tracked] is
-/// `git ls-files -- <package>`, from the root. Only that way round: a
-/// tracked file pub leaves out is what a `.pubignore` is for.
+/// [shipped] is [publishedFiles] and [tracked] is `git ls-files`, both from
+/// the package. Only that way round: a tracked file pub leaves out is what a
+/// `.pubignore` is for.
+///
+/// A tracked entry covers what is under it. Git keeps a committed link to a
+/// directory as one entry, and a nested submodule as one gitlink, while pub
+/// follows either and lists the files beneath; each of those is what that
+/// entry commits to, not a file git has never seen.
 String? untrackedRefusal(
   String package, {
   required List<String> shipped,
   required Iterable<String> tracked,
 }) {
-  final base = p.posix.normalize(package.replaceAll(r'\', '/'));
-  final inGit = {
-    for (final path in tracked) p.posix.relative(path, from: base),
-  };
+  final inGit = tracked.toSet();
+  bool covered(String path) {
+    for (var at = path; at != '.'; at = p.posix.dirname(at)) {
+      if (inGit.contains(at)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   final untracked = [
     for (final path in shipped)
-      if (!inGit.contains(path)) path,
+      if (!covered(path)) path,
   ];
   if (untracked.isEmpty) {
     return null;

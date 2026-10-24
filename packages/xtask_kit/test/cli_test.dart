@@ -200,6 +200,120 @@ void main() {
     });
   });
 
+  group("somebody else's link on PATH", () {
+    // pipx, `uv tool` and others lay down links in `~/.local/bin` too; only
+    // one into this install's own directory is this install's.
+    late String theirs;
+
+    setUp(() {
+      theirs = p.join(home.path, '.local', 'pipx', 'venvs', 'demo', 'demo');
+      File(theirs)
+        ..createSync(recursive: true)
+        ..writeAsStringSync('their demo');
+    });
+
+    test('is refused by an install, and left as it was', () async {
+      bundles();
+      Link(installed('demo'))
+        ..parent.createSync(recursive: true)
+        ..createSync(theirs);
+
+      expect(await cliInstall(_cli)(context()), ExitCode.taskFailed);
+      expect(said.single, contains('not a link this install made'));
+      expect(Link(installed('demo')).targetSync(), theirs);
+      expect(Directory(places.share).existsSync(), isFalse);
+    });
+
+    test('and left by an uninstall, under a retired name too', () async {
+      for (final command in ['demo', 'demo-old']) {
+        Link(installed(command))
+          ..parent.createSync(recursive: true)
+          ..createSync(theirs);
+      }
+
+      expect(await cliUninstall(_cli)(context()), ExitCode.success);
+      expect(Link(installed('demo')).targetSync(), theirs);
+      expect(Link(installed('demo-old')).targetSync(), theirs);
+      expect(said.join('\n'), contains('left as it is'));
+    });
+  }, testOn: '!windows');
+
+  test('an uninstall removes what a failed install left beside it', () async {
+    final fresh = Directory('${places.share}.new');
+    File(p.join(fresh.path, 'bin', 'half'))
+      ..createSync(recursive: true)
+      ..writeAsStringSync('half a copy');
+
+    expect(await cliUninstall(_cli)(context()), ExitCode.success);
+    expect(fresh.existsSync(), isFalse);
+  });
+
+  test(
+    'an earlier install that cannot be removed does not fail this one',
+    () async {
+      bundles();
+      expect(await cliInstall(_cli)(context()), ExitCode.success);
+      // What stops the earlier install being deleted once it is moved
+      // aside: a directory in it that cannot be written.
+      final bin = Directory(places.bin);
+      Process.runSync('chmod', ['555', bin.path]);
+      addTearDown(() {
+        for (final old in home.listSync(recursive: true)) {
+          if (old is Directory) {
+            Process.runSync('chmod', ['755', old.path]);
+          }
+        }
+      });
+      write('build/cli/bundle/bin/${exe('demo_cli')}', 'cli, rebuilt');
+
+      expect(await cliInstall(_cli)(context()), ExitCode.success);
+      expect(File(installed('demo')).readAsStringSync(), 'cli, rebuilt');
+      final share = Directory(p.dirname(places.share));
+      final left = share
+          .listSync()
+          .map((e) => p.basename(e.path))
+          .where((name) => name.startsWith('demo.old-'))
+          .toList();
+      expect(left, hasLength(1), reason: 'moved aside, not removed');
+
+      // Writable again, the next install takes away what this one could not.
+      Process.runSync('chmod', [
+        '755',
+        p.join(share.path, left.single, 'bin'),
+      ]);
+      expect(await cliInstall(_cli)(context()), ExitCode.success);
+      expect(
+        share.listSync().map((e) => p.basename(e.path)),
+        isNot(contains(startsWith('demo.old-'))),
+      );
+    },
+    testOn: '!windows',
+  );
+
+  test(
+    'a Windows copy onto PATH that broke off blocks no later install',
+    () async {
+      final bin = p.join(home.path, '.local', 'bin');
+      bundles(windowsNames: true);
+      expect(await windowsInstall(), ExitCode.success);
+      // What a copy cut off halfway leaves: written under a name of its
+      // own, the command itself either the earlier copy or not there yet.
+      File(p.join(bin, 'demo.exe')).deleteSync();
+      File(p.join(bin, 'demo.exe.new')).writeAsStringSync('cl');
+
+      expect(await windowsInstall(), ExitCode.success);
+      expect(File(p.join(bin, 'demo.exe')).readAsStringSync(), 'cli');
+      expect(File(p.join(bin, 'demo.exe.new')).existsSync(), isFalse);
+
+      File(p.join(bin, 'demo.exe.new')).writeAsStringSync('cl');
+      expect(
+        await uninstallCliOn(context(), _cli, windows: true),
+        ExitCode.success,
+      );
+      expect(File(p.join(bin, 'demo.exe.new')).existsSync(), isFalse);
+    },
+  );
+
   test(
     'only what a Windows install moved aside is swept, and only there',
     () async {
