@@ -197,8 +197,8 @@ void main() {
   group('a directory that cannot be read is refused, not passed over', () {
     test('because a set that is quietly short is a gate that checked less', () {
       // Unhandled, this left `--validate` on a stack trace and exit 255 — a
-      // number the exit code table does not have — from the one gate the README
-      // tells every project to put in CI.
+      // number the exit code table does not have — from the one gate
+      // doc/reference.md tells every project to put in CI.
       final root = Directory.systemTemp.createTempSync('xtask_locked_');
       final locked = Directory(p.join(root.path, 'src', 'shut'))
         ..createSync(recursive: true);
@@ -545,12 +545,12 @@ void main() {
     });
 
     test(
-      "the README's own pattern reaches a file directly under the directory",
+      "the reference's own pattern reaches a file directly under the directory",
       () {
-        given(['packages/top.lake', 'packages/deep/inner.lake']);
-        expect(expandGlob(['{templates,packages}/**/*.lake']), [
-          'packages/deep/inner.lake',
-          'packages/top.lake',
+        given(['packages/top.proto', 'packages/deep/inner.proto']);
+        expect(expandGlob(['{templates,packages}/**/*.proto']), [
+          'packages/deep/inner.proto',
+          'packages/top.proto',
         ]);
       },
     );
@@ -612,11 +612,11 @@ void main() {
     });
 
     test('a globstar starting a brace alternative reads as none-or-more', () {
-      // `{templates,packages}/**/*.lake` is the shape the README writes, and
-      // it was fine — the globstar there follows a `/`. This is the other
+      // `{templates,packages}/**/*.proto` is the shape doc/reference.md writes,
+      // and it was fine — the globstar there follows a `/`. This is the other
       // shape, where each alternative is its own pattern and the globstar
-      // begins one: nothing preceded it with a slash, so the correction
-      // skipped it and the set matched every nested file and no root one.
+      // begins one: nothing preceded it with a slash, so the correction skipped
+      // it and the set matched every nested file and no root one.
       given(['top.lake', 'deep/nested.lake', 'top.yaml', 'deep/nested.yaml']);
       expect(
         expandGlob(['{**/*.lake,**/*.yaml}']),

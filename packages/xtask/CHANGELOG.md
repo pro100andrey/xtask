@@ -7,8 +7,8 @@
 - The installed `xtask` runs a project's verbs: in a repository with an entry
   point of its own, it hands the run to it and answers with its exit code. The
   run starts where you stand, a package never resolved gets `dart pub get`
-  first, and `XTASK_HAND_OVERS` stops a loop at eight. *Your own entry point*
-  in the README.
+  first, and `XTASK_HAND_OVERS` stops a loop at eight.
+  [Your own entry point](doc/dart-verbs.md#your-own-entry-point).
 - `entry:` names that entry point where it is not `bin/xtask.dart` — a tools
   package's `tools/bin/xtask.dart`, say. `--validate` says when the file is
   missing, and `--check-ci` reads a step running it as `xtask`.
@@ -16,7 +16,7 @@
   running anything; with no name, every gate set and then what none reaches.
 - `--report <file>` writes the run as JSON, `version: 1`, as it goes: each
   task's result, seconds, code and why, and `complete: false` where the run was
-  killed. *A run as JSON* in the README.
+  killed. [A run as JSON](doc/running.md#a-run-as-json).
 - `unchanged: <set>` fails a task that changed the files a set reaches, naming
   each — compared byte for byte, not asked of git.
 - `containing: [paths]` on a glob set keeps the members that hold every path:
@@ -26,14 +26,15 @@
   `linux only`, and what needs it runs as though it had passed.
 - `secret-env: [NAMES]` prints those variables' values as `***` in everything
   the engine writes, and on GitHub Actions hands each to `::add-mask::`. What a
-  body prints itself is not filtered. *Secrets* in the README.
+  body prints itself is not filtered.
+  [Secrets](doc/internals-and-platforms.md#secrets).
 - `env-unset: [names]` takes variables away from a task's body, and
   `env-paths: {NAME: path}` sets them to paths from the root, absolute and in
   the machine's separators.
 - On a terminal the summary, the task headings and `--graph` are coloured, by
   `TERM`, `NO_COLOR` and `FORCE_COLOR`; a pipe gets the bytes it got before. A
-  Windows console without ANSI gets ASCII marks. *Colour, and ASCII* in the
-  README.
+  Windows console without ANSI gets ASCII marks.
+  [Colour, and ASCII](doc/running.md#colour-and-ascii).
 - For an entry point: `findRoot` and `gateMembers`, which answer where
   `xtask.yaml` is and what a gate set holds without a second engine, and
   `XtaskFormatException`, which they throw where `--gate-members` refuses.
@@ -51,7 +52,8 @@
 
 - Ctrl-C or `SIGTERM` no longer leaves what the run started running: each
   process is sent `SIGTERM` and, after a grace, `SIGKILL`, and the run answers
-  `130` or `143`. On Windows, Ctrl-C only. *Ctrl-C, and SIGTERM* in the README.
+  `130` or `143`. On Windows, Ctrl-C only.
+  [Ctrl-C, and SIGTERM](doc/internals-and-platforms.md#ctrl-c-and-sigterm).
 
 ## 0.4.0
 

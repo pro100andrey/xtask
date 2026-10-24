@@ -37,10 +37,10 @@ export 'src/context.dart' show Captured, LogSink, Verb, VerbContext;
 // so its type is public with them.
 export 'src/errors.dart' show XtaskFormatException;
 
-// A verb answers with a number, and the README tells its author to write that
-// number against the table this class is. Not exporting it meant telling them
-// to write `return 0;` — the very thing `boundaries_test.dart` refuses inside
-// this package, for the reason that applies just as well outside it: the
+// A verb answers with a number, and doc/reference.md tells its author to write
+// that number against the table this class is. Not exporting it meant telling
+// them to write `return 0;` — the very thing `boundaries_test.dart` refuses
+// inside this package, for the reason that applies just as well outside it: the
 // constant carries why the code is that code, and the digit does not.
 export 'src/exit_codes.dart' show ExitCode, continuationNotice;
 
@@ -48,7 +48,8 @@ export 'src/exit_codes.dart' show ExitCode, continuationNotice;
 export 'src/reading.dart' show findRoot, gateMembers;
 
 /// Runs `xtask` with the verbs this project supplies, and answers with the
-/// process exit code — the README's exit code table says what each means.
+/// process exit code — the exit code table in doc/reference.md says what each
+/// means.
 ///
 /// This is the whole of what RUNS. A project depends on `xtask`, writes
 /// `bin/xtask.dart` calling this, and `dart run :xtask <task>` reaches it by

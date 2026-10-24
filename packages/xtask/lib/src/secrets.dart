@@ -12,7 +12,8 @@
 /// **What a body prints is not the engine's to filter**, and does not go
 /// through here: a program's own output reaches the terminal by itself when
 /// nothing collects it, so filtering only the output that is collected would
-/// make what is hidden depend on `-j`. The README says where that boundary is.
+/// make what is hidden depend on `-j`. doc/internals-and-platforms.md says
+/// where that boundary is.
 library;
 
 import 'dart:io' show File, FileSystemException;

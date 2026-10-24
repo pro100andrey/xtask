@@ -24,8 +24,8 @@ void main() {
     test('and a pure continuation is not one', () {
       // `publish then verify`, `verify then notify` runs all three and answers
       // 0, while this reported the middle one as a name with a description
-      // attached: a file the run accepts and the gate the README tells every
-      // project to adopt refuses.
+      // attached: a file the run accepts and the gate doc/reference.md tells
+      // every project to adopt refuses.
       final report = validateFile(
         parseXtaskFile(
           'version: 1\ntasks:\n'

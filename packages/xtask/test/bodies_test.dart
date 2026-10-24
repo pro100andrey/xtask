@@ -291,7 +291,7 @@ void main() {
       // whether they stay inside, because they are not paths — and
       // `in: sub/$each` composes one out of them, after the only gate. A
       // flavour of `../../../etc` ran a body in `/etc` and answered 0,
-      // through the shape the README recommends.
+      // through the shape doc/reference.md recommends.
       expect(
         () => resolve(
           'version: 1\n'

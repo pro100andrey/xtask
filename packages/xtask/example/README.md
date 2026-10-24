@@ -19,5 +19,6 @@ dart run :xtask check           # run it
 `dart run :xtask` rather than the installed `xtask`, because only it reaches
 `bin/xtask.dart`.
 
-The rest — the keys, the exit codes, what `-j` costs — is in the
-[package README](https://pub.dev/packages/xtask).
+The rest — the keys, the exit codes, what `-j` costs — is in the package's
+guides: [the reference](../doc/reference.md) and
+[running, and reading a run](../doc/running.md).

@@ -2,7 +2,8 @@
 /// leaves behind — which must be nothing.
 ///
 /// **POSIX only.** Windows has no `SIGTERM`, and a Ctrl-C cannot be sent to
-/// one process from another; what it gets is said in the README.
+/// one process from another; what it gets is said in
+/// doc/internals-and-platforms.md.
 @TestOn('!windows')
 library;
 

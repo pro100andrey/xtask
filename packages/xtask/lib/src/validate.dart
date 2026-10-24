@@ -114,8 +114,8 @@ ValidationReport validateFile(
 /// **`then:` counts.** A task whose whole content is a continuation is
 /// reached, runs nothing of its own, and then runs what follows it — which is
 /// something: `publish then verify`, `verify then notify` runs all three, and
-/// the gate the README tells every project to adopt must accept what the run
-/// accepts.
+/// the gate doc/reference.md tells every project to adopt must accept what
+/// the run accepts.
 void _checkDoesSomething(Task task, List<XtaskFormatException> problems) {
   if (task.body != null || task.needs.isNotEmpty || task.then.isNotEmpty) {
     return;
@@ -586,10 +586,10 @@ void _checkExclusive(XtaskFile file, List<XtaskFormatException> problems) {
     final only = file.tasks[entry.value.single]!;
     // **Unless it is keeping that task apart from ITSELF.** A token on a
     // fanned-out task makes its own members run one at a time — the engine
-    // asks `exclusive.isNotEmpty` before it fans out, and the README and the
-    // changelog both say so — which is a guarantee, not a no-op. Refused, the
-    // advice was to drop the key or name it elsewhere, and following it takes
-    // the guarantee away.
+    // asks `exclusive.isNotEmpty` before it fans out, and doc/running.md and
+    // the changelog both say so — which is a guarantee, not a no-op. Refused,
+    // the advice was to drop the key or name it elsewhere, and following it
+    // takes the guarantee away.
     if (only.each != null) {
       continue;
     }

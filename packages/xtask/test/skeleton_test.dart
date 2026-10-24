@@ -59,13 +59,13 @@ void main() {
   });
 
   group('a task is a section in the shipped binary, not only in a test', () {
-    // The one claim that cannot be made in-process. the README says a CI job is
-    // one invocation and each task folds — which needs the `::group::` line to
-    // reach the stream BEFORE the body's own output. The engine writes through
-    // Dart's `stdout`, which is asynchronous when it is a pipe (what it is on a
-    // runner), while the body inherits the descriptor and writes to it
-    // directly. Nothing in-process can tell those two apart; a real subprocess
-    // with a real pipe can.
+    // The one claim that cannot be made in-process. doc/ci-integration.md says
+    // a CI job is one invocation and each task folds — which needs the
+    // `::group::` line to reach the stream BEFORE the body's own output. The
+    // engine writes through Dart's `stdout`, which is asynchronous when it is a
+    // pipe (what it is on a runner), while the body inherits the descriptor and
+    // writes to it directly. Nothing in-process can tell those two apart; a
+    // real subprocess with a real pipe can.
     late Directory root;
     late ProcessResult run;
 

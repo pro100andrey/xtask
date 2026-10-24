@@ -159,7 +159,7 @@ void main() {
     });
   });
 
-  group('the README quotes the command rather than describing it', () {
+  group('the reference quotes the command rather than describing it', () {
     // the duplicate list, in the repository that exists for the duplicate list.
     // `usage` in `cli.dart` and the block under "## The command" are the same
     // list, and when this test was written they had already drifted three ways:
@@ -171,9 +171,9 @@ void main() {
     // this is the other half of the same promise, for the copy that is not in
     // the program.
     test("and it is the parser's own text, line for line", () {
-      final readme = File(p.join(package, 'README.md')).readAsStringSync();
+      final reference = _read(package, 'doc/reference.md');
       // Two spaces come off, and exactly two: the lines are indented where
-      // they are printed under a `usage:` header, and the README's fence
+      // they are printed under a `usage:` header, and the document's fence
       // supplies that header instead. Trimming further would stop comparing
       // the alignment the block is written for.
       final printed = [
@@ -181,35 +181,38 @@ void main() {
           line.replaceFirst(RegExp('^  '), ''),
       ];
       expect(
-        _fencedBlockAfter(readme, '## The command'),
+        _fencedBlockAfter(reference, '## The command'),
         printed,
         reason:
-            'README.md and `usage` in cli.dart have drifted. The README quotes '
-            'the parser — copy the block printed by `xtask` with no arguments.',
+            'doc/reference.md and `usage` in cli.dart have drifted. The '
+            'reference quotes the parser — copy the block printed by `xtask` '
+            'with no arguments.',
       );
     });
   });
 
-  group('the README shows this engine answering, not a description of it', () {
+  group('the run guide shows this engine answering, not a description', () {
     // Both blocks were wrong, and wrong the way prose about output goes wrong:
     // `--dry-run check` was shown planning `check` itself, which is a gate set
     // and never a step, and `--why` was shown printing `check needs lint` — a
-    // shape no gate set can produce, in a README that says two paragraphs
+    // shape no gate set can produce, in a document that said two paragraphs
     // later that there is no composite task.
     //
     // Derived, not listed. Writing the members here would be the third copy of
     // the gate that this file opens by refusing to make.
 
-    /// What the README shows under somebody typing [command].
+    /// What doc/running.md shows under somebody typing [command].
     ///
     /// By the line typed rather than by a heading: both blocks sit under one
     /// heading, and `_fencedBlockAfter` answers with the first of them.
     List<String> shown(String command) {
-      final lines = File(
-        p.join(package, 'README.md'),
-      ).readAsStringSync().split('\n');
+      final lines = _read(package, 'doc/running.md').split('\n');
       final at = lines.indexOf(r'$ ' + command);
-      expect(at, isNonNegative, reason: 'README.md never shows `$command`');
+      expect(
+        at,
+        isNonNegative,
+        reason: 'doc/running.md never shows `$command`',
+      );
       final closed = lines.indexWhere((line) => line.startsWith('```'), at);
       expect(closed, isNonNegative, reason: 'the block under it is unclosed');
       return lines.sublist(at + 1, closed);
@@ -223,7 +226,7 @@ void main() {
         planLine,
         'plan: ${planGate(file, 'check').names.join(', ')}',
         reason:
-            'the README shows a plan for `check` that this file does not '
+            'doc/running.md shows a plan for `check` that this file does not '
             'make. A gate set is never a step in its own plan.',
       );
     });
@@ -236,17 +239,17 @@ void main() {
         ).where((line) => !line.startsWith(' ')),
         routesTo(file, asked).keys,
         reason:
-            'the README shows entry points for `$asked` that this file does '
-            'not have. `--why` keys a gate set entry as `gate <name>`.',
+            'doc/running.md shows entry points for `$asked` that this file '
+            'does not have. `--why` keys a gate set entry as `gate <name>`.',
       );
     });
   });
 
-  group('the summary the README shows is the one this engine prints', () {
-    // A run's last lines are what a person reads first, and the README's copy
-    // of them is written by hand: padded columns and marks that a change to
-    // the rendering moves, and a hand-kept copy does not. Rendered here from
-    // the values it shows, so the copy is checked rather than trusted.
+  group('the summary the run guide shows is the one this engine prints', () {
+    // A run's last lines are what a person reads first, and the document's
+    // copy of them is written by hand: padded columns and marks that a change
+    // to the rendering moves, and a hand-kept copy does not. Rendered here
+    // from the values it shows, so the copy is checked rather than trusted.
     test('a `--keep-going` run, one row per task and member', () {
       Duration ms(int n) => Duration(milliseconds: n);
       final tree = summary((
@@ -276,18 +279,22 @@ void main() {
         ],
         took: ms(14600),
       ), concurrent: false);
-      final readme = File(p.join(package, 'README.md')).readAsStringSync();
       expect(
-        _fencedBlocks(readme, 'shell'),
+        _fencedBlocks(_read(package, 'doc/running.md'), 'shell'),
         contains('${tree.skip(1).join('\n')}\n'),
         reason:
-            'README.md no longer shows the summary this engine prints for '
-            'that run:\n${tree.join('\n')}',
+            'doc/running.md no longer shows the summary this engine prints '
+            'for that run:\n${tree.join('\n')}',
       );
     });
   });
 
-  group("the README's own examples are files this engine would accept", () {
+  // Everything below is asked of every page the package publishes — the
+  // README and each guide under doc/ — because the defects it catches were
+  // found in one page and are just as easy to write in the next. Found by
+  // listing the directory, so a guide added later is checked without anybody
+  // remembering to name it here.
+  group("the documents' own examples are files this engine would accept", () {
     // Written after both defects in one example: it had no `version:` at all,
     // and it wrote a glob as a plain list, which is a literal member that
     // happens to contain a `*`. Neither is visible by reading, and a reader
@@ -299,17 +306,18 @@ void main() {
     // Parsed rather than validated, because an example may name a verb the
     // project it belongs to registered and this repository has not.
     test('every complete one parses', () {
-      final readme = File(p.join(package, 'README.md')).readAsStringSync();
+      final docs = _documents(package);
       final blocks = [
-        for (final block in _fencedBlocks(readme, 'yaml'))
-          if (block.startsWith('version:')) block,
+        for (final MapEntry(key: name, value: text) in docs.entries)
+          for (final block in _fencedBlocks(text, 'yaml'))
+            if (block.startsWith('version:')) (name: name, block: block),
       ];
       expect(
         blocks,
         hasLength(greaterThan(1)),
-        reason: 'the README used to carry two whole files; find them again',
+        reason: 'the documents used to carry two whole files; find them again',
       );
-      for (final block in blocks) {
+      for (final (:name, :block) in blocks) {
         // **Validated, not merely parsed.** Parsing says the shape is right;
         // `--validate`'s checks are what a reader meets the moment they copy
         // the block and run the first gate this document tells them to adopt.
@@ -320,9 +328,9 @@ void main() {
         // catch that.
         late final XtaskFile file;
         expect(
-          () => file = parseXtaskFile(block, sourceUrl: Uri.parse('README.md')),
+          () => file = parseXtaskFile(block, sourceUrl: Uri.parse(name)),
           returnsNormally,
-          reason: block,
+          reason: '$name:\n$block',
         );
         final report = validateFile(
           file,
@@ -333,12 +341,12 @@ void main() {
             ),
           }..remove(''),
         );
-        expect(report.ok, isTrue, reason: '$block\n$report');
+        expect(report.ok, isTrue, reason: '$name:\n$block\n$report');
       }
     });
   });
 
-  group('and its Dart examples define what they register', () {
+  group('and their Dart examples define what they register', () {
     // The entry point in the README registered two verbs, `regen` and
     // `publish`, and defined one. Copied out, it does not compile:
     //
@@ -348,64 +356,95 @@ void main() {
     // the document is wrong. Checked by reading rather than by compiling,
     // which would need a scratch package and a `pub get` in the gate: what
     // went wrong here is a NAME with no declaration, and that is visible in
-    // the text.
+    // the text. Asked per document, because a reader copies from one page.
     test('every verb the entry point hands over is defined nearby', () {
-      final readme = File(p.join(package, 'README.md')).readAsStringSync();
-      final dart = _fencedBlocks(readme, 'dart').join('\n');
-      final registered = RegExp("'([a-z-]+)': ([a-zA-Z]+)").allMatches(dart);
+      var registrations = 0;
+      for (final MapEntry(key: name, value: text) in _documents(
+        package,
+      ).entries) {
+        final dart = _fencedBlocks(text, 'dart').join('\n');
+        for (final registration in RegExp(
+          "'([a-z-]+)': ([a-zA-Z]+)",
+        ).allMatches(dart)) {
+          registrations++;
+          final verb = registration.group(2);
+          expect(
+            dart,
+            contains('Future<int> $verb('),
+            reason:
+                '$name registers `$verb` and never defines it, so the '
+                'example does not compile when it is copied',
+          );
+        }
+      }
       expect(
-        registered,
-        isNotEmpty,
-        reason: 'the README used to show a verb being registered; find it',
+        registrations,
+        isPositive,
+        reason: 'the documents used to show a verb being registered; find it',
       );
-      for (final registration in registered) {
-        final verb = registration.group(2);
+    });
+  });
+
+  group('and their links point at pages and headings they have', () {
+    // `[Gate sets](#gate-sets-and-what-they-are-for)` outlived the heading it
+    // named by one commit: the section was renamed and the link was not, which
+    // renders as a link that quietly does nothing. Nothing in a markdown file
+    // complains, and a reader who follows it lands at the top of the page and
+    // assumes they missed something. With the material in several pages the
+    // same mistake has a second shape — a page renamed, or a heading moved to
+    // another page — so a link is followed to its file as well as its anchor.
+    test('every one of them', () {
+      final docs = _documents(package);
+      expect(
+        _linkProblems(package, docs),
+        isEmpty,
+        reason: 'a link in the documents leads nowhere',
+      );
+    });
+
+    test('and the front page links every guide', () {
+      // A guide nothing links is one pub.dev never shows anybody: the archive
+      // carries it, and the page a reader arrives on does not say it exists.
+      final docs = _documents(package);
+      final readme = docs['README.md']!;
+      for (final name in docs.keys.where((name) => name != 'README.md')) {
         expect(
-          dart,
-          contains('Future<int> $verb('),
-          reason:
-              'the README registers `$verb` and never defines it, so the '
-              'example does not compile when it is copied',
+          readme,
+          contains('($name'),
+          reason: 'README.md does not link `$name`',
+        );
+      }
+    });
+
+    test('and a broken one is found, which is what makes the rest mean '
+        'anything', () {
+      // The check above passing says nothing if it would pass anyway. Each
+      // shape of broken link, in a page of its own.
+      Map<String, String> pages(String link) => {
+        'README.md': '# Top\n\n## A heading\n\n[x]($link)\n',
+        'doc/guide.md': '# Guide\n\n## Its section\n',
+      };
+      expect(_linkProblems(package, pages('#a-heading')), isEmpty);
+      expect(
+        _linkProblems(package, pages('doc/guide.md#its-section')),
+        isEmpty,
+      );
+      for (final broken in [
+        '#no-such-heading',
+        'doc/missing.md',
+        'doc/guide.md#no-such-section',
+        '../../outside.md',
+      ]) {
+        expect(
+          _linkProblems(package, pages(broken)),
+          isNotEmpty,
+          reason: '`$broken` was let through',
         );
       }
     });
   });
 
-  group('and its internal links point at headings it has', () {
-    // `[Gate sets](#gate-sets-and-what-they-are-for)` outlived the heading it
-    // named by one commit: the section was renamed and the link was not, which
-    // renders as a link that quietly does nothing. Nothing in a markdown file
-    // complains, and a reader who follows it lands at the top of the page and
-    // assumes they missed something.
-    test('every one of them', () {
-      final readme = File(p.join(package, 'README.md')).readAsStringSync();
-      // GitHub's own rule: lower-case, punctuation dropped, spaces hyphenated.
-      String slug(String heading) =>
-          '#${heading.toLowerCase().replaceAll(RegExp('[^a-z0-9 -]'), '')}'
-              .replaceAll(' ', '-');
-      final anchors = {
-        for (final heading in RegExp(
-          r'^#+ (.+)$',
-          multiLine: true,
-        ).allMatches(readme))
-          slug(heading.group(1)!),
-      };
-      final links = [
-        for (final link in RegExp(r'\]\((#[a-z0-9-]+)\)').allMatches(readme))
-          link.group(1)!,
-      ];
-      expect(
-        links,
-        isNotEmpty,
-        reason: 'the README used to link inside itself',
-      );
-      for (final link in links) {
-        expect(anchors, contains(link), reason: 'no heading makes `$link`');
-      }
-    });
-  });
-
-  group('and nothing it marks as shell is unbalanced', () {
+  group('and nothing they mark as shell is unbalanced', () {
     // The command listing was fenced as ```shell and contained one apostrophe,
     // in "that gate set's task names". A shell highlighter reads that as the
     // start of a string and colours everything after it to the end of the
@@ -413,16 +452,19 @@ void main() {
     // the markdown itself was perfectly well formed. The fence says `text`
     // now, because a usage listing is not shell.
     test('so a stray quote cannot colour a whole block', () {
-      final readme = File(p.join(package, 'README.md')).readAsStringSync();
-      for (final block in _fencedBlocks(readme, 'shell')) {
-        for (final quote in ["'", '"']) {
-          expect(
-            quote.allMatches(block).length.isEven,
-            isTrue,
-            reason:
-                'an odd number of $quote in a shell block, which a highlighter '
-                'reads as a string that never closes:\n$block',
-          );
+      for (final MapEntry(key: name, value: text) in _documents(
+        package,
+      ).entries) {
+        for (final block in _fencedBlocks(text, 'shell')) {
+          for (final quote in ["'", '"']) {
+            expect(
+              quote.allMatches(block).length.isEven,
+              isTrue,
+              reason:
+                  'an odd number of $quote in a shell block in $name, which a '
+                  'highlighter reads as a string that never closes:\n$block',
+            );
+          }
         }
       }
     });
@@ -485,11 +527,121 @@ void main() {
   });
 }
 
+/// The text of [name], a path from the package root written with `/`.
+String _read(String package, String name) =>
+    File(p.joinAll([package, ...name.split('/')])).readAsStringSync();
+
+/// Every page the package publishes as prose, by its path from the package
+/// root: the README, and each guide under `doc/` — not `doc/research/`, which
+/// `.pubignore` keeps out of the archive.
+Map<String, String> _documents(String package) {
+  final guides =
+      Directory(p.join(package, 'doc'))
+          .listSync()
+          .whereType<File>()
+          .map((file) => 'doc/${p.basename(file.path)}')
+          .where((name) => name.endsWith('.md'))
+          .toList()
+        ..sort();
+  expect(guides, isNotEmpty, reason: 'the guides used to be under doc/');
+  return {
+    for (final name in ['README.md', ...guides]) name: _read(package, name),
+  };
+}
+
+/// [markdown] with every fenced block taken out, so that a `#` comment in a
+/// YAML example is not read as a heading, nor a `](` in Dart as a link.
+String _prose(String markdown) {
+  final kept = <String>[];
+  var fenced = false;
+  for (final line in markdown.split('\n')) {
+    if (line.startsWith('```')) {
+      fenced = !fenced;
+    } else if (!fenced) {
+      kept.add(line);
+    }
+  }
+  return kept.join('\n');
+}
+
+/// The anchors the headings of [markdown] make, by GitHub's rule — the one
+/// pub.dev follows too: lower-case, punctuation but `-` and `_` dropped,
+/// spaces hyphenated.
+Set<String> _anchors(String markdown) => {
+  for (final heading in RegExp(
+    r'^#+ (.+)$',
+    multiLine: true,
+  ).allMatches(_prose(markdown)))
+    heading
+        .group(1)!
+        .toLowerCase()
+        .replaceAll(RegExp('[^a-z0-9 _-]'), '')
+        .replaceAll(' ', '-'),
+};
+
+/// What is wrong with the links in [docs], each as a sentence; empty when
+/// every one leads somewhere.
+///
+/// A link with a scheme is somebody else's page and is not followed. Every
+/// other one is a path from the page it is written in, and must stay inside
+/// the package — pub.dev resolves it against `repository:`, which names the
+/// package's directory, and the archive holds nothing above it — must name a
+/// file that is there, and, where it carries `#`, a heading that page has.
+List<String> _linkProblems(String package, Map<String, String> docs) {
+  final problems = <String>[];
+  for (final MapEntry(key: name, value: text) in docs.entries) {
+    for (final link in RegExp(
+      r'\]\(([^)\s]+)\)',
+    ).allMatches(_prose(text))) {
+      final target = link.group(1)!;
+      if (RegExp('^[a-z][a-z0-9+.-]*:').hasMatch(target)) {
+        continue;
+      }
+      final hash = target.indexOf('#');
+      final path = hash < 0 ? target : target.substring(0, hash);
+      final anchor = hash < 0 ? '' : target.substring(hash + 1);
+      final page = path.isEmpty
+          ? name
+          : p.posix.normalize(p.posix.join(p.posix.dirname(name), path));
+      if (page == '..' || page.startsWith('../')) {
+        problems.add('$name: `$target` leaves the package');
+        continue;
+      }
+      final onDisk = p.joinAll([package, ...page.split('/')]);
+      final String? markdown;
+      if (docs.containsKey(page)) {
+        markdown = docs[page];
+      } else if (FileSystemEntity.typeSync(onDisk) ==
+          FileSystemEntityType.notFound) {
+        problems.add('$name: `$target` names `$page`, which is not there');
+        continue;
+      } else {
+        markdown = page.endsWith('.md')
+            ? File(onDisk).readAsStringSync()
+            : null;
+      }
+      if (anchor.isEmpty) {
+        continue;
+      }
+      if (markdown == null) {
+        problems.add(
+          '$name: `$target` has an anchor into a file of no headings',
+        );
+      } else if (!_anchors(markdown).contains(anchor)) {
+        problems.add(
+          '$name: `$target` — `$page` has no heading making `#$anchor`',
+        );
+      }
+    }
+  }
+  return problems;
+}
+
 /// The lines of the first fenced block after [heading] in [markdown].
 List<String> _fencedBlockAfter(String markdown, String heading) {
   final lines = markdown.split('\n');
   final at = lines.indexOf(heading);
-  expect(at, isNonNegative, reason: 'README.md has no `$heading` section');
+  expect(at, isNonNegative, reason: 'there is no `$heading` section');
   // Matched by the fence, not by the whole line: a fence may carry a language
   // (` ```shell `), and looking for a bare ` ``` ` then finds the CLOSING one
   // and returns the prose after it — which is how this helper failed the first

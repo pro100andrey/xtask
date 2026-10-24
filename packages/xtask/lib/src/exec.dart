@@ -489,10 +489,10 @@ final class Executor {
   /// themselves — stale committed code, passed. Before the walk is the one
   /// moment that is before every step of every branch.
   ///
-  /// The price is said in the README: anything in the run that writes the
+  /// The price is said in doc/reference.md: anything in the run that writes the
   /// set before the task ends counts against it. That is the question asked —
-  /// whether the committed files are what this run leaves — and a task that
-  /// is to write them is not one to hold them unchanged.
+  /// whether the committed files are what this run leaves — and a task that is
+  /// to write them is not one to hold them unchanged.
   void _holdUnchanged(Plan plan) {
     // Per set, so two tasks holding one set read it once: both are read at
     // the same moment, so they would read the same thing.
