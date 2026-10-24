@@ -5,8 +5,9 @@
 # The root used to BE the `xtask` package, and that made the repository the one
 # project the installed `xtask` could not hand a run to: its entry point was
 # the engine's own. With the engine a member, the root is an ordinary project —
-# `bin/xtask.dart` here is the entry point the README asks every consumer to
-# write, and the hand-over reaches it the way it reaches theirs.
+# `bin/xtask.dart` here is the entry point `packages/xtask/doc/dart-verbs.md`
+# asks every consumer to write, and the hand-over reaches it the way it reaches
+# theirs.
 name: xtask_workspace
 publish_to: none
 

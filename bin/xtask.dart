@@ -1,6 +1,7 @@
-// This repository's own entry point, and the shape the README asks every
-// consumer to write: the project owns the entry point, because the project owns
-// the verbs. A project with verbs passes them here —
+// This repository's own entry point, and the shape `packages/xtask/doc/
+// dart-verbs.md` asks every consumer to write: the project owns the entry
+// point, because the project owns the verbs. A project with verbs passes them
+// here —
 //
 //   exitCode = await runXtask(args, verbs: {'regen': regen});
 //
