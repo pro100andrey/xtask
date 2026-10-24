@@ -1,0 +1,706 @@
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+import 'package:test/test.dart';
+import 'package:xtask/src/bodies.dart';
+import 'package:xtask/src/boundary.dart';
+import 'package:xtask/src/context.dart';
+import 'package:xtask/src/dry_run.dart';
+import 'package:xtask/src/executables.dart';
+import 'package:xtask/src/exit_codes.dart';
+import 'package:xtask/src/graph.dart';
+import 'package:xtask/src/model.dart';
+import 'package:xtask/src/parse.dart';
+import 'package:xtask/src/primitives.dart';
+
+import 'helpers.dart';
+
+void main() {
+  late Directory root;
+  late List<String> logged;
+
+  setUp(() {
+    root = tempRepo('dry');
+    logged = [];
+  });
+
+  void given(List<String> paths) {
+    for (final path in paths) {
+      File(p.join(root.path, p.joinAll(p.posix.split(path))))
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('');
+    }
+  }
+
+  /// A resolver that finds every bare name at `/bin/<name>`, so these cases
+  /// are about the report rather than about the resolver.
+  ExecutableResolver resolverFor() => ExecutableResolver(
+    environment: const {'PATH': '/bin'},
+    windows: false,
+    isRunnable: (path) => !p.basename(path).startsWith('missing'),
+  );
+
+  /// The same, shaped like the host it runs on.
+  ///
+  /// **For the two cases that are about how a path is WRITTEN.** The resolver
+  /// above is fixed to POSIX so that finding a name is not what is under test
+  /// — and these two are about the separators the answer comes back in, which
+  /// a POSIX resolver on Windows gets wrong by construction: it joined
+  /// `C:\repo` and `./tool/gen` into `C:\repo/tool/gen` while the expectation
+  /// was built with `p.join`, so the test failed on the runner about a
+  /// disagreement it had with itself.
+  ExecutableResolver hostShaped() => ExecutableResolver(
+    environment: const {'PATH': '/bin'},
+    windows: Platform.isWindows,
+    isRunnable: (path) => !p.basename(path).startsWith('missing'),
+  );
+
+  /// The Windows shape the batch-shim rule is about: every tool is a batch
+  /// shim.
+  ExecutableResolver windowsShims() => ExecutableResolver(
+    environment: const {'PATH': r'C:\bin', 'PATHEXT': '.BAT'},
+    windows: true,
+    isRunnable: (path) => path.toLowerCase().endsWith('.bat'),
+  );
+
+  Future<int> dry(
+    String yaml,
+    String task, {
+    Map<String, Verb> verbs = const {},
+    Map<String, String> environment = const {},
+    ExecutableResolver? resolver,
+  }) {
+    final file = parseXtaskFile(yaml);
+    // The same value a run is given, built the same way — which is the point
+    // of the module: `--dry-run` prints what a run performs because it is
+    // handed the thing that works it out, rather than making its own.
+    return dryRun(
+      plan: planRun(file, task),
+      bodies: BodyResolver(
+        root: root.path,
+        resolver: resolver ?? resolverFor(),
+        sets: file.sets,
+        verbs: verbs,
+        environment: environment,
+      ),
+      log: logged.add,
+    );
+  }
+
+  String output() => logged.join('\n');
+
+  group('it prints what will happen, not what is written', () {
+    test(
+      'the program is the path the resolver found, not the word in the file',
+      () {
+        // The distinction the whole slice rests on. `dart` is what somebody
+        // typed; `/bin/dart` is what this machine will start, and only one of
+        // the two can be checked against a machine that has not got it.
+        expect(
+          dry(
+            'version: 1\ntasks:\n  a: {desc: x, run: [dart, analyze]}\n',
+            'a',
+          ),
+          completion(ExitCode.success),
+        );
+        expect(output(), contains('run  /bin/dart analyze'));
+        expect(output(), isNot(contains('run  dart analyze')));
+      },
+    );
+
+    test('and a repository-relative program is that path too', () {
+      // Not pinned anywhere before, because it did not work: the check was
+      // made against the process's own directory while the body runs at the
+      // root, so this refused as a missing tool whenever `xtask` was typed
+      // from a subdirectory. Printing it resolved is the same promise the
+      // line above makes — what will be started, not what was typed.
+      expect(
+        dry(
+          'version: 1\ntasks:\n  a: {desc: x, run: [./tool/gen, --check]}\n',
+          'a',
+          resolver: hostShaped(),
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('run  ${p.join(root.path, 'tool', 'gen')}'));
+      expect(output(), isNot(contains('run  ./tool/gen')));
+    });
+
+    test('and `in:` moves where that path is read from', () {
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, in: sub, run: [./gen]}\n',
+          'a',
+          resolver: hostShaped(),
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('run  ${p.join(root.path, 'sub', 'gen')}'));
+    });
+
+    test(
+      'a glob set is expanded, and each member gets its own block',
+      () async {
+        given(['packages/one/pubspec.yaml', 'packages/two/pubspec.yaml']);
+        await dry(
+          'version: 1\n'
+              'sets:\n  pkgs:\n    include: [packages/*]\n'
+              'tasks:\n'
+              r'  a: {desc: x, each: pkgs, in: $each, run: [dart, test]}'
+              '\n',
+          'a',
+        );
+        expect(output(), contains('a  [packages/one]'));
+        expect(output(), contains('a  [packages/two]'));
+        // Joined segment by segment, as the engine joins it. Written
+        // `packages/one`, `p.join` leaves the inner `/` alone — so on Windows
+        // this asserted `C:\…\packages/one`, a spelling of the path that the
+        // engine no longer produces and never meant to.
+        expect(
+          output(),
+          contains('in   ${p.join(root.path, 'packages', 'one')}'),
+        );
+        expect(
+          output(),
+          contains('in   ${p.join(root.path, 'packages', 'two')}'),
+        );
+      },
+    );
+
+    test('`all` is on the command line, already expanded', () async {
+      given(['lib/a.dart', 'lib/b.dart']);
+      await dry(
+        'version: 1\n'
+            'sets:\n  src:\n    include: [lib/*.dart]\n'
+            'tasks:\n'
+            '  a: {desc: x, run: [dart, format, \$all], all: src}\n',
+        'a',
+      );
+      expect(output(), contains('run  /bin/dart format lib/a.dart lib/b.dart'));
+    });
+
+    test('`in:` is absolute, resolved against the repository root', () async {
+      await dry(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, in: packages/lake, run: [dart, test]}\n',
+        'a',
+      );
+      expect(
+        output(),
+        contains('in   ${p.join(root.path, 'packages', 'lake')}'),
+      );
+    });
+  });
+
+  group('the order comes first, because it is what survives a failure', () {
+    test('every task the plan reaches, in the order it reaches it', () async {
+      await dry(
+        'version: 1\ntasks:\n'
+            '  install: {desc: x, run: [dart, pub, get]}\n'
+            '  build: {desc: x, needs: [install], run: [dart, compile]}\n'
+            '  publish: {desc: x, needs: [build], then: [announce],'
+            ' run: [dart, pub, publish]}\n'
+            '  announce: {desc: x, run: [dart, run, announce.dart]}\n',
+        'publish',
+      );
+      expect(logged.first, 'plan: install, build, publish, announce');
+    });
+
+    test('and it survives a task that cannot resolve', () async {
+      // Printed before anything that can fail, deliberately: a plan whose
+      // second task names a program this machine has not got is exactly when
+      // somebody wants to see the order.
+      final code = await dry(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart]}\n'
+            '  b: {desc: x, needs: [a], run: [missing-tool]}\n',
+        'b',
+      );
+      expect(code, ExitCode.missingTool);
+      expect(logged.first, 'plan: a, b');
+    });
+  });
+
+  group('and nothing runs', () {
+    test('a dry run has no process starter to leak through', () async {
+      // This used to be guarded at run time, by a `ProcessStarter` whose only
+      // job was to throw if anything ever reached it. There is nothing to
+      // guard now: `dryRun` takes no starter, because a dry run resolves and
+      // renders and never performs. The guarantee moved from a refusal into
+      // the shape of the call, which is the better place for it — so what is
+      // left to assert is that resolving several tasks answers cleanly.
+      expect(
+        await dry(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, run: [dart, test]}\n'
+              '  b: {desc: x, needs: [a], in: sub, run: [dart, analyze]}\n',
+          'b',
+        ),
+        ExitCode.success,
+      );
+    });
+
+    test('and it stops at the first thing that will not resolve', () async {
+      // The plan stops where a run would stop. A dry run that listed every
+      // unresolvable task would be a different answer to the same question,
+      // and it is one loop precisely so it cannot become one.
+      final code = await dry(
+        'version: 1\ntasks:\n'
+            '  one: {desc: a, run: [missing-one]}\n'
+            '  two: {desc: b, run: [missing-two]}\n'
+            '  all: {desc: c, needs: [one, two]}\n',
+        'all',
+      );
+      expect(code, ExitCode.missingTool);
+      expect(output(), contains('missing-one'));
+      expect(output(), isNot(contains('missing-two')));
+    });
+
+    test('and `remove` says what it would delete, not just its pattern', () {
+      // The engine ships one verb and it deletes recursively. Every other body
+      // is fully worked out by the time it is described — a `run:` prints the
+      // argv the child gets — and this block used to print the PATTERN, so the
+      // one operation a reader most needs to check was the one they could not.
+      given(['build/out/a.o', 'keep.txt']);
+      expect(
+        dry(
+          'version: 1\n'
+              "sets:\n  outs: ['build', 'coverage']\n"
+              'tasks:\n'
+              r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
+              '\n',
+          'clean',
+          verbs: builtInVerbs,
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('do   remove build coverage'));
+      expect(output(), contains('del  build'));
+      expect(
+        output(),
+        isNot(contains('del  coverage')),
+        reason: 'coverage is not there, and a missing path is not deleted',
+      );
+      expect(
+        File(p.join(root.path, 'build', 'out', 'a.o')).existsSync(),
+        isTrue,
+        reason: 'a dry run deleted something',
+      );
+    });
+
+    test('and says so out loud when there is nothing there', () {
+      // Silence reads as "nothing was worked out". The answer — there is
+      // nothing there, which is not an error — is the one a person running
+      // `clean` a second time needs.
+      expect(
+        dry(
+          'version: 1\n'
+              "sets:\n  outs: ['build']\n"
+              'tasks:\n'
+              r'  clean: {desc: x, do: remove, all: outs, args: [$all]}'
+              '\n',
+          'clean',
+          verbs: builtInVerbs,
+        ),
+        completion(ExitCode.success),
+      );
+      expect(output(), contains('nothing of these is on disk'));
+    });
+
+    test('and stops where the run stops, rather than calling it harmless', () {
+      // The gap this closes: `--dry-run` rendered a refused `remove` as
+      // "nothing of these is on disk, which is not an error" and answered 0,
+      // while the run refused it and answered 2. A mode that promises to stop
+      // where the run stops said a recursive delete aimed outside the
+      // repository was fine.
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              '  clean: {desc: x, do: remove, args: [../outside]}\n'
+              '  after: {desc: y, needs: [clean], run: [dart, test]}\n',
+          'after',
+          verbs: builtInVerbs,
+        ),
+        completion(ExitCode.invalidFile),
+      );
+      expect(output(), contains('outside the repository'));
+      expect(output(), contains('../outside'));
+      // Word for word what the run logs, which is why the sentence lives in
+      // `boundary.dart` at all. This one carried a `task `clean`:` prefix the
+      // run does not write, so a diff of the two was not comparable — in the
+      // one place a reader compares them.
+      expect(
+        output(),
+        contains('error: ${removeLeavesRoot(written: '../outside')}'),
+      );
+      expect(output(), isNot(contains('nothing of these is on disk')));
+      expect(
+        output(),
+        isNot(contains('run  /bin/dart test')),
+        reason: 'a plan below a step the run refuses is a plan never reached',
+      );
+    });
+
+    test('and a refused `remove` inside a `then:` fails as one', () {
+      // The early return answered 2 flat, while the run turns any failure
+      // inside a continuation into its own code — so this mode disagreed with
+      // the run it describes, about the same file.
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, run: [dart, test], then: [clean]}\n'
+              '  clean: {desc: y, do: remove, args: [../outside]}\n',
+          'a',
+          verbs: builtInVerbs,
+        ),
+        completion(ExitCode.continuationFailed),
+      );
+    });
+
+    test('and says the same about a pattern that will not compile', () {
+      expect(
+        dry(
+          'version: 1\ntasks:\n'
+              "  clean: {desc: x, do: remove, args: ['a{b']}\n",
+          'clean',
+          verbs: builtInVerbs,
+        ),
+        completion(ExitCode.invalidFile),
+      );
+      expect(output(), contains('not a valid pattern'));
+    });
+
+    test('a verb is looked up and NOT called', () async {
+      var called = false;
+      final code = await dry(
+        'version: 1\ntasks:\n  a: {desc: x, do: publish}\n',
+        'a',
+        verbs: {
+          'publish': (context) async {
+            called = true;
+            return ExitCode.success;
+          },
+        },
+      );
+      expect(code, ExitCode.success);
+      expect(called, isFalse);
+      expect(output(), contains('do   publish'));
+    });
+
+    test('so `remove` does not remove anything', () async {
+      // The primitive of `remove` deletes recursively and a missing path is not
+      // an error, which is the worst combination to be wrong about here.
+      given(['build/out.js']);
+      final code = await dry(
+        'version: 1\ntasks:\n  clean: {desc: x, do: remove, args: [build]}\n',
+        'clean',
+        verbs: builtInVerbs,
+      );
+      expect(code, ExitCode.success);
+      expect(Directory(p.join(root.path, 'build')).existsSync(), isTrue);
+      expect(output(), contains('do   remove build'));
+    });
+  });
+
+  group("a failure is the run's failure, with the run's exit code", () {
+    test('a program nothing on PATH answers to is still 3', () async {
+      final code = await dry(
+        'version: 1\ntasks:\n  a: {desc: x, run: [missing-tool, --help]}\n',
+        'a',
+      );
+      expect(code, ExitCode.missingTool);
+      expect(output(), contains('missing-tool'));
+    });
+
+    test('a verb the project did not register is still 2', () async {
+      final code = await dry(
+        'version: 1\ntasks:\n  a: {desc: x, do: nobody-registered-this}\n',
+        'a',
+      );
+      expect(code, ExitCode.invalidFile);
+      expect(output(), contains('nobody-registered-this'));
+    });
+
+    test('a set that does not exist is still 2', () async {
+      final code = await dry(
+        'version: 1\ntasks:\n'
+            r'  a: {desc: x, each: absent, in: $each, run: [dart]}'
+            '\n',
+        'a',
+      );
+      expect(code, ExitCode.invalidFile);
+    });
+
+    test('an unset `env-required` is still 1, before anything else', () async {
+      // Debatable and decided: a dry run reports it. one invocation per job
+      // gives the key its value by turning "something failed inside" into a
+      // named message, and skipping the check here would need a second code
+      // path — the very thing this slice exists not to have.
+      final code = await dry(
+        'version: 1\ntasks:\n'
+            '  web: {desc: x, env-required: [CHROMEDRIVER],'
+            ' run: [dart, test]}\n',
+        'web',
+      );
+      expect(code, ExitCode.taskFailed);
+      expect(output(), contains('CHROMEDRIVER'));
+    });
+
+    test('and inside a `then:` it is still 4', () async {
+      // the exit code table's third outcome. The code is about WHERE the
+      // failure is, not what it was, so a dry run answers it the same way a run
+      // would.
+      final code = await dry(
+        'version: 1\ntasks:\n'
+            '  publish: {desc: x, then: [announce],'
+            ' run: [dart, pub, publish]}\n'
+            '  announce: {desc: x, run: [missing-tool]}\n',
+        'publish',
+      );
+      expect(code, ExitCode.continuationFailed);
+    });
+  });
+
+  group('the report can be checked against what somebody meant', () {
+    test('an argument with a space is one argument, visibly', () async {
+      await dry(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, test],'
+            ' args: ["--name", "two words"]}\n',
+        'a',
+      );
+      expect(output(), contains("run  /bin/dart test --name 'two words'"));
+    });
+
+    test('and an empty argument does not disappear', () async {
+      await dry(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, test], args: ["--name", ""]}\n',
+        'a',
+      );
+      expect(output(), contains("run  /bin/dart test --name ''"));
+    });
+
+    test("the env printed is the task's own, not the machine's", () async {
+      // The merged map is this machine's environment with one entry changed.
+      // Printing it would bury the one line that is part of the plan under a
+      // hundred that are part of the terminal.
+      await dry(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, test], env: {COVERAGE: "1"}}\n',
+        'a',
+        environment: const {'HOME': '/Users/somebody', 'PATH': '/bin'},
+      );
+      expect(output(), contains('env  COVERAGE=1'));
+      expect(output(), isNot(contains('HOME')));
+    });
+
+    test('what `env-unset:` removes is printed too', () async {
+      await dry(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, test], env-unset: [CI]}\n',
+        'a',
+        environment: const {'CI': 'true', 'PATH': '/bin'},
+      );
+      expect(output(), contains('  env  unset CI'));
+    });
+
+    test(
+      'what `env-paths:` sets is printed as the path the body gets',
+      () async {
+        await dry(
+          'version: 1\ntasks:\n'
+              '  a: {desc: x, run: [dart, test], env-paths: {CACHE: .c/pub}}\n',
+          'a',
+          resolver: hostShaped(),
+        );
+        expect(
+          output(),
+          contains('  env  CACHE=${p.join(root.path, '.c', 'pub')}'),
+        );
+      },
+    );
+
+    test(r'with $each already standing for the member', () async {
+      // Every other line of this block was substituted, so it promised
+      // `FLAVOR=$each` while the run exported `FLAVOR=dev`.
+      await dry(
+        'version: 1\n'
+            'sets:\n  f:\n    values: [dev, prod]\n'
+            'tasks:\n'
+            r'  a: {desc: x, each: f, env: {FLAVOR: $each}, run: [d, $each]}'
+            '\n',
+        'a',
+      );
+      expect(output(), contains('env  FLAVOR=dev'));
+      expect(output(), contains('env  FLAVOR=prod'));
+      expect(output(), isNot(contains(r'FLAVOR=$each')));
+    });
+
+    test('and no task is wrapped in a section', () async {
+      // the GitHub markers exist to fold a task's OUTPUT, and a dry run
+      // produces none: its own report is the plan, and a header above each
+      // block would say the name twice. Asserted against the plain marker
+      // rather than the GitHub one, because plain is what a dry run uses on
+      // either host — checking only for `::group::` would pass with sections
+      // turned on.
+      await dry(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart, test]}\n',
+        'a',
+        environment: const {'GITHUB_ACTIONS': 'true'},
+      );
+      expect(output(), isNot(contains('──')));
+      expect(output(), isNot(contains('::group::')));
+      expect(logged.first, 'plan: a');
+    });
+
+    test('and nothing is timed, because nothing took any time', () async {
+      // The run prints what each task took. A dry run performs nothing, so a
+      // duration there would be a number measuring the printing of a plan.
+      await dry(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, test]}\n'
+            '  b: {desc: x, needs: [a], run: [dart, analyze]}\n',
+        'b',
+      );
+      expect(output(), isNot(contains('total')));
+      expect(output(), isNot(matches(RegExp(r'\d\.\ds'))));
+    });
+
+    test('a composite says it has nothing of its own to run', () async {
+      await dry(
+        'version: 1\ntasks:\n'
+            '  a: {desc: x, run: [dart, test]}\n'
+            '  check: {desc: x, needs: [a]}\n',
+        'check',
+      );
+      expect(output(), contains('check: nothing of its own to run'));
+    });
+
+    test('a limit on a task is part of what will happen', () async {
+      // A dry run that hid it would promise a command with no deadline and
+      // then run one with a deadline.
+      await dry(
+        'version: 1\ntasks:\n  a: {desc: x, timeout: 90, run: [dart, test]}\n',
+        'a',
+      );
+      expect(output(), contains('for  at most 90s'));
+    });
+
+    test('and a task without one says nothing about time', () async {
+      await dry('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n', 'a');
+      expect(output(), isNot(contains('at most')));
+    });
+
+    test('and a Windows shim says the shell is coming', () async {
+      // The one thing the batch-shim rule makes visible, and the reason an
+      // argument can be refused on one platform and not another.
+      await dry(
+        'version: 1\ntasks:\n  a: {desc: x, run: [dart, analyze]}\n',
+        'a',
+        resolver: windowsShims(),
+      );
+      expect(output(), contains(r'run  C:\bin\dart.BAT analyze'));
+      expect(output(), contains('via  cmd.exe'));
+    });
+
+    group('a set another task produces is not called wrong here either', () {
+      test('it says the timing rather than answering 2', () async {
+        given(['build/keep/x']);
+        final code = await dry(
+          'version: 1\n'
+              "sets:\n  made:\n    include: ['build/*.txt']\n"
+              '    produced-by: make\n'
+              'tasks:\n'
+              '  make: {desc: p, run: [touch, build/a.txt]}\n'
+              r'  use: {desc: c, needs: [make], all: made, run: [echo, $all]}'
+              '\n',
+          'use',
+        );
+        expect(code, ExitCode.success);
+        expect(output(), contains('cannot be resolved yet'));
+        // The original reason is printed under it, so nothing is hidden if the
+        // cause turns out to be something other than the timing.
+        expect(output(), contains('is empty'));
+      });
+
+      test('and a failure that is not the timing still stops the print', () {
+        // Guessing from the exit code and the task's set names called a
+        // boundary violation and an unknown verb premature too, and answered 0.
+        const escaping =
+            '  use: {desc: c, needs: [make], all: made, in: "../..", '
+            r'run: [echo, $all]}';
+        const unknownVerb = '  use: {desc: c, needs: [make], do: no-such-verb}';
+        for (final task in [escaping, unknownVerb]) {
+          expect(
+            () async {
+              given(['build/keep/x']);
+              final code = await dry(
+                'version: 1\n'
+                    "sets:\n  made:\n    include: ['build/*.txt']\n"
+                    '    produced-by: make\n'
+                    'tasks:\n'
+                    '  make: {desc: p, run: [touch, build/a.txt]}\n'
+                    '$task\n',
+                'use',
+              );
+              expect(code, ExitCode.invalidFile, reason: task);
+            },
+            returnsNormally,
+          );
+        }
+      });
+
+      test('and a task nothing runs before still stops the print', () async {
+        final code = await dry(
+          'version: 1\n'
+              "sets:\n  src:\n    include: ['nothing-matches/*']\n"
+              'tasks:\n'
+              r'  a: {desc: x, all: src, run: [echo, $all]}'
+              '\n',
+          'a',
+        );
+        expect(code, ExitCode.invalidFile);
+      });
+    });
+
+    test('a body that is not a shim says nothing about a shell', () async {
+      await dry('version: 1\ntasks:\n  a: {desc: x, run: [dart]}\n', 'a');
+      expect(output(), isNot(contains('cmd.exe')));
+    });
+  });
+
+  group('a task outside its `platforms:` is shown as skipped', () {
+    ExecutableResolver on(OperatingSystem os) => ExecutableResolver(
+      environment: const {'PATH': '/bin'},
+      windows: os == OperatingSystem.windows,
+      os: os,
+      isRunnable: (path) => !p.basename(path).startsWith('missing'),
+    );
+
+    const yaml =
+        'version: 1\ntasks:\n'
+        // A program this machine has not got: elsewhere it is not looked
+        // for, since the run would not look for it either.
+        '  install: {desc: x, platforms: [linux], run: [missing-install]}\n'
+        '  smoke: {desc: y, needs: [install], run: [smoke]}\n';
+
+    test('and not resolved, and what needs it still is', () async {
+      expect(
+        await dry(yaml, 'smoke', resolver: on(OperatingSystem.macos)),
+        ExitCode.success,
+      );
+      expect(logged, contains('install: skipped — linux only'));
+      expect(output(), contains('run  /bin/smoke'));
+      expect(output(), isNot(contains('missing-install')));
+    });
+
+    test('on the platform it names, it is resolved as ever', () async {
+      expect(
+        await dry(yaml, 'smoke', resolver: on(OperatingSystem.linux)),
+        ExitCode.missingTool,
+      );
+    });
+  });
+}

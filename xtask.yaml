@@ -4,7 +4,8 @@
 #
 # Section numbers below (§4.3, §7.1) are the design document's, which is no
 # longer kept. They survive as the coordinates of the reasoning, not as
-# something to go and look up; the README is the record now.
+# something to go and look up; the package's README and its `doc/` guides are
+# the record now.
 
 # Editor support, and the path is relative on purpose: it works in a fresh
 # clone with no network and no per-person settings. The file it points at is
@@ -22,6 +23,21 @@ version: 1
 # rather than a new gate set nobody runs. The order is the one a report
 # groups by.
 gates: [check, release]
+
+# What this repository publishes, one directory each. A new package is a new
+# directory here, and the tasks below reach it without being edited.
+sets:
+  packages:
+    include: [packages/*]
+
+  # The same directories, less any that has no suite yet: `dart test` in a
+  # package without `test/` fails rather than finding nothing to run, and a
+  # new package should not have to grow a placeholder test to be published.
+  # A set of its own rather than `containing:` on `packages`, because
+  # `publishable` asks its question of every package — tests or none.
+  tested:
+    include: [packages/*]
+    containing: [test]
 
 tasks:
   # Order inside the gate is the order written here, and it is the one place
@@ -42,10 +58,13 @@ tasks:
     run: [dart, analyze, --fatal-infos]
 
   test:
-    # From the repository root, which is the run that counts: a test that only
-    # passes from its own directory is red here.
-    desc: run the suite
+    # In each package, because that is the only place `dart test` looks: from
+    # the root of a workspace it runs the root's tests, and the root has none.
+    # A suite finds this file upwards from there, as the command does.
+    desc: run each package's suite
     gate: [check]
+    each: tested
+    in: $each
     run: [dart, test]
 
 
@@ -72,6 +91,8 @@ tasks:
   publishable:
     desc: refuse a package that could not be published as it stands
     gate: [release]
+    each: packages
+    in: $each
     run: [dart, pub, publish, --dry-run]
 
 

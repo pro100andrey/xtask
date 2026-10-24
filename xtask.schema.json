@@ -13,6 +13,20 @@
       "const": 1,
       "description": "Required. The only version this engine reads; an unknown one is refused rather than read as best it can."
     },
+    "entry": {
+      "type": "string",
+      "pattern": "^[^\\\\]+\\.dart$",
+      "description": "The project's entry point — the Dart file calling `runXtask` with this project's verbs — from the root, with `/`. The installed `xtask` hands a run to it. Leave it out for `bin/xtask.dart`."
+    },
+    "secret-env": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[^\\r\\n=]*\\S[^\\r\\n=]*$"
+      },
+      "description": "Variables whose values the engine prints as `***` — in `--dry-run`, a failure, an annotation, a refusal and the `--report` file — with the value this machine has and any a task's `env:` gives it. On GitHub Actions each is also handed to `::add-mask::` before a run prints anything. A value shorter than 4 characters is not masked. What a body prints itself is not filtered."
+    },
     "gates": {
       "type": "array",
       "items": {
@@ -63,6 +77,15 @@
                   "type": "string"
                 },
                 "description": "Patterns removed from what `include:` matched."
+              },
+              "containing": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "description": "Paths, relative to a member, that a member must hold to stay one — `[pubspec.yaml]`, `[test]`. Paths only, never patterns, and never a question about what a file says. A set this leaves empty is refused as any empty set is."
               },
               "produced-by": {
                 "type": "string",
@@ -230,6 +253,27 @@
             },
             "description": "Variables that must already be set. Checked before the body runs; the engine installs nothing, it only says which one is missing."
           },
+          "env-unset": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\r\\n=]*\\S[^\\r\\n=]*$"
+            },
+            "description": "Variables the body must not see, whatever this machine has set — removed, not emptied. A name the same task's `env:` sets is refused, compared without case: Windows reads `Path` and `PATH` as one variable, and there a name is removed whatever its case."
+          },
+          "env-paths": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\r\\n=]*\\S[^\\r\\n=]*$"
+            },
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Variables whose values are paths from the repository root: the body gets the root joined to each, absolute, normalised and in its machine's separators, whatever `in:` says. Nothing absolute and no `..`. `$each` may end one, as in `in:`. A name `env:` or `env-unset:` of the same task also holds is refused, compared without case."
+          },
           "needs": {
             "type": "array",
             "items": {
@@ -278,10 +322,29 @@
             "type": "boolean",
             "description": "Whether this task runs with nothing else running at all. Under `-j` the run waits for what it has started to end, runs this, and starts nothing until it has ended — a benchmark, which shares the machine rather than one nameable thing. Its `each:` members run one at a time."
           },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "linux",
+                "macos",
+                "windows"
+              ]
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "The operating systems this task is for; absent, every one. Elsewhere it does not run and is reported as skipped — `linux only` — and what needs it, or follows it by `then:`, runs as though it had passed: being for another platform is not a failure."
+          },
           "timeout": {
             "type": "integer",
             "minimum": 1,
             "description": "Seconds a `run:` body may take before it is killed. A `do:` cannot carry one: a verb is a Dart function and nothing outside it can stop one, so the limit would pass while the verb kept running. Under `each:` it is a limit per member."
+          },
+          "unchanged": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
+            "description": "A set of paths whose files this task must leave as the run found them: read byte for byte when the run begins, before any `needs:`, and again when the task ends. A file changed, added or removed fails the task, naming it. Not git: it works in a dirty tree and without one."
           }
         }
       }

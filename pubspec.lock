@@ -98,7 +98,7 @@ packages:
     source: hosted
     version: "4.0.0"
   glob:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: glob
       sha256: c3f1ee72c96f8f78935e18aa8cecced9ab132419e8625dc187e1c2408efc20de
@@ -178,7 +178,7 @@ packages:
     source: hosted
     version: "3.0.0"
   path:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: path
       sha256: "75cca69d1490965be98c73ceaea117e8a04dd21217b37b292c9ddbec0d955bc5"
@@ -258,7 +258,7 @@ packages:
     source: hosted
     version: "0.10.14"
   source_span:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: source_span
       sha256: "56a02f1f4cd1a2d96303c0144c93bd6d909eea6bee6bf5a0e0b685edbd4c47ab"
@@ -298,7 +298,7 @@ packages:
     source: hosted
     version: "1.2.2"
   test:
-    dependency: "direct dev"
+    dependency: transitive
     description:
       name: test
       sha256: "0d5ba5602ec3baa28c8ce365e1efc5575969c765f45c554a3e167dc7945b9c30"
@@ -378,7 +378,7 @@ packages:
     source: hosted
     version: "1.2.1"
   yaml:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: yaml
       sha256: b9da305ac7c39faa3f030eccd175340f968459dae4af175130b3fc47e40d76ce

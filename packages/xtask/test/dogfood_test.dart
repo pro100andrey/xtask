@@ -1,0 +1,672 @@
+import 'dart:io';
+import 'dart:isolate';
+
+import 'package:path/path.dart' as p;
+import 'package:test/test.dart';
+import 'package:xtask/src/ci.dart';
+import 'package:xtask/src/gates.dart';
+import 'package:xtask/src/graph.dart';
+import 'package:xtask/src/model.dart';
+import 'package:xtask/src/parse.dart';
+import 'package:xtask/src/primitives.dart';
+import 'package:xtask/src/reading.dart';
+import 'package:xtask/src/report.dart';
+import 'package:xtask/src/request.dart';
+import 'package:xtask/src/schema.dart';
+import 'package:xtask/src/sets.dart';
+import 'package:xtask/src/validate.dart';
+import 'package:xtask/src/version.dart';
+
+/// This repository's own `xtask.yaml`, checked by this repository's own suite.
+///
+/// the anti-goals item 9 asks xtask to be its first user, and the reason to
+/// spend a test file on it is that the first user is the one who finds out
+/// whether the design survives a real file. What is asserted here is
+/// deliberately about RELATIONS rather than contents: an assertion that the
+/// `check` gate holds `format`, `analyze` and `test` would be a third copy of
+/// the list — after the file itself and the CI workflow — which is the defect
+/// the duplicate list exists to remove, written into the test that is supposed
+/// to guard against it.
+void main() {
+  late String root;
+  late String package;
+  late XtaskFile file;
+
+  setUpAll(() {
+    // Found the way the command finds it — upwards — so the suite passes from
+    // a subdirectory as well as from the root.
+    final found = findRoot(Directory.current.path);
+    expect(
+      found,
+      isNotNull,
+      reason: 'this repository is meant to have an `$xtaskFileName`',
+    );
+    root = found!;
+    // The README and the manifest are the package's, and the package is a
+    // member of the workspace at [root] rather than the root itself.
+    package = p.dirname(
+      p.dirname(
+        Isolate.resolvePackageUriSync(
+          Uri.parse('package:xtask/xtask.dart'),
+        )!.toFilePath(),
+      ),
+    );
+    final path = p.join(root, xtaskFileName);
+    file = parseXtaskFile(
+      File(path).readAsStringSync(),
+      sourceUrl: Uri.file(path),
+    );
+  });
+
+  group('the file this repository runs on', () {
+    test('parses, which is what reaching this test means', () {
+      expect(file.tasks, isNotEmpty);
+    });
+
+    test('and passes everything `--validate` refuses', () {
+      // The same check `--validate` does, run from inside the suite so that a
+      // broken task file cannot be green. This project registers no verbs of
+      // its own , so what a `do:` may name is the built-in list.
+      final report = validateFile(
+        file,
+        knownVerbs: builtInVerbNames,
+        sets: SetExpander(root: root),
+      );
+      expect(report.problems, isEmpty, reason: '$report');
+    });
+
+    test('and every gate it declares gathers something', () {
+      // A gate set with no members is the failure this whole tool is about: a
+      // command that passes having examined nothing. Asked of every declared
+      // gate rather than of `check` by name — naming them here would be a
+      // list of gates beside the file's own, and the second one is always the
+      // one that stops being updated.
+      final gates = file.gates.keys;
+      expect(gates, isNotEmpty);
+      for (final gate in gates) {
+        expect(tasksInGate(file, gate), isNotEmpty, reason: 'gate `$gate`');
+      }
+    });
+
+    test('and running the gates reaches every task but the hand-typed one', () {
+      // The local half of what is left of the CI question — a task no gate ever
+      // reaches is invisible, and it looks exactly like a task that is checked.
+      //
+      // Every gate, not `check` alone. `publishable` is why: `pub publish
+      // --dry-run` exits 65 while a checked-in file is modified, so it can
+      // only pass in a clean checkout — which makes it CI's to run, not the
+      // desk's, and gives it a gate set of its own rather than no gate at all.
+      // A test that asked about `check` would have called a task CI runs on
+      // every push "typed by hand", and the word would have been wrong.
+      //
+      // What is left is equality, not containment. A task added and forgotten
+      // fails here, and so does a name left behind after the task it excused
+      // is gone. It is not a second copy of any gate: their members are
+      // exactly what is not written on this line.
+      const typedByHand = {'aot'};
+      final reached = {
+        for (final gate in file.gates.keys) ...planGate(file, gate).names,
+      };
+      expect(
+        file.tasks.keys.toSet().difference(reached),
+        typedByHand,
+        reason:
+            'a task nothing runs is either missing a `gate:` or belongs in '
+            '`typedByHand` above',
+      );
+    });
+  });
+
+  group('the schema beside it is the one this engine emits', () {
+    // The committed file is generated, and generated files rot the moment
+    // nothing compares them. A task cannot write the file, because `>` is
+    // shell and a task's description has none — so writing stays a person's
+    // deliberate act and checking is the gate's, which is the right way round.
+    // Here the check is this test; a project that cannot reach the function
+    // runs `--check-schema`, and both ask `isCurrentSchema`, so they cannot
+    // come to disagree about what "current" means.
+    late File schema;
+
+    setUpAll(() => schema = File(p.join(root, 'xtask.schema.json')));
+
+    test('it is there at all', () {
+      expect(
+        schema.existsSync(),
+        isTrue,
+        reason:
+            'an editor points at this file, and a clone without it is a '
+            'clone with no key completion and no red squiggle',
+      );
+    });
+
+    test('and it has not fallen behind the model it describes', () {
+      expect(
+        isCurrentSchema(schema.readAsStringSync()),
+        isTrue,
+        reason:
+            'the schema is out of date. Regenerate it:\n'
+            '  dart run :xtask --emit-schema > xtask.schema.json',
+      );
+    });
+
+    test('and the file points at it, by a path that survives a clone', () {
+      // Relative, so it needs no network and no per-person editor setting.
+      final text = File(p.join(root, xtaskFileName)).readAsStringSync();
+      expect(
+        text,
+        contains(r'# yaml-language-server: $schema=./xtask.schema.json'),
+      );
+    });
+  });
+
+  group('the reference quotes the command rather than describing it', () {
+    // the duplicate list, in the repository that exists for the duplicate list.
+    // `usage` in `cli.dart` and the block under "## The command" are the same
+    // list, and when this test was written they had already drifted three ways:
+    // `--parallel` had lost the cost it names, `--why` half of its answer, and
+    // `--validate` and `--check-ci` had swapped places. Each half read
+    // plausibly on its own, which is what makes this drift survive a review.
+    //
+    // `modes` is public so the help cannot forget a flag the parser accepts;
+    // this is the other half of the same promise, for the copy that is not in
+    // the program.
+    test("and it is the parser's own text, line for line", () {
+      final reference = _read(package, 'doc/reference.md');
+      // Two spaces come off, and exactly two: the lines are indented where
+      // they are printed under a `usage:` header, and the document's fence
+      // supplies that header instead. Trimming further would stop comparing
+      // the alignment the block is written for.
+      final printed = [
+        for (final line in usage.skip(1).takeWhile((line) => line.isNotEmpty))
+          line.replaceFirst(RegExp('^  '), ''),
+      ];
+      expect(
+        _fencedBlockAfter(reference, '## The command'),
+        printed,
+        reason:
+            'doc/reference.md and `usage` in cli.dart have drifted. The '
+            'reference quotes the parser — copy the block printed by `xtask` '
+            'with no arguments.',
+      );
+    });
+  });
+
+  group('the run guide shows this engine answering, not a description', () {
+    // Both blocks were wrong, and wrong the way prose about output goes wrong:
+    // `--dry-run check` was shown planning `check` itself, which is a gate set
+    // and never a step, and `--why` was shown printing `check needs lint` — a
+    // shape no gate set can produce, in a document that said two paragraphs
+    // later that there is no composite task.
+    //
+    // Derived, not listed. Writing the members here would be the third copy of
+    // the gate that this file opens by refusing to make.
+
+    /// What doc/running.md shows under somebody typing [command].
+    ///
+    /// By the line typed rather than by a heading: both blocks sit under one
+    /// heading, and `_fencedBlockAfter` answers with the first of them.
+    List<String> shown(String command) {
+      final lines = _read(package, 'doc/running.md').split('\n');
+      final at = lines.indexOf(r'$ ' + command);
+      expect(
+        at,
+        isNonNegative,
+        reason: 'doc/running.md never shows `$command`',
+      );
+      final closed = lines.indexWhere((line) => line.startsWith('```'), at);
+      expect(closed, isNonNegative, reason: 'the block under it is unclosed');
+      return lines.sublist(at + 1, closed);
+    }
+
+    test('the plan it shows is the plan this file makes', () {
+      final planLine = shown(
+        'xtask --dry-run check',
+      ).firstWhere((line) => line.startsWith('plan: '));
+      expect(
+        planLine,
+        'plan: ${planGate(file, 'check').names.join(', ')}',
+        reason:
+            'doc/running.md shows a plan for `check` that this file does not '
+            'make. A gate set is never a step in its own plan.',
+      );
+    });
+
+    test('and the routes it shows are the routes this file has', () {
+      const asked = 'test';
+      expect(
+        shown(
+          'xtask --why $asked',
+        ).where((line) => !line.startsWith(' ')),
+        routesTo(file, asked).keys,
+        reason:
+            'doc/running.md shows entry points for `$asked` that this file '
+            'does not have. `--why` keys a gate set entry as `gate <name>`.',
+      );
+    });
+  });
+
+  group('the summary the run guide shows is the one this engine prints', () {
+    // A run's last lines are what a person reads first, and the document's
+    // copy of them is written by hand: padded columns and marks that a change
+    // to the rendering moves, and a hand-kept copy does not. Rendered here
+    // from the values it shows, so the copy is checked rather than trusted.
+    test('a `--keep-going` run, one row per task and member', () {
+      Duration ms(int n) => Duration(milliseconds: n);
+      final tree = summary((
+        tasks: [
+          Ended('format', Result.passed, took: ms(400)),
+          Ended('analyze', Result.passed, took: ms(2300)),
+          Ended(
+            'test',
+            Result.failed,
+            took: ms(11900),
+            code: 1,
+            members: [
+              Ended('packages/xtask', Result.passed, took: ms(9600)),
+              Ended(
+                'packages/xtask_kit',
+                Result.failed,
+                took: ms(2300),
+                code: 1,
+              ),
+            ],
+          ),
+          const Ended(
+            'publishable',
+            Result.skipped,
+            why: 'needs `test`, which did not pass',
+          ),
+        ],
+        took: ms(14600),
+      ), concurrent: false);
+      expect(
+        _fencedBlocks(_read(package, 'doc/running.md'), 'shell'),
+        contains('${tree.skip(1).join('\n')}\n'),
+        reason:
+            'doc/running.md no longer shows the summary this engine prints '
+            'for that run:\n${tree.join('\n')}',
+      );
+    });
+  });
+
+  // Everything below is asked of every page the package publishes — the
+  // README and each guide under doc/ — because the defects it catches were
+  // found in one page and are just as easy to write in the next. Found by
+  // listing the directory, so a guide added later is checked without anybody
+  // remembering to name it here.
+  group("the documents' own examples are files this engine would accept", () {
+    // Written after both defects in one example: it had no `version:` at all,
+    // and it wrote a glob as a plain list, which is a literal member that
+    // happens to contain a `*`. Neither is visible by reading, and a reader
+    // copying an example out of the README meets both.
+    //
+    // Only blocks declaring `version:` are examined, which is the line
+    // between a FILE and a fragment: the workflow snippet is not an
+    // `xtask.yaml` and the one-task illustrations are not whole ones.
+    // Parsed rather than validated, because an example may name a verb the
+    // project it belongs to registered and this repository has not.
+    test('every complete one parses', () {
+      final docs = _documents(package);
+      final blocks = [
+        for (final MapEntry(key: name, value: text) in docs.entries)
+          for (final block in _fencedBlocks(text, 'yaml'))
+            if (block.startsWith('version:')) (name: name, block: block),
+      ];
+      expect(
+        blocks,
+        hasLength(greaterThan(1)),
+        reason: 'the documents used to carry two whole files; find them again',
+      );
+      for (final (:name, :block) in blocks) {
+        // **Validated, not merely parsed.** Parsing says the shape is right;
+        // `--validate`'s checks are what a reader meets the moment they copy
+        // the block and run the first gate this document tells them to adopt.
+        // The declared-gates rule landed in `--validate` and the flagship
+        // example was left using `gate:` without a `gates:` line, so the
+        // document's own first instruction refused the document's own first
+        // file. Only a check that asks the same question a reader will ask can
+        // catch that.
+        late final XtaskFile file;
+        expect(
+          () => file = parseXtaskFile(block, sourceUrl: Uri.parse(name)),
+          returnsNormally,
+          reason: '$name:\n$block',
+        );
+        final report = validateFile(
+          file,
+          knownVerbs: {
+            ...builtInVerbNames,
+            ...file.tasks.values.map(
+              (task) => task.body is DoBody ? (task.body! as DoBody).verb : '',
+            ),
+          }..remove(''),
+        );
+        expect(report.ok, isTrue, reason: '$name:\n$block\n$report');
+      }
+    });
+  });
+
+  group('and their Dart examples define what they register', () {
+    // The entry point in the README registered two verbs, `regen` and
+    // `publish`, and defined one. Copied out, it does not compile:
+    //
+    //   bin/xtask.dart:10:18: Error: Undefined name 'publish'.
+    //
+    // A reader meeting that has no way to tell whether they mistyped it or
+    // the document is wrong. Checked by reading rather than by compiling,
+    // which would need a scratch package and a `pub get` in the gate: what
+    // went wrong here is a NAME with no declaration, and that is visible in
+    // the text. Asked per document, because a reader copies from one page.
+    test('every verb the entry point hands over is defined nearby', () {
+      var registrations = 0;
+      for (final MapEntry(key: name, value: text) in _documents(
+        package,
+      ).entries) {
+        final dart = _fencedBlocks(text, 'dart').join('\n');
+        for (final registration in RegExp(
+          "'([a-z-]+)': ([a-zA-Z]+)",
+        ).allMatches(dart)) {
+          registrations++;
+          final verb = registration.group(2);
+          expect(
+            dart,
+            contains('Future<int> $verb('),
+            reason:
+                '$name registers `$verb` and never defines it, so the '
+                'example does not compile when it is copied',
+          );
+        }
+      }
+      expect(
+        registrations,
+        isPositive,
+        reason: 'the documents used to show a verb being registered; find it',
+      );
+    });
+  });
+
+  group('and their links point at pages and headings they have', () {
+    // `[Gate sets](#gate-sets-and-what-they-are-for)` outlived the heading it
+    // named by one commit: the section was renamed and the link was not, which
+    // renders as a link that quietly does nothing. Nothing in a markdown file
+    // complains, and a reader who follows it lands at the top of the page and
+    // assumes they missed something. With the material in several pages the
+    // same mistake has a second shape — a page renamed, or a heading moved to
+    // another page — so a link is followed to its file as well as its anchor.
+    test('every one of them', () {
+      final docs = _documents(package);
+      expect(
+        _linkProblems(package, docs),
+        isEmpty,
+        reason: 'a link in the documents leads nowhere',
+      );
+    });
+
+    test('and the front page links every guide', () {
+      // A guide nothing links is one pub.dev never shows anybody: the archive
+      // carries it, and the page a reader arrives on does not say it exists.
+      final docs = _documents(package);
+      final readme = docs['README.md']!;
+      for (final name in docs.keys.where((name) => name != 'README.md')) {
+        expect(
+          readme,
+          contains('($name'),
+          reason: 'README.md does not link `$name`',
+        );
+      }
+    });
+
+    test('and a broken one is found, which is what makes the rest mean '
+        'anything', () {
+      // The check above passing says nothing if it would pass anyway. Each
+      // shape of broken link, in a page of its own.
+      Map<String, String> pages(String link) => {
+        'README.md': '# Top\n\n## A heading\n\n[x]($link)\n',
+        'doc/guide.md': '# Guide\n\n## Its section\n',
+      };
+      expect(_linkProblems(package, pages('#a-heading')), isEmpty);
+      expect(
+        _linkProblems(package, pages('doc/guide.md#its-section')),
+        isEmpty,
+      );
+      for (final broken in [
+        '#no-such-heading',
+        'doc/missing.md',
+        'doc/guide.md#no-such-section',
+        '../../outside.md',
+      ]) {
+        expect(
+          _linkProblems(package, pages(broken)),
+          isNotEmpty,
+          reason: '`$broken` was let through',
+        );
+      }
+    });
+  });
+
+  group('and nothing they mark as shell is unbalanced', () {
+    // The command listing was fenced as ```shell and contained one apostrophe,
+    // in "that gate set's task names". A shell highlighter reads that as the
+    // start of a string and colours everything after it to the end of the
+    // block — so the whole table rendered as one quoted run on pub.dev, while
+    // the markdown itself was perfectly well formed. The fence says `text`
+    // now, because a usage listing is not shell.
+    test('so a stray quote cannot colour a whole block', () {
+      for (final MapEntry(key: name, value: text) in _documents(
+        package,
+      ).entries) {
+        for (final block in _fencedBlocks(text, 'shell')) {
+          for (final quote in ["'", '"']) {
+            expect(
+              quote.allMatches(block).length.isEven,
+              isTrue,
+              reason:
+                  'an odd number of $quote in a shell block in $name, which a '
+                  'highlighter reads as a string that never closes:\n$block',
+            );
+          }
+        }
+      }
+    });
+  });
+
+  group('the version in code is the version in the manifest', () {
+    // The number has to be in `pubspec.yaml` because pub needs it there, and in
+    // code because a compiled entry point has no manifest beside it to read.
+    // The duplicate list is about drift, not about a fact being named twice —
+    // so this is the thing that makes the second mention safe, and it is the
+    // whole reason no generator was written for one line.
+    test('and neither has moved without the other', () {
+      final manifest = File(p.join(package, 'pubspec.yaml')).readAsStringSync();
+      final declared = RegExp(
+        r'^version:\s*(\S+)\s*$',
+        multiLine: true,
+      ).firstMatch(manifest);
+      expect(declared, isNotNull, reason: 'pubspec.yaml has no `version:`');
+      expect(
+        packageVersion,
+        declared!.group(1),
+        reason:
+            'lib/src/version.dart and pubspec.yaml disagree. Change '
+            '`packageVersion` to match the manifest',
+      );
+    });
+  });
+
+  group('the workflow runs gates, not commands', () {
+    // what is left of the CI question, and the one that grows back quietly:
+    // somebody adds `- run: dart analyze` to the workflow instead of a task to
+    // the file, and the two lists start drifting the same afternoon.
+    //
+    // Asked of the TOOL rather than reimplemented here. This test used to walk
+    // the workflow itself, which made it a second answer to the same question
+    // — and a second answer in the guard against second answers.
+    late CiReport report;
+
+    setUpAll(() => report = checkCi(file, root: root));
+
+    test('every shell step is one invocation of one gate set', () {
+      expect(
+        report.problems,
+        isEmpty,
+        reason: report.problems.join('\n'),
+      );
+      expect(report.invocations, isNotEmpty);
+    });
+
+    test("and this repository's own gate is one of them", () {
+      expect(report.invocations.map((i) => i.gate), contains('check'));
+    });
+
+    test('and no gate set is left with no job to run it', () {
+      // True here because there is one gate and one job. In a repository with
+      // human-only entry points it would not be, which is why the tool reports
+      // this rather than refusing it.
+      expect(report.unrun, isEmpty);
+    });
+  });
+}
+
+/// The text of [name], a path from the package root written with `/`.
+String _read(String package, String name) =>
+    File(p.joinAll([package, ...name.split('/')])).readAsStringSync();
+
+/// Every page the package publishes as prose, by its path from the package
+/// root: the README, and each guide under `doc/` — not `doc/research/`, which
+/// `.pubignore` keeps out of the archive.
+Map<String, String> _documents(String package) {
+  final guides =
+      Directory(p.join(package, 'doc'))
+          .listSync()
+          .whereType<File>()
+          .map((file) => 'doc/${p.basename(file.path)}')
+          .where((name) => name.endsWith('.md'))
+          .toList()
+        ..sort();
+  expect(guides, isNotEmpty, reason: 'the guides used to be under doc/');
+  return {
+    for (final name in ['README.md', ...guides]) name: _read(package, name),
+  };
+}
+
+/// [markdown] with every fenced block taken out, so that a `#` comment in a
+/// YAML example is not read as a heading, nor a `](` in Dart as a link.
+String _prose(String markdown) {
+  final kept = <String>[];
+  var fenced = false;
+  for (final line in markdown.split('\n')) {
+    if (line.startsWith('```')) {
+      fenced = !fenced;
+    } else if (!fenced) {
+      kept.add(line);
+    }
+  }
+  return kept.join('\n');
+}
+
+/// The anchors the headings of [markdown] make, by GitHub's rule — the one
+/// pub.dev follows too: lower-case, punctuation but `-` and `_` dropped,
+/// spaces hyphenated.
+Set<String> _anchors(String markdown) => {
+  for (final heading in RegExp(
+    r'^#+ (.+)$',
+    multiLine: true,
+  ).allMatches(_prose(markdown)))
+    heading
+        .group(1)!
+        .toLowerCase()
+        .replaceAll(RegExp('[^a-z0-9 _-]'), '')
+        .replaceAll(' ', '-'),
+};
+
+/// What is wrong with the links in [docs], each as a sentence; empty when
+/// every one leads somewhere.
+///
+/// A link with a scheme is somebody else's page and is not followed. Every
+/// other one is a path from the page it is written in, and must stay inside
+/// the package — pub.dev resolves it against `repository:`, which names the
+/// package's directory, and the archive holds nothing above it — must name a
+/// file that is there, and, where it carries `#`, a heading that page has.
+List<String> _linkProblems(String package, Map<String, String> docs) {
+  final problems = <String>[];
+  for (final MapEntry(key: name, value: text) in docs.entries) {
+    for (final link in RegExp(
+      r'\]\(([^)\s]+)\)',
+    ).allMatches(_prose(text))) {
+      final target = link.group(1)!;
+      if (RegExp('^[a-z][a-z0-9+.-]*:').hasMatch(target)) {
+        continue;
+      }
+      final hash = target.indexOf('#');
+      final path = hash < 0 ? target : target.substring(0, hash);
+      final anchor = hash < 0 ? '' : target.substring(hash + 1);
+      final page = path.isEmpty
+          ? name
+          : p.posix.normalize(p.posix.join(p.posix.dirname(name), path));
+      if (page == '..' || page.startsWith('../')) {
+        problems.add('$name: `$target` leaves the package');
+        continue;
+      }
+      final onDisk = p.joinAll([package, ...page.split('/')]);
+      final String? markdown;
+      if (docs.containsKey(page)) {
+        markdown = docs[page];
+      } else if (FileSystemEntity.typeSync(onDisk) ==
+          FileSystemEntityType.notFound) {
+        problems.add('$name: `$target` names `$page`, which is not there');
+        continue;
+      } else {
+        markdown = page.endsWith('.md')
+            ? File(onDisk).readAsStringSync()
+            : null;
+      }
+      if (anchor.isEmpty) {
+        continue;
+      }
+      if (markdown == null) {
+        problems.add(
+          '$name: `$target` has an anchor into a file of no headings',
+        );
+      } else if (!_anchors(markdown).contains(anchor)) {
+        problems.add(
+          '$name: `$target` — `$page` has no heading making `#$anchor`',
+        );
+      }
+    }
+  }
+  return problems;
+}
+
+/// The lines of the first fenced block after [heading] in [markdown].
+List<String> _fencedBlockAfter(String markdown, String heading) {
+  final lines = markdown.split('\n');
+  final at = lines.indexOf(heading);
+  expect(at, isNonNegative, reason: 'there is no `$heading` section');
+  // Matched by the fence, not by the whole line: a fence may carry a language
+  // (` ```shell `), and looking for a bare ` ``` ` then finds the CLOSING one
+  // and returns the prose after it — which is how this helper failed the first
+  // time somebody labelled the block.
+  final opened = lines.indexWhere((line) => line.startsWith('```'), at) + 1;
+  final closed = lines.indexWhere((line) => line.startsWith('```'), opened);
+  expect(
+    closed,
+    isNonNegative,
+    reason: 'the block under `$heading` is unclosed',
+  );
+  return lines.sublist(opened, closed);
+}
+
+/// Every fenced block in [markdown] tagged with [language], content only.
+List<String> _fencedBlocks(String markdown, String language) {
+  final blocks = <String>[];
+  final lines = markdown.split('\n');
+  for (var at = 0; at < lines.length; at++) {
+    if (lines[at] != '```$language') {
+      continue;
+    }
+    final closed = lines.indexWhere((line) => line.startsWith('```'), at + 1);
+    blocks.add('${lines.sublist(at + 1, closed).join('\n')}\n');
+    at = closed;
+  }
+  return blocks;
+}

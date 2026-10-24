@@ -1,0 +1,792 @@
+/// What an invocation asks for — the grammar of the command line, once.
+///
+/// Once, because the second copy is what this tool exists to remove. Two
+/// readers need the grammar — the command line itself, and `--check-ci`
+/// deciding whether a workflow step is a well-formed invocation — so a step is
+/// checked by being parsed, and what comes back is a value both ask questions
+/// of. Sharing the constants and not the parse is half a fix: the constants
+/// were never the part that drifts.
+library;
+
+import 'dart:io';
+
+/// The file, at the repository root .
+const xtaskFileName = 'xtask.yaml';
+
+/// What an invocation asked for.
+///
+/// Parsed into a value first and acted on second, so that every refusal the
+/// command line implies — two modes at once, a flag that is not one, `--gate`
+/// without the `--list` it narrows — can be asserted without a filesystem, a
+/// plan or a process anywhere near it.
+sealed class Request {
+  const Request();
+}
+
+/// `xtask <task> [-- <args>]` — run it and everything it needs.
+final class RunTask extends Request {
+  const RunTask(
+    this.task, {
+    this.arguments = const [],
+    this.keepGoing = false,
+    this.concurrency = 1,
+    this.only = const {},
+    this.report,
+  });
+
+  final String task;
+
+  /// What followed `--`, for [task]'s body alone.
+  final List<String> arguments;
+
+  /// `--only`: the members of each named set this run is narrowed to.
+  final Narrowing only;
+
+  /// `--keep-going`: report every failure rather than the first.
+  final bool keepGoing;
+
+  /// `-j`: how many tasks may be in flight. 1 is the sequential run.
+  final int concurrency;
+
+  /// `--report`: the file the run is written to as JSON, as it was typed —
+  /// relative to where the command was run.
+  final String? report;
+}
+
+/// `xtask --dry-run <task> [-- <args>]` — print what that would come to .
+final class DryRunTask extends Request {
+  const DryRunTask(
+    this.task, [
+    this.arguments = const [],
+    this.only = const {},
+  ]);
+
+  final String task;
+
+  /// What followed `--`, for [task]'s body alone.
+  final List<String> arguments;
+
+  /// `--only`, as the run it describes would be narrowed.
+  final Narrowing only;
+}
+
+/// What `--only` asked for: per set, the patterns a member has to match to be
+/// kept, in the order they were written.
+///
+/// **On the command line, because the file is the wrong place for it.**
+/// Which packages a run reaches today is one person's question about one
+/// afternoon, and a set edited for it is a set somebody commits. Filtering
+/// in a verb from an environment variable was the other way, and then the
+/// run said `over 17 members` about two, and `--dry-run` printed seventeen.
+typedef Narrowing = Map<String, List<String>>;
+
+/// `xtask --list [--gate <name>]` — every task with its description.
+final class ListTasks extends Request {
+  const ListTasks(this.gate);
+
+  /// The gate set to narrow to, or null for all of them.
+  final String? gate;
+}
+
+/// `xtask --gate-members <name>` — the members of one gate set, one per line.
+///
+/// **A window on the data, not the mechanism.** No pipeline consumes this:
+/// the duplicate list disappears because CI stops naming commands and runs one
+/// task per job, not because something reads this output. That is why
+/// the format is one name per line — right for a person reading, and wrong for
+/// feeding a build matrix, which it is not for.
+final class GateMembers extends Request {
+  const GateMembers(this.gate);
+
+  final String gate;
+}
+
+/// `xtask --check-ci` — does the workflow still run the gate sets (one
+/// invocation per job)?
+final class CheckCi extends Request {
+  const CheckCi();
+}
+
+/// `xtask --validate` — parse and check, run nothing.
+final class Validate extends Request {
+  const Validate();
+}
+
+/// `xtask --why <task>` — what puts that task in a plan.
+final class WhyTask extends Request {
+  const WhyTask(this.task);
+
+  final String task;
+}
+
+/// `xtask --graph [<name>]` — what a gate set or task pulls in, as a tree.
+///
+/// **The other direction from [WhyTask].** `--why` looks up from a task to
+/// whoever pulls it in; this looks down from what somebody types to what it
+/// pulls in, and draws it without running or resolving a body.
+final class ShowGraph extends Request {
+  const ShowGraph([this.name]);
+
+  /// The gate set or task to draw, or null for every gate set and then the
+  /// tasks none of them reaches.
+  final String? name;
+}
+
+/// `xtask --version` — print which engine this is.
+///
+/// Answered without a file, for the same reason as [EmitSchema]: it is a fact
+/// about the engine. It is also the first thing a bug report needs, which is
+/// no use if it only works in a directory that already works.
+final class ShowVersion extends Request {
+  const ShowVersion();
+}
+
+/// `xtask --emit-schema` — print the JSON Schema for the file format.
+///
+/// **The one request that does not want a file.** It describes what an
+/// `xtask.yaml` may contain, which is a fact about the engine and not about
+/// any repository — so it is answered before the file is looked for, and works
+/// in a directory that has none. That is the point: it is how a repository
+/// gets its first one.
+final class EmitSchema extends Request {
+  const EmitSchema();
+}
+
+/// `xtask --check-schema <path>` — is the file at [path] the schema this
+/// engine emits?
+///
+/// **Checking, and only checking.** Writing the file stays a person's act —
+/// `--emit-schema > xtask.schema.json` — but a project that commits the copy
+/// its editor reads had nothing to notice it falling behind after an engine
+/// upgrade: this repository compares its own in a test, through a function no
+/// other project can reach. A task can run this; it cannot run a redirect.
+final class CheckSchema extends Request {
+  const CheckSchema(this.path);
+
+  /// The committed copy, relative to where the command was run.
+  final String path;
+}
+
+/// `xtask --names` — every gate set, task and set the file declares, one per
+/// line, for a completion script to read.
+///
+/// **A window on the file for a program, where `--list` is one for a
+/// person.** Tab-separated and unaligned, with the kind first, so a script
+/// can tell a gate set from a task without knowing the file.
+final class ListNames extends Request {
+  const ListNames();
+}
+
+/// `xtask --completion <shell>` — print a completion script for [shell].
+///
+/// Answered without a file, as `--emit-schema` is: the script is the same
+/// for every repository and asks `--names` for what this one declares.
+final class ShowCompletion extends Request {
+  const ShowCompletion(this.shell);
+
+  /// One of `completionShells`.
+  final String shell;
+}
+
+/// The usage text, printed on request and as the error message.
+final class ShowUsage extends Request {
+  const ShowUsage([this.problem]);
+
+  /// What was wrong with the invocation, or null when the usage was asked for.
+  final String? problem;
+}
+
+/// The modes, exactly the usage's list.
+///
+/// Public because the usage text has to name every one of them, and a test
+/// that checked it against a list of its own would be a third copy of this —
+/// drift between the parser and its own help being the sort that survives
+/// review, since both halves read plausibly on their own.
+const modes = {
+  '--check-ci',
+  '--list',
+  '--why',
+  '--graph',
+  '--gate-members',
+  '--validate',
+  '--dry-run',
+  '--emit-schema',
+  '--check-schema',
+  '--names',
+  '--completion',
+  '--version',
+};
+
+/// The options that are not modes: how a run happens, or what `--list`
+/// narrows to. With [modes], every option the usage names.
+const runOptions = {'--gate', '--keep-going', '--jobs', '--only', '--report'};
+
+/// The options in [runOptions] that take a value after them.
+const runOptionsTakingAValue = {'--gate', '--jobs', '--only', '--report'};
+
+/// The shells `--completion` writes a script for.
+const completionShells = ['bash', 'zsh', 'fish'];
+
+/// The modes that want a name after them, and refuse an empty one.
+///
+/// The rest take none, and the sentence for those is that they take none.
+/// Public because a completion script has to know what follows each one.
+const modesTakingAName = {
+  '--why',
+  '--gate-members',
+  '--dry-run',
+  '--check-schema',
+  '--completion',
+};
+
+/// The modes that may be given a name and may be given none.
+///
+/// Apart from [modesTakingAName] because bare is a request of its own —
+/// `--graph` alone draws every gate set — and yet written with an `=`, a
+/// name was meant, so `--graph=` is refused as a missing one.
+const modesTakingAnOptionalName = {'--graph'};
+
+/// How wide `-j auto` may go, whatever the machine is.
+///
+/// **A job here is a whole toolchain.** One unit is a `dart test` or a `dart
+/// analyze`, each already multi-threaded and each holding an analysis server.
+/// On a 32-core workstation, one per core is 32 of them.
+const autoJobsCap = 8;
+
+/// How many processors this machine has.
+///
+/// **A parameter, not a reading, and the doc comment above is why.** This
+/// function promises an invocation becomes a value with nothing ambient
+/// touched, and `-j auto` was the one line that broke the promise: the same
+/// arguments produced a different [RunTask] on a different machine, and the
+/// cap could not be proved to fire from a machine narrower than the cap.
+int hostProcessors() => Platform.numberOfProcessors;
+
+/// What [args] asked for, or a [ShowUsage] naming what was wrong with it.
+///
+/// Hand-written rather than configured into a general parser: the grammar is
+/// six lines and closed, and what matters about it is the refusals, which are
+/// easier to state exactly than to arrange. Both spellings of the narrowing
+/// flag — `--gate=name` and `--gate name` — are accepted, because both are
+/// what people type.
+Request parseArguments(
+  List<String> args, {
+  int Function() processors = hostProcessors,
+}) {
+  if (args.isEmpty) {
+    return const ShowUsage('nothing to do');
+  }
+
+  final written = <String>[];
+  final operands = <String>[];
+  String? gate;
+  var narrowed = false;
+  var keepGoing = false;
+  var concurrency = 1;
+  var jobsWritten = false;
+  final only = <String, List<String>>{};
+  String? report;
+
+  final passed = <String>[];
+  var separated = false;
+
+  final rest = [...args];
+  while (rest.isNotEmpty) {
+    final argument = rest.removeAt(0);
+
+    // **Everything after it is taken as written, options included.** That is
+    // the whole point of the separator: `xtask test -- --name x` has to reach
+    // the body with `--name` intact, and a parser that kept looking at these
+    // would refuse the first one it did not recognise.
+    if (argument == '--') {
+      separated = true;
+      passed.addAll(rest);
+      rest.clear();
+      continue;
+    }
+
+    if (argument == '--help' || argument == '-h') {
+      return const ShowUsage();
+    }
+
+    if (argument == '--gate' || argument.startsWith('--gate=')) {
+      narrowed = true;
+      gate = argument.startsWith('--gate=')
+          ? argument.substring('--gate='.length)
+          : rest.isNotEmpty && !rest.first.startsWith('-')
+          ? rest.removeAt(0)
+          : null;
+      if (gate == null || gate.isEmpty) {
+        return const ShowUsage('`--gate` needs the name of a gate set');
+      }
+      continue;
+    }
+
+    if (argument == '--only' || argument.startsWith('--only=')) {
+      final asked = argument == '--only'
+          ? rest.isNotEmpty && !rest.first.startsWith('-')
+                ? rest.removeAt(0)
+                : null
+          : argument.substring('--only='.length);
+      final refusal = _narrowingRefusal(asked);
+      if (refusal != null) {
+        return ShowUsage(refusal);
+      }
+      final at = asked!.indexOf('=');
+      // Written twice for one set, the patterns add up: the second says
+      // which more members to keep, never which of the first to drop.
+      only
+          .putIfAbsent(asked.substring(0, at), () => [])
+          .addAll(_patterns(asked.substring(at + 1)));
+      continue;
+    }
+
+    if (argument == '--keep-going') {
+      keepGoing = true;
+      continue;
+    }
+
+    if (argument == '--report' || argument.startsWith('--report=')) {
+      report = argument == '--report'
+          ? rest.isNotEmpty && !rest.first.startsWith('-')
+                ? rest.removeAt(0)
+                : null
+          : argument.substring('--report='.length);
+      if (report == null || report.isEmpty) {
+        return const ShowUsage(
+          '`--report` needs the file to write the run to, such as '
+          '`--report run.json`',
+        );
+      }
+      continue;
+    }
+
+    // **`-j N`, in every spelling make and cargo and xargs already taught.**
+    // `--parallel` read as a boolean and behaved as a number: bare, it meant
+    // "as many as this machine has processors", so `--parallel 2` was a task
+    // called `2` and needed a refusal of its own to explain its own syntax. A
+    // flag that has to do that has the wrong syntax.
+    if (argument == '-j' ||
+        argument == '--jobs' ||
+        argument.startsWith('-j') ||
+        argument.startsWith('--jobs=')) {
+      // Named `asked` rather than `written`: the enclosing `written` is the
+      // list of modes, and shadowing it here made it unreachable by its own
+      // name inside this block.
+      final asked = switch (argument) {
+        '-j' || '--jobs' => rest.isNotEmpty ? rest.removeAt(0) : null,
+        final a when a.startsWith('--jobs=') => a.substring('--jobs='.length),
+        final a => a.substring(2),
+      };
+      if (asked == null || asked.isEmpty) {
+        return const ShowUsage(
+          '`-j` needs a number of jobs, or `auto`. Bare, it would have to mean '
+          'something, and every number a machine could pick is wrong on some '
+          'other machine',
+        );
+      }
+      jobsWritten = true;
+      if (!isAJobCount(asked)) {
+        return ShowUsage(
+          '`-j $asked` is not a number of jobs. Write `-j <n>` with n at '
+          'least 1, or `-j auto`',
+        );
+      }
+      if (asked == 'auto') {
+        final available = processors();
+        concurrency = available < autoJobsCap ? available : autoJobsCap;
+        continue;
+      }
+      concurrency = int.parse(asked);
+      continue;
+    }
+
+    if (modes.contains(argument)) {
+      written.add(argument);
+      continue;
+    }
+
+    // **Both spellings, because `--gate` already took both.** A person who
+    // learns `--gate=check` from the usage line writes `--why=test` next, and
+    // "not an option xtask has" would deny the flag exists rather than name
+    // the form it wants. The value joins the operands, where the mode below
+    // reads it as if it had been written as its own word.
+    final joined = modes.firstWhere(
+      (mode) => argument.startsWith('$mode='),
+      orElse: () => '',
+    );
+    if (joined.isNotEmpty) {
+      written.add(joined);
+      final value = argument.substring(joined.length + 1);
+      // **Refused here for every mode, in the mode's own terms.** `--why=`
+      // names nothing, and `--list=` joins a value to a mode that takes none.
+      // An empty value is a mistake in both cases; what differs is which
+      // mistake, and neither is "there is no task called ``".
+      if (value.isEmpty) {
+        return ShowUsage(
+          modesTakingAName.contains(joined) ||
+                  modesTakingAnOptionalName.contains(joined)
+              ? '`$joined` needs a name after it, and there is nothing after '
+                    'the `=`'
+              : '`$joined` takes no name, so there is nothing for the `=` to '
+                    'join to it',
+        );
+      }
+      operands.add(value);
+      continue;
+    }
+
+    if (argument.startsWith('-')) {
+      return ShowUsage('`$argument` is not an option xtask has');
+    }
+
+    operands.add(argument);
+  }
+
+  if (written.length > 1) {
+    return ShowUsage(
+      '`${written[0]}` and `${written[1]}` ask for different things; '
+      'write one',
+    );
+  }
+
+  final mode = written.isEmpty ? null : written.single;
+
+  if (narrowed && mode != '--list') {
+    // `--gate` is a modifier, not a mode: written without `--list` it has to
+    // be answered rather than quietly ignored or listed past.
+    return const ShowUsage(
+      '`--gate` narrows `--list`. For the members of one gate set on their '
+      'own, write `--gate-members <name>`',
+    );
+  }
+
+  if (jobsWritten && mode != null) {
+    // **Whether it was WRITTEN, not what it came to.** Testing the number
+    // would let `--list -j 1` through in silence, and make `--list -j auto` a
+    // refusal on an eight-core machine and an acceptance on a one-core runner
+    // — the same command line answering differently depending on the host.
+    return ShowUsage(
+      '`-j` is about a run, and `$mode` does not run anything',
+    );
+  }
+
+  if (only.isNotEmpty && mode != null && mode != '--dry-run') {
+    // A set is expanded by a run, and `--dry-run` is the same expansion
+    // printed. Every other mode answers from the file without expanding
+    // one — what `--why` says reaches a task does not depend on its members.
+    return ShowUsage(
+      '`--only` narrows the sets a run expands, and `$mode` expands none',
+    );
+  }
+
+  if (report != null && mode != null) {
+    // `--dry-run` included: it resolves a plan and runs none of it, and a
+    // report of a run that did not happen is one a program would read as a
+    // run in which nothing did.
+    return ShowUsage(
+      '`--report` writes what a run came to, and `$mode` does not run '
+      'anything',
+    );
+  }
+
+  if (keepGoing && mode != null) {
+    // It changes what a RUN does when something fails, and none of the modes
+    // run anything. `--validate` in particular already collects every problem
+    // it can find, which is the argument this flag borrows.
+    return ShowUsage(
+      '`--keep-going` is about a run, and `$mode` does not run anything',
+    );
+  }
+
+  if (separated && mode != null && mode != '--dry-run') {
+    // Only a body can take arguments, and only running or resolving one
+    // reaches a body. `--list -- --name x` has nothing to hand them to, and
+    // arguments that reach nothing are the silence this tool exists against.
+    return ShowUsage(
+      '`$mode` does not run anything, so there is nothing for the arguments '
+      'after `--` to be arguments to',
+    );
+  }
+
+  if (mode == '--list') {
+    return operands.isEmpty
+        ? ListTasks(gate)
+        : ShowUsage(
+            '`--list` takes no task name — to narrow it, write '
+            '`--list --gate <name>`, and it was given `${operands.first}`',
+          );
+  }
+
+  if (mode == '--version') {
+    return operands.isEmpty
+        ? const ShowVersion()
+        : ShowUsage(
+            '`--version` says which engine this is and takes nothing else, '
+            'and it was given `${operands.first}`',
+          );
+  }
+
+  if (mode == '--emit-schema') {
+    return operands.isEmpty
+        ? const EmitSchema()
+        : ShowUsage(
+            '`--emit-schema` describes the file format and takes nothing '
+            'else, and it was given `${operands.first}`',
+          );
+  }
+
+  if (mode == '--check-schema') {
+    return operands.length == 1
+        ? CheckSchema(operands.single)
+        : ShowUsage(
+            operands.isEmpty
+                ? '`--check-schema` compares one file with the schema this '
+                      'engine emits — write its path after it'
+                : '`--check-schema` compares one file, and it was given '
+                      '${operands.length}',
+          );
+  }
+
+  if (mode == '--names') {
+    return operands.isEmpty
+        ? const ListNames()
+        : ShowUsage(
+            '`--names` lists the whole file and takes no name, and it was '
+            'given `${operands.first}`',
+          );
+  }
+
+  if (mode == '--completion') {
+    if (operands.length != 1) {
+      return ShowUsage(
+        '`--completion` writes the script for one shell — '
+        '${_shells()}',
+      );
+    }
+    final shell = operands.single;
+    return completionShells.contains(shell)
+        ? ShowCompletion(shell)
+        : ShowUsage(
+            '`--completion $shell` is not a shell it writes for — '
+            '${_shells()}',
+          );
+  }
+
+  if (mode == '--check-ci') {
+    return operands.isEmpty
+        ? const CheckCi()
+        : ShowUsage(
+            '`--check-ci` checks the whole workflow and takes no name, and it '
+            'was given `${operands.first}`',
+          );
+  }
+
+  if (mode == '--validate') {
+    return operands.isEmpty
+        ? const Validate()
+        : ShowUsage(
+            '`--validate` checks the whole file and takes no task name, and '
+            'it was given `${operands.first}`',
+          );
+  }
+
+  if (mode == '--why') {
+    return operands.length == 1
+        ? WhyTask(operands.single)
+        : const ShowUsage('`--why` needs the name of one task');
+  }
+
+  if (mode == '--graph') {
+    return switch (operands) {
+      [] => const ShowGraph(),
+      [final name] => ShowGraph(name),
+      _ => ShowUsage(
+        '`--graph` draws one gate set or task, or every gate set when given '
+        'none, and it was given '
+        '${operands.map((o) => '`$o`').join(' and ')}',
+      ),
+    };
+  }
+
+  if (mode == '--gate-members') {
+    return operands.length == 1
+        ? GateMembers(operands.single)
+        : const ShowUsage('`--gate-members` needs the name of one gate set');
+  }
+
+  if (mode == '--dry-run') {
+    return operands.length == 1
+        ? DryRunTask(operands.single, passed, Map.unmodifiable(only))
+        : const ShowUsage('`--dry-run` needs one task to resolve');
+  }
+
+  if (operands.isEmpty && separated) {
+    return const ShowUsage(
+      'the arguments after `--` belong to one task, and no task was named',
+    );
+  }
+
+  if (operands.isEmpty) {
+    // **Its own branch, because the other one has nothing to name.**
+    // `xtask --keep-going` and `xtask -j 2` name no task, and "it was given"
+    // with an empty list to interpolate is a sentence that stops mid-way.
+    return const ShowUsage(
+      'a run needs the name of one task. `--keep-going`, `-j`, `--only` and '
+      '`--report` say how a run happens, not what it runs — `xtask --list` '
+      'shows what there is',
+    );
+  }
+  return operands.length == 1
+      ? RunTask(
+          operands.single,
+          arguments: passed,
+          keepGoing: keepGoing,
+          concurrency: concurrency,
+          only: Map.unmodifiable(only),
+          report: report,
+        )
+      : ShowUsage(
+          'xtask runs one task at a time, and it was given '
+          '${operands.map((o) => '`$o`').join(' and ')}',
+        );
+}
+
+/// The `--report` [args] asked for, read without the rest of the grammar,
+/// and the task they named where they named one; null where they asked for
+/// none.
+///
+/// **For a command line [parseArguments] refused.** A report asked for and
+/// not written leaves the last run's in its place, which reads to whatever
+/// waits on it as this run's answer — green, for a run that never happened.
+/// So the path is looked for in a command line that is not otherwise
+/// understood: `--report <path>` or `--report=<path>`, the last one written,
+/// as the parser keeps it. Only before `--`: after it, the words are a
+/// task's.
+///
+/// The task is the one operand where there is exactly one and no mode was
+/// written; anything else names no run, and a report that guessed one would
+/// be a report about a run nobody asked for.
+({String path, String? task})? reportAskedIn(List<String> args) {
+  String? path;
+  final operands = <String>[];
+  var mode = false;
+  final rest = args.takeWhile((argument) => argument != '--').toList();
+  while (rest.isNotEmpty) {
+    final argument = rest.removeAt(0);
+    if (argument.startsWith('--report=')) {
+      final written = argument.substring('--report='.length);
+      path = written.isEmpty ? path : written;
+    } else if (argument == '-j' || argument == '--jobs') {
+      // The parser takes the next word whatever it is.
+      if (rest.isNotEmpty) {
+        rest.removeAt(0);
+      }
+    } else if (runOptionsTakingAValue.contains(argument)) {
+      if (rest.isNotEmpty && !rest.first.startsWith('-')) {
+        final value = rest.removeAt(0);
+        if (argument == '--report') {
+          path = value;
+        }
+      }
+    } else if (modes.contains(argument) ||
+        modes.any((name) => argument.startsWith('$name='))) {
+      mode = true;
+    } else if (!argument.startsWith('-')) {
+      operands.add(argument);
+    }
+  }
+  if (path == null) {
+    return null;
+  }
+  return (
+    path: path,
+    task: !mode && operands.length == 1 ? operands.single : null,
+  );
+}
+
+/// [written] split into patterns at each comma outside braces.
+///
+/// **Not at every comma**, because a glob set's own patterns take braces and
+/// `--only` reads the same patterns: `packages/{core,cli}` is one pattern
+/// for two packages, and split at its comma it was two broken ones.
+List<String> _patterns(String written) {
+  final patterns = <String>[];
+  var depth = 0;
+  var start = 0;
+  for (var at = 0; at < written.length; at++) {
+    switch (written[at]) {
+      case '{':
+        depth++;
+      case '}' when depth > 0:
+        depth--;
+      case ',' when depth == 0:
+        patterns.add(written.substring(start, at));
+        start = at + 1;
+    }
+  }
+  return patterns..add(written.substring(start));
+}
+
+/// Why [written] is not `<set>=<pattern>[,<pattern>…]`, or null when it is.
+String? _narrowingRefusal(String? written) {
+  const shape = 'write `--only <set>=<pattern>,<pattern>`';
+  if (written == null || written.isEmpty) {
+    return '`--only` needs a set and the members to keep — $shape';
+  }
+  final at = written.indexOf('=');
+  if (at < 0) {
+    return '`--only $written` names no members to keep — $shape';
+  }
+  if (at == 0) {
+    return '`--only $written` names no set — $shape';
+  }
+  // An empty pattern would keep nothing, which is either a typo or a run
+  // that does nothing on purpose; neither is something to guess between.
+  if (_patterns(written.substring(at + 1)).any((p) => p.isEmpty)) {
+    return '`--only $written` has an empty pattern — $shape';
+  }
+  return null;
+}
+
+String _shells() => 'write one of ${completionShells.join(', ')}';
+
+/// Whether [written] is a number of jobs this parser would accept.
+bool isAJobCount(String written) =>
+    written == 'auto' || (int.tryParse(written) ?? 0) >= 1;
+
+/// The modes, and the message a refused invocation prints.
+const usage = [
+  'usage:',
+  '  xtask <task>                 run a task and everything it needs',
+  '  xtask <task> -- <args>       and pass those arguments to its body',
+  '  xtask <task> --keep-going    report every failure, not just the first —',
+  '                               across tasks and across an `each:`',
+  '  xtask <task> -j <n>          run n at once — which costs seeing their',
+  '                               output as it arrives. `-j auto` picks one',
+  '  xtask <task> --only <set>=<pattern>,…',
+  '                               only the members of that set a pattern',
+  '                               matches, wherever an `each:` or `all:`',
+  '                               names it; with --dry-run too',
+  '  xtask <task> --report <file> write what each task came to there, as',
+  '                               JSON — as it goes, and on a failure',
+  '  xtask --list                 every task, grouped under its gate set,',
+  '                               in the order `gates:` declares',
+  '  xtask --list --gate <name>   only the tasks in that gate set',
+  '  xtask --gate-members <name>  the tasks in that gate set, one per line',
+  '  xtask --why <task>           what puts that task in a plan, and by which',
+  '                               `needs:` or `then:`',
+  '  xtask --graph [<name>]       what that gate set or task pulls in, as',
+  '                               a tree; with no name, every gate set',
+  '  xtask --validate             parse and check the file; run nothing',
+  '  xtask --check-ci             does the CI file still run the gate sets?',
+  '  xtask --dry-run <task>       print the resolved plan; run nothing',
+  '  xtask --emit-schema          print the JSON Schema for this file format',
+  '  xtask --check-schema <path>  does that file match --emit-schema?',
+  '  xtask --names                every gate set, task and set, one per line',
+  '                               and tab-separated — what completion reads',
+  '  xtask --completion <shell>   a completion script for bash, zsh or fish',
+  '  xtask --version              print which engine this is',
+  '',
+  'the file is `$xtaskFileName`, at the repository root.',
+];

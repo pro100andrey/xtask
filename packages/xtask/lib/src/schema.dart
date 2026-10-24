@@ -1,0 +1,532 @@
+/// The JSON Schema an editor reads — `--emit-schema`.
+///
+/// `--validate` answers when it is called; a schema answers while somebody
+/// types, completing a task's keys and underlining `dsec:` before anything
+/// runs. It cannot reach anything needing the graph or the filesystem — a
+/// cycle, a dangling `needs:`, an unregistered verb — which stay with
+/// `--validate`. A schema catches a mistyped KEY; `--validate` catches a
+/// mistyped NAME.
+///
+/// A projection of `model.dart`, checked against it: the key names are read
+/// from [taskKeys], [topLevelKeys], [globSetKeys], [valueSetKeys] and
+/// [bodyKeys], and what is written here is one shape and one sentence per key.
+/// [checkedProperties] refuses to emit anything if that table has drifted from
+/// the set it describes.
+library;
+
+import 'dart:convert';
+
+import 'model.dart';
+
+/// The schema for this engine's file format, as text, ending in a newline.
+///
+/// Printed by `xtask --emit-schema`, and meant to be redirected:
+///
+/// ```
+/// dart run :xtask --emit-schema > xtask.schema.json
+/// ```
+///
+/// **That redirect is a person's shell, and it has to be.** A task cannot do
+/// it: `>` is shell, and a task's description contains none. So the
+/// generated file is committed and a gate compares it against this — writing
+/// is somebody's deliberate act, checking is the gate's.
+String xtaskJsonSchema() =>
+    '${const JsonEncoder.withIndent('  ').convert(_document)}\n';
+
+/// Whether [text] — a committed copy — is [xtaskJsonSchema].
+///
+/// **One comparison, for `--check-schema` and for this repository's own test
+/// alike.** Line endings and a trailing newline are not differences: a
+/// checkout with `autocrlf`, or a redirect that adds a newline of its own,
+/// holds the same schema, and a gate that went red over either would be
+/// re-run until somebody stopped reading it.
+bool isCurrentSchema(String text) =>
+    _normalised(text) == _normalised(xtaskJsonSchema());
+
+String _normalised(String text) => text.replaceAll('\r\n', '\n').trimRight();
+
+/// Draft 07, because it is what the editors that read this actually implement.
+const _draft = 'http://json-schema.org/draft-07/schema#';
+
+Map<String, Object?> get _document => {
+  r'$schema': _draft,
+  'title': 'xtask.yaml',
+  'description':
+      'A task runner whose tasks are data. This schema describes the SHAPE of '
+      'the file. Whether it is coherent — no cycle, no name pointing at '
+      'nothing, no set matching nothing — is what `xtask --validate` answers, '
+      'and it is not answerable here.',
+  'type': 'object',
+  'additionalProperties': false,
+  // `version:` alone. The parser accepts a file with no `tasks:` and no
+  // `sets:`, and a schema stricter than the engine underlines a file that
+  // runs.
+  'required': ['version'],
+  'properties': checkedProperties(topLevelKeys, _topLevel, 'top-level key'),
+};
+
+/// The top level, the top level.
+Map<String, Map<String, Object?>> get _topLevel => {
+  'version': {
+    'type': 'integer',
+    // From the engine's own constant. An unknown version is a hard refusal,
+    // never a best-effort read, so the schema says the same thing.
+    'const': supportedVersion,
+    'description':
+        'Required. The only version this engine reads; an unknown one is '
+        'refused rather than read as best it can.',
+  },
+  'entry': {
+    'type': 'string',
+    'pattern': r'^[^\\]+\.dart$',
+    'description':
+        "The project's entry point — the Dart file calling `runXtask` with "
+        "this project's verbs — from the root, with `/`. The installed "
+        '`xtask` hands a run to it. Leave it out for `bin/xtask.dart`.',
+  },
+  'secret-env': {
+    'type': 'array',
+    'items': _envName,
+    'description':
+        'Variables whose values the engine prints as `***` — in `--dry-run`, '
+        'a failure, an annotation, a refusal and the `--report` file — with '
+        "the value this machine has and any a task's `env:` gives it. On "
+        'GitHub Actions each is also handed to `::add-mask::` before a run '
+        'prints anything. A value shorter than 4 characters is not masked. '
+        'What a body prints itself is not filtered.',
+  },
+  'gates': {
+    'type': 'array',
+    'items': _name,
+    'minItems': 1,
+    'uniqueItems': true,
+    'description':
+        'Every gate set this file has, in the order a report groups by. Names '
+        'only — a gate set is not a task and has nothing to describe. '
+        'A gate set is run by being named — `xtask check`. Declaring them '
+        'is what makes a misspelled `gate:` a refusal rather than a new gate '
+        'set nobody runs.',
+  },
+  'sets': {
+    'type': 'object',
+    'description':
+        "Named lists and globs, referenced by a task's `each:` or `all:`. A "
+        'set that expands to nothing is an error: a task given no files '
+        'checked nothing.',
+    'propertyNames': _name,
+    'additionalProperties': _set,
+  },
+  'tasks': {
+    'type': 'object',
+    'description':
+        'The graph. Declaration order is meaningful: a gate set runs its tasks '
+        'in the order they appear here, except where a `needs:` or a `then:` '
+        'puts one of them after another.',
+    'propertyNames': _name,
+    'additionalProperties': _task,
+  },
+};
+
+/// A name, as the parser reads one: not empty, and one line.
+///
+/// **Value-level, where this file is otherwise about shape.** The parser
+/// refuses both — a name is what a report prints and what something else
+/// writes to reach it, and `--gate-members` writes one per line — so an editor
+/// that accepted a name with a newline in it offered a file the engine turns
+/// down, which is the one thing this projection exists not to do.
+const _name = <String, Object?>{
+  'type': 'string',
+  'minLength': 1,
+  // One line, and not blank. The parser refuses both — a name of spaces is a
+  // name a report prints as nothing — and the schema said only "not empty",
+  // so an editor accepted `  ` where the engine turns it down.
+  'pattern': r'^[^\r\n]*\S[^\r\n]*$',
+};
+
+/// An environment variable name, which is a name and also may not hold `=`.
+///
+/// `=` is what separates a name from its value in the environment a child is
+/// handed, so the parser refuses one holding it. Without this the schema
+/// offered `A=B` as a key.
+const _envName = <String, Object?>{
+  'type': 'string',
+  'minLength': 1,
+  'pattern': r'^[^\r\n=]*\S[^\r\n=]*$',
+};
+
+/// A named set, sets: a list of paths, a glob with exclusions, or values
+/// that are not paths at all.
+Map<String, Object?> get _set => {
+  'oneOf': [
+    {
+      'type': 'array',
+      'items': {'type': 'string'},
+      'minItems': 1,
+      'description': 'The members, written out.',
+    },
+    {
+      'type': 'object',
+      'additionalProperties': false,
+      'required': ['include'],
+      'properties': checkedProperties(globSetKeys, _globSet, 'glob set key'),
+      'description':
+          'Globs, expanded by the engine rather than by a shell, in a '
+          'deterministic order.',
+    },
+    {
+      'type': 'object',
+      'additionalProperties': false,
+      'required': ['values'],
+      'properties': checkedProperties(valueSetKeys, _valueSet, 'value set key'),
+      'description':
+          'Members that are not paths — flavours, platforms, SDK versions. '
+          'Not checked against the repository root and never matched on disk.',
+    },
+  ],
+};
+
+const _valueSet = <String, Map<String, Object?>>{
+  'values': {
+    'type': 'array',
+    'items': {'type': 'string'},
+    'minItems': 1,
+    'description':
+        'The members, written out. Whatever they name, it is not a path.',
+  },
+};
+
+const _globSet = <String, Map<String, Object?>>{
+  'include': {
+    'type': 'array',
+    'items': {'type': 'string'},
+    'minItems': 1,
+    'description':
+        'Patterns, relative to the repository root. `**/` means NONE or more '
+        'directories, as bash and git read it — so `packages/**/x` finds '
+        '`packages/x` too.',
+  },
+  'produced-by': {
+    'type': 'string',
+    'minLength': 1,
+    'description':
+        "The task that makes this set's members. A set is read when the task "
+        'naming it is about to run, so `--validate` and `--dry-run` see a '
+        'different moment; naming the producer buys exactly one thing — the '
+        'emptiness of this set is not judged before that task has run. Every '
+        'task reading the set has to reach the producer through `needs:`, '
+        'and a run still refuses the set empty.',
+  },
+  'exclude': {
+    'type': 'array',
+    'items': {'type': 'string'},
+    'description': 'Patterns removed from what `include:` matched.',
+  },
+  'containing': {
+    'type': 'array',
+    'items': {'type': 'string', 'minLength': 1},
+    'minItems': 1,
+    'description':
+        'Paths, relative to a member, that a member must hold to stay one — '
+        '`[pubspec.yaml]`, `[test]`. Paths only, never patterns, and never a '
+        'question about what a file says. A set this leaves empty is refused '
+        'as any empty set is.',
+  },
+};
+
+/// A task, a task's keys.
+Map<String, Object?> get _task => {
+  'type': 'object',
+  'additionalProperties': false,
+  'required': ['desc'],
+  // The refusals that read one key against another, as the parser makes them
+  // — spelled from [bodyKeys] rather than from a repetition of them.
+  'allOf': [
+    {
+      'not': {'required': bodyKeys.toList()},
+      r'$comment': 'a task has one body or none, never two',
+    },
+    {
+      'not': {
+        'required': ['all', 'each'],
+      },
+      r'$comment':
+          '`each:` runs the body once per member and `all:` once for all of '
+          'them; a task is one or the other',
+    },
+    {
+      // Only a process can be stopped from outside or given a deadline: a
+      // verb is a Dart function, and no body leaves nothing to stop.
+      'if': {
+        'not': {
+          'required': ['run'],
+        },
+      },
+      'then': {
+        'not': {
+          'anyOf': [
+            {
+              'required': ['timeout'],
+            },
+            {
+              'required': ['interruptible'],
+              'properties': {
+                'interruptible': {'const': true},
+              },
+            },
+          ],
+        },
+      },
+      r'$comment':
+          '`timeout:` and `interruptible: true` need a `run:` body to act on',
+    },
+  ],
+  'properties': checkedProperties(taskKeys, _taskKeys, 'task key'),
+};
+
+const _strings = <String, Object?>{
+  'type': 'array',
+  'items': {'type': 'string'},
+};
+
+/// A list of names another key resolves — `needs:`, `then:`, `gate:`,
+/// `exclusive:` — none of which may be blank. The parser refuses a blank
+/// entry in each, and the schema offered one as a plain string.
+const _nameList = <String, Object?>{
+  'type': 'array',
+  'items': {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
+};
+
+// **Alphabetical, and that is not cosmetic.** This table must not be what
+// decides the order of the emitted file: `checkedProperties` imposes the
+// engine's own order, and writing this one in the engine's order too would
+// make the test that says so pass whether it did or not.
+const _taskKeys = <String, Map<String, Object?>>{
+  'all': {
+    // A set's name, read as one: `all: ''` is refused by the parser and was
+    // offered here.
+    ..._name,
+    'description':
+        r'A set whose members replace the `$all` marker in `run:` or `args:`, '
+        'in one invocation. The marker is a whole argument and appears once.',
+  },
+  'alone': {
+    'type': 'boolean',
+    'description':
+        'Whether this task runs with nothing else running at all. Under `-j` '
+        'the run waits for what it has started to end, runs this, and starts '
+        'nothing until it has ended — a benchmark, which shares the machine '
+        'rather than one nameable thing. Its `each:` members run one at a '
+        'time.',
+  },
+  'args': {
+    ..._strings,
+    'description': 'Extra arguments appended to the body.',
+  },
+  'desc': {
+    // A name's own rule: not blank, and one line — which the parser has always
+    // asked of a description and this said nothing about, so a `desc:` broken
+    // over two lines passed here and was refused by the engine.
+    ..._name,
+    'description':
+        'Required, one line, and what `--list` prints — so that a task cannot '
+        'be added without saying what it is for.',
+  },
+  'do': {
+    'type': 'string',
+    'minLength': 1,
+    // Not blank: `do: '  '` names no verb, and the parser says so.
+    'pattern': r'\S',
+    'description':
+        'A verb: `remove`, or one this project registered in its own '
+        '`bin/xtask.dart`. The engine ships no project verbs.',
+  },
+  'each': {
+    // A set's name, as `all:` is.
+    ..._name,
+    'description':
+        'A set whose members the body runs once per, with '
+        r'`$each` standing for the member — a whole argument, or the end of '
+        r'one: `packages/$each`. Nothing may follow it. A failure names the '
+        'member; without `--keep-going` no further member is STARTED, so at '
+        '`-j 1` it stops the rest and above that it stops what had not begun.',
+  },
+  'env': {
+    'type': 'object',
+    'propertyNames': _envName,
+    'additionalProperties': {'type': 'string'},
+    'description':
+        'Environment for this task only. A key rather than syntax, because '
+        '`FOO=bar cmd` is shell on POSIX and something else on Windows.',
+  },
+  'env-required': {
+    ..._strings,
+    'description':
+        'Variables that must already be set. Checked before the body runs; '
+        'the engine installs nothing, it only says which one is missing.',
+  },
+  'env-unset': {
+    'type': 'array',
+    'items': _envName,
+    'description':
+        'Variables the body must not see, whatever this machine has set — '
+        "removed, not emptied. A name the same task's `env:` sets is "
+        'refused, compared without case: Windows reads `Path` and `PATH` as '
+        'one variable, and there a name is removed whatever its case.',
+  },
+  'env-paths': {
+    'type': 'object',
+    'propertyNames': _envName,
+    'additionalProperties': {'type': 'string'},
+    'description':
+        'Variables whose values are paths from the repository root: the body '
+        'gets the root joined to each, absolute, normalised and in its '
+        "machine's separators, whatever `in:` says. Nothing absolute and no "
+        r'`..`. `$each` may end one, as in `in:`. A name `env:` or '
+        '`env-unset:` of the same task also holds is refused, compared '
+        'without case.',
+  },
+  'exclusive': {
+    ..._nameList,
+    'description':
+        'Tokens this task holds alone while it runs. Two tasks the graph '
+        'calls independent may still share a port or a browser; naming what '
+        'they share is what keeps them apart.',
+  },
+  'gate': {
+    ..._nameList,
+    'description':
+        'The gate sets this task belongs to. A gate set is named after who '
+        "runs it: one person's command, or one CI job's.",
+  },
+  'in': {
+    'type': 'string',
+    // Not blank: `in: ''` names no directory, and the parser says so.
+    'minLength': 1,
+    'pattern': r'\S',
+    'description':
+        'Where the body runs, relative to the repository root. May end with '
+        r'`$each`, which stands for the current member of `each:` — as the '
+        r'whole value, or composed: `packages/$each`.',
+  },
+  'interruptible': {
+    'type': 'boolean',
+    'description':
+        'Whether a failure elsewhere may stop this task where it stands. A '
+        'run does not reach into what is already running, because a build '
+        'killed half-way leaves whatever it was doing in whatever state that '
+        'half is — this is the author saying a read-only check leaves '
+        'nothing. A `do:` cannot carry it: stopping a Dart function from '
+        'outside is not something Dart can do.',
+  },
+  'needs': {
+    ..._nameList,
+    'description':
+        'Direct requirements, run before this task. Each runs once per '
+        'invocation however many tasks need it.',
+  },
+  'platforms': {
+    'type': 'array',
+    'items': {
+      'enum': ['linux', 'macos', 'windows'],
+    },
+    'minItems': 1,
+    'uniqueItems': true,
+    'description':
+        'The operating systems this task is for; absent, every one. Elsewhere '
+        'it does not run and is reported as skipped — `linux only` — and what '
+        'needs it, or follows it by `then:`, runs as though it had passed: '
+        'being for another platform is not a failure.',
+  },
+  'run': {
+    'type': 'array',
+    // **The first element is the executable, and it may not be blank.** Only
+    // the first: an empty ARGUMENT is ordinary — `dart test --name ''` — while
+    // an empty executable resolves to nothing and surfaces as a missing tool,
+    // code 3, when the defect is in the file and its code is 2. Draft-07
+    // spells a positional rule as an `items` array with `additionalItems` for
+    // the rest.
+    'items': [
+      {'type': 'string', 'minLength': 1, 'pattern': r'\S'},
+    ],
+    'additionalItems': {'type': 'string'},
+    'minItems': 1,
+    'description':
+        'An external program as argv: the program, then its arguments, each '
+        'its own entry. Never a command line — nothing splits a string here, '
+        'and no shell sees it.',
+  },
+  'serial': {
+    'type': 'boolean',
+    'description':
+        "Whether this task's `each:` members must not overlap. `-j` says how "
+        'much may happen at once; this says whether these particular members '
+        'may happen together at all — one shared `pub` cache, one git index. '
+        'Getting it wrong makes a run flaky rather than slow, which is why it '
+        'is in the file and the number is not.',
+  },
+  'then': {
+    ..._nameList,
+    'description':
+        "Continuations, run after this task's body rather than before it. A "
+        'body that succeeded and a continuation that failed is its own '
+        'outcome, with its own exit code.',
+  },
+  'timeout': {
+    'type': 'integer',
+    'minimum': 1,
+    'description':
+        'Seconds a `run:` body may take before it is killed. A `do:` cannot '
+        'carry one: a verb is a Dart function and nothing outside it can stop '
+        'one, so the limit would pass while the verb kept running. Under '
+        '`each:` it is a limit per member.',
+  },
+  'unchanged': {
+    // A set's name, as `all:` and `each:` are.
+    ..._name,
+    'description':
+        'A set of paths whose files this task must leave as the run found '
+        'them: read byte for byte when the run begins, before any `needs:`, '
+        'and again when the task ends. A file changed, added or removed fails '
+        'the task, naming it. Not git: it works in a dirty tree and without '
+        'one.',
+  },
+};
+
+/// [table] as JSON Schema properties, in [keys]' order, or nothing at all.
+///
+/// Public so that the refusal itself can be tested. Reached only through a
+/// drift that must never be committed, it is otherwise code that runs the day
+/// it is needed and has never run before.
+///
+/// **The whole guard, in one function.** [keys] is the engine's list; [table]
+/// is this file's description of it. A key added to one and forgotten in the
+/// other is the drift the duplicate list exists to remove, and the failure it
+/// would cause is quiet in the worst way — an editor happily completing a key
+/// the parser refuses, or underlining one it accepts. So the disagreement stops
+/// `--emit-schema` rather than reaching a file, and the message names both
+/// sides.
+Map<String, Map<String, Object?>> checkedProperties(
+  Set<String> keys,
+  Map<String, Map<String, Object?>> table,
+  String what,
+) {
+  final described = table.keys.toSet();
+  final missing = keys.difference(described);
+  final extra = described.difference(keys);
+  if (missing.isNotEmpty || extra.isNotEmpty) {
+    throw StateError(
+      'the JSON Schema has drifted from the engine it describes: '
+      '${missing.isEmpty ? '' : 'no $what ${missing.join(', ')} is described '
+                'in lib/src/schema.dart'}'
+      '${missing.isEmpty || extra.isEmpty ? '' : '; and '}'
+      '${extra.isEmpty ? '' : 'lib/src/schema.dart describes '
+                '${extra.join(', ')}, which is not a $what'}',
+    );
+  }
+  // **Ordered by [keys], not by the table.** The tables below are written in
+  // alphabetical order on purpose, which is NOT the order the engine declares
+  // its keys in — so if this line ever stopped imposing an order, the emitted
+  // file would change and a test would say so. A table written in the model's
+  // order would make that test pass whatever this line did.
+  return {for (final key in keys) key: table[key]!};
+}
