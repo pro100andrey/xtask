@@ -19,7 +19,7 @@ workspace:
   - packages/xtask_kit
 
 dependencies:
-  xtask: ^0.4.0
+  xtask: ^0.5.0
 
 dev_dependencies:
   # `analysis_options.yaml` is here, and is read for every member below it, so

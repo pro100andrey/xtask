@@ -1,188 +1,57 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 ### Added
 
-- On a terminal the summary, the task headings and `--graph` are drawn in
-  colour: `✓` green, `✗` and a failure's code red, `⊘` and `⏹` yellow,
-  times and reasons faint, a heading bold. On Linux and macOS a terminal is
-  coloured when `TERM` is set and not `dumb`; on Windows when the console
-  draws ANSI. `NO_COLOR` (anything but empty) turns it off; `FORCE_COLOR`
-  set to `0` or `false` turns it off too, and set to anything else but
-  empty turns it on in a pipe as well, `NO_COLOR` winning. A pipe or a file without `FORCE_COLOR` gets
-  exactly the bytes it got before, and `--report`, `--names`,
-  `--gate-members`, `--check-ci`, `--emit-schema` and the GitHub markers
-  are never coloured. On a Windows console without ANSI support, the marks
-  and tree glyphs are ASCII: `ok`/`FAIL`/`skip`/`stop`/`-`, `+-`, `` `- ``,
-  `|` — every line the summary and `--graph` draw there is ASCII — and
-  that console is never coloured, `FORCE_COLOR` or not.
-
-- `xtask --graph [<name>]` draws what a gate set or task pulls in, as a
-  tree, without running or resolving anything: `needs` and `then` edges
-  each under the task that names them, a task reached twice drawn once and
-  then `(see above)`, an `each:` task with its member count and its first
-  three members (all four where there are four), a set whose `produced-by:`
-  task has not run as `cannot be resolved yet`, and a task for another OS
-  as `⊘ linux only`. With no name, every gate set and then, under
-  `ungated`, the tasks none of them reaches; any other empty set is said on
-  its task's row rather than refusing the whole picture. A name a run
-  refuses is refused with the run's sentence and `2`, an empty set included. Shells complete a gate set or
-  task after it; `--check-ci` reads it as a question, as it reads `--why`.
-
-- `findRoot(from)` and `gateMembers(gate, {workingDirectory})` are exported
-  from `package:xtask/xtask.dart`, so a project's own entry point can ask
-  where `xtask.yaml` is and what a gate set holds without starting a second
-  engine. `gateMembers` answers exactly what `--gate-members` prints — the
-  command now runs it — and throws `XtaskFormatException`, also exported now,
-  with the message that command prints where it refuses: no file, a file that
-  cannot be read or does not parse, a gate set that is not declared.
-
-- `env-paths: {NAME: path}` on a task sets variables whose values are paths
-  from the repository root: the body — a `run:` or a `do:` — gets the root
-  joined to each, absolute, normalised and in the machine's separators,
-  whatever `in:` says, and `--dry-run` prints that value. A path that is
-  absolute or climbs through `..` is refused when the file is read; `$each`
-  may end one, and a `values:` member that takes it out of the root is
-  refused by `--validate` and the run. A name the same task's `env:` sets or
-  `env-unset:` removes is refused, compared without case. A name in
-  `secret-env:` is masked as the absolute path, and its value cannot be made
-  from `$each`.
-
-- `platforms: [linux|macos|windows]` on a task: on any other machine it does
-  not run and is reported as skipped with the reason — `linux only` — in the
-  summary, in `--report` (`skipped`, with that `why`) and in `--dry-run`,
-  which does not resolve its body. What needs it, or follows it by `then:`,
-  runs as though it had passed. Any other name, an empty list or a name
-  written twice is refused when the file is read. `--check-ci` still counts
-  such a task as reached.
-
-- `secret-env: [NAMES]`, at the top level, prints the values of those
-  variables as `***` in everything the engine writes: `--dry-run`'s argv and
-  `env` lines, the line a failure reproduces itself with, `::error::`
-  annotations, refusals that quote the command line, the hand-over's own
-  messages and the `--report` file. The values are the run's — what the
-  machine holds under each name and what any task's `env:` sets it to. On
-  GitHub Actions a run or a dry run writes `::add-mask::` for each before its
-  first line. A value shorter than four characters is not masked, and a
-  secret's `env:` value made from `$each` is refused. What a body prints
-  itself is not filtered.
-
-- The installed `xtask` runs a project's verbs: in a repository whose root has
-  a `bin/xtask.dart` of its own, it hands the run to it — `dart run
-  <package>:xtask` from where you stand, or the file itself from a package
-  that resolves its own — and answers with its exit code. Every form starts
-  the run where you stand, so relative paths on the command line mean what
-  you meant: a package never resolved has `dart pub get` run in it first,
-  once, and is then run as a file. `--completion` is
-  still answered by the engine, and so is `--names` while it can read the
-  file; a task's own `xtask` hands over again; `XTASK_HAND_OVERS` stops a loop
-  at eight; no `dart` on `PATH` is a `3`. The name form is used only where
-  the nearest resolution is the package's own (or its workspace's): from an
-  `example/` that depends on the library, or a root that depends on its
-  tools package, the file runs instead, since those resolutions lack the
-  package's `dev_dependencies`. A resolution older than its `pubspec.yaml`,
-  `pubspec.lock` or `pubspec_overrides.yaml`, or with no lock, is got again
-  before the file form runs, and then marked current, as `dart run` marks
-  it, so a lock a checkout touched costs one `pub get` and not one per run. A
-  failed `dart pub get` is a `1`; an entry point that does not compile is
-  `dart run`'s `254` or `255`, and its `--report` says so, `complete` with
-  that code, rather than keeping the last run's. A batch-file `dart`
-  refuses a command line `cmd.exe` would read before any `pub get`, and says
-  to put the SDK's `dart.exe` ahead of it. A run the hand-over refuses before
-  it starts — a loop, no `dart`, a command line `cmd.exe` would read, a
-  failed `pub get`, a `dart` that would not start — writes the `--report` the command line asked
-  for, as the engine's own refusals do. On Windows a Ctrl-C is not passed on,
-  since `Process.kill` there ends the project's engine outright: the console
-  delivers it to that engine too, and the installed `xtask` waits for it.
-
-- `entry:` names the project's entry point, from the root, where it is not
-  `bin/xtask.dart` — `tools/bin/xtask.dart` in a tools package of its own, or
-  `tool/xtask.dart`. The installed `xtask` hands runs to it, from its own
-  package (the nearest `pubspec.yaml`), getting that package a resolution
-  first where it has none; `--validate` says when the file is missing or in
-  no package, and `--check-ci` reads a step running it as `xtask` — by the
-  file's whole path, so another file of the same name is not, and a
-  relative path under a `working-directory:` written out is read from that
-  directory. An
-  absolute path, `..`, `\` or a file that is not `.dart` is refused.
-
-- `containing: [paths]` on a glob set keeps only the members that hold every
-  one of those paths — `include: [packages/*]` with `containing: [test]` is
-  the packages with a suite. Paths, not patterns, and nothing reads what a
-  file says. A path that is absolute or climbs through `..` is refused, by
-  `--validate` too; a set the filter leaves empty is refused as any empty set
-  is, saying that the patterns matched and the filter took them. A link along
-  the way is not followed, as one at the end is not: `link/test` through a
-  link to another tree is not held.
-
-- `unchanged: <set>` fails a task that changed the files a set of paths
-  reaches, naming each file changed, added or removed. Compared byte for byte,
-  not asked of git, so it answers the same in a dirty tree and outside a
-  repository; a directory member is every file beneath it. The set is first
-  read when the run begins — before every `needs:`, including one another
-  branch of the graph reaches first — and again when the task ends. A set it
-  cannot compare — missing, `values:`, reaching outside the root, a pattern
-  that is none, or empty with no `produced-by:` task to fill it — is refused
-  by `--dry-run` and by the run with the same `2` and sentence, before
-  anything in the run has started, its `needs:` included — the rest said to
-  be `the run was refused before it began`; `--validate`
-  refuses each too. `--dry-run` says which set a task holds.
-
-- `--report <file>` writes a run as JSON, `version: 1`: the task asked for,
-  whether the run got to its end, its code and seconds, and every task of the
-  plan in order — `passed`, `failed`, `skipped` or `not-run`, with its
-  seconds, its code and why — and under an `each:` every member the same way.
-  Written before anything else, as tasks begin and end, and last with the
-  code: a run refused before it began says why, and one killed where it
-  stands leaves the last report with `complete: false`. The path is read from where
-  the command was run; one that cannot be written is a `2` before anything
-  runs. A command line refused — `-j 0`, an option there is not — still
-  writes the report it asked for, with the `2` and the problem, rather than
-  leaving the last run's in its place; `task` is left out where it named
-  none. A `--report` after `--` is a task's and not looked for.
-
-- `env-unset: [names]` takes variables away from a task's body — a `run:` and
-  a `do:` alike, and everything a verb starts — so `dart test` need not see
-  `CI` or `PUB_HOSTED_URL`. Removed, not emptied. On Windows a name is matched
-  whatever its case, so `[Path]` removes `PATH`; a name the same task's
-  `env:` sets or `env-required:` demands is refused when the file is read,
-  compared without case on every host. So is one variable spelled twice in
-  two cases within one `env:`, `env-paths:` or `env-unset:` — `Path` and
-  `PATH` — which Windows would hand the body as two — and a name `env-unset:`
-  lists twice the same way. `--dry-run` prints each as `env  unset CI`.
-
-- A run stopped by Ctrl-C or `SIGTERM` stops what it started instead of
-  leaving it running: nothing more starts, every process the run started — a
-  `run:` body, each member of an `each:` under `-j`, a program a verb started
-  — is sent `SIGTERM` and, after a grace, `SIGKILL`, and the run answers `128`
-  and the signal (`130`, `143`). A body ending on the Ctrl-C itself is
-  reported as stopped, not failed. A `do:` verb is waited for; what it asks
-  to start after the signal is answered `130` and not started. Its last
-  `--report` is written with `complete: true` and the signal's code, and the
-  task running says it was stopped. A task an earlier failure had already
-  stopped still says so when the signal comes later, while it is still
-  ending too: the reason is kept from the moment it is asked to stop. On
-  Windows, Ctrl-C only.
+- The installed `xtask` runs a project's verbs: in a repository with an entry
+  point of its own, it hands the run to it and answers with its exit code. The
+  run starts where you stand, a package never resolved gets `dart pub get`
+  first, and `XTASK_HAND_OVERS` stops a loop at eight. *Your own entry point*
+  in the README.
+- `entry:` names that entry point where it is not `bin/xtask.dart` — a tools
+  package's `tools/bin/xtask.dart`, say. `--validate` says when the file is
+  missing, and `--check-ci` reads a step running it as `xtask`.
+- `--graph [<name>]` draws what a gate set or task pulls in, as a tree, without
+  running anything; with no name, every gate set and then what none reaches.
+- `--report <file>` writes the run as JSON, `version: 1`, as it goes: each
+  task's result, seconds, code and why, and `complete: false` where the run was
+  killed. *A run as JSON* in the README.
+- `unchanged: <set>` fails a task that changed the files a set reaches, naming
+  each — compared byte for byte, not asked of git.
+- `containing: [paths]` on a glob set keeps the members that hold every path:
+  `include: [packages/*]` with `containing: [test]` is the packages with a
+  suite.
+- `platforms: [linux|macos|windows]`: on another machine the task is skipped,
+  `linux only`, and what needs it runs as though it had passed.
+- `secret-env: [NAMES]` prints those variables' values as `***` in everything
+  the engine writes, and on GitHub Actions hands each to `::add-mask::`. What a
+  body prints itself is not filtered. *Secrets* in the README.
+- `env-unset: [names]` takes variables away from a task's body, and
+  `env-paths: {NAME: path}` sets them to paths from the root, absolute and in
+  the machine's separators.
+- On a terminal the summary, the task headings and `--graph` are coloured, by
+  `TERM`, `NO_COLOR` and `FORCE_COLOR`; a pipe gets the bytes it got before. A
+  Windows console without ANSI gets ASCII marks. *Colour, and ASCII* in the
+  README.
+- For an entry point: `findRoot` and `gateMembers`, which answer where
+  `xtask.yaml` is and what a gate set holds without a second engine, and
+  `XtaskFormatException`, which they throw where `--gate-members` refuses.
 
 ### Changed
 
+- A run ends with one tree instead of two blocks: a row per task with its mark
+  (`✓` `✗` `⊘` `⏹` `·`), its time and its code or reason, an `each:` task's
+  members under it. `--report`, `--names`, `--gate-members` and the GitHub
+  markers are unchanged.
 - The package lives in `packages/xtask` of a workspace repository, and
-  `repository:` points there. The repository's own tasks run through an entry
-  point at its root, which the installed `xtask` now hands runs to like any
-  other project's.
+  `repository:` points there.
 
-- A run ends with one tree instead of two blocks — what each task took, then
-  what failed and was skipped. Each task in plan order has one row: a mark
-  for the result `--report` writes (`✓` passed, `✗` failed, `⊘` skipped, and
-  for a task the run stopped `⏹` where it had begun and `·` where it had
-  not), its time, and the exit code or the reason it did not run. The members
-  of an `each:` are rows under their task where there are more than one, the
-  total is last, and a lone failure has its row like any other task. A
-  fanned-out task's `over N members` is printed when its members could run
-  together, and `N of M members` wherever `--only` narrowed its set. `--report`,
-  `--names`, `--gate-members` and the GitHub `::group::`/`::error::` lines are
-  unchanged.
+### Fixed
+
+- Ctrl-C or `SIGTERM` no longer leaves what the run started running: each
+  process is sent `SIGTERM` and, after a grace, `SIGKILL`, and the run answers
+  `130` or `143`. On Windows, Ctrl-C only. *Ctrl-C, and SIGTERM* in the README.
 
 ## 0.4.0
 
