@@ -219,11 +219,26 @@ void main() {
 
     test('replaces a dangling link of an earlier install', () async {
       bundle();
-      final binary = LinuxAppPlaces.of(_app, home: home.path).binary;
-      Link(binary).createSync('/nowhere/demo', recursive: true);
+      final places = LinuxAppPlaces.of(_app, home: home.path);
+      // Relative, as a link may be, and into an install that is gone: it is
+      // still this install's, since it leads into the app's own directory.
+      Link(
+        places.binary,
+      ).createSync('../lib/demo/gone/demo', recursive: true);
 
       expect(await linuxAppInstall(_app)(context()), ExitCode.success);
-      expect(Link(binary).targetSync(), isNot('/nowhere/demo'));
+      expect(Link(places.binary).targetSync(), p.join(places.app, 'demo'));
+    });
+
+    test('refuses to replace a link another installer made', () async {
+      bundle();
+      final binary = LinuxAppPlaces.of(_app, home: home.path).binary;
+      final foreign = p.join(home.path, '.local/share/pipx/venvs/demo/demo');
+      Link(binary).createSync(foreign, recursive: true);
+
+      expect(await linuxAppInstall(_app)(context()), ExitCode.taskFailed);
+      expect(said.single, contains('not a link this install made'));
+      expect(Link(binary).targetSync(), foreign);
     });
 
     test('refuses an icon that would land outside the theme', () async {
@@ -308,6 +323,29 @@ void main() {
         ..writeAsStringSync('somebody else');
       expect(await linuxAppUninstall(_app)(context()), ExitCode.success);
       expect(File(binary).existsSync(), isTrue);
+    });
+
+    test('and keeps a link another installer made, saying so', () async {
+      final binary = LinuxAppPlaces.of(_app, home: home.path).binary;
+      final foreign = p.join(home.path, '.local/share/pipx/venvs/demo/demo');
+      Link(binary).createSync(foreign, recursive: true);
+
+      expect(await linuxAppUninstall(_app)(context()), ExitCode.success);
+      expect(Link(binary).targetSync(), foreign);
+      expect(said.join('\n'), contains('not a link this install made'));
+    });
+
+    test('and removes a dangling link into its own install', () async {
+      final places = LinuxAppPlaces.of(_app, home: home.path);
+      Link(
+        places.binary,
+      ).createSync(p.join(places.app, 'demo'), recursive: true);
+
+      expect(await linuxAppUninstall(_app)(context()), ExitCode.success);
+      expect(
+        FileSystemEntity.typeSync(places.binary, followLinks: false),
+        FileSystemEntityType.notFound,
+      );
     });
   }, testOn: 'linux');
 }

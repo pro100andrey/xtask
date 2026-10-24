@@ -67,7 +67,10 @@ tasks:
 
 It refuses, saying why, off Linux, without `HOME`, when the bundle lacks a
 file `requires:` names, and when `~/.local/bin/<binary>` is something other
-than a link — that file is somebody else's, and replacing it would destroy it.
+than a link into `~/.local/lib/<binary>` — a file, or a link pipx, `uv tool`
+or another installer made, is somebody else's, and replacing it would destroy
+it. A link into the app's own directory is the earlier install's, dangling or
+not.
 It ends by saying whether `PATH` reaches what it installed: the build just
 installed, another command of that name found first, or nothing.
 
@@ -75,7 +78,8 @@ Building is not the verb's job. A build that fails is the build's failure,
 reported as one, and `--dry-run` shows its command line — neither is true of a
 `flutter build` started from inside a verb.
 
-`uninstall` removes the link (if it is one), the menu entry, every icon named
+`uninstall` removes the link (if it is the install's own; anything else there
+it leaves and says so), the menu entry, every icon named
 for the application id, and the app's directory. It succeeds on a machine with
 nothing installed.
 

@@ -7,7 +7,9 @@
 - `linuxAppInstall` and `linuxAppUninstall`: a built Linux app installed for
   the person running it under `~/.local`, linked onto `PATH`, with its menu
   entry and icons — described by a `LinuxApp`, whose icons are an `IconTree`
-  or `IconFiles`.
+  or `IconFiles`. Only a link into the app's own directory is replaced or
+  removed at `~/.local/bin/<binary>`; another installer's is refused by the
+  install and left by the uninstall.
 - `cliInstall` and `cliUninstall`, with `installCli` and `uninstallCli` as
   functions: the bundles `dart build cli` leaves, installed into one `bin/`
   and `lib/` under `~/.local/share` with each command on `PATH` — a link, or
@@ -16,9 +18,9 @@
   file on `PATH` the install did not lay down — a link somewhere other than
   its own directory included — is refused rather than replaced. `conflictingLibraries` is the check that two bundles can share
   one `lib/`; executables of one name are checked the same way.
-- `replaceDirectory`, `notALink` and `pointLink`, which the install is made
-  of: an installed directory replaced whole, and a link replaced only where it
-  is one.
+- `replaceDirectory`, `notALink`, `notOurLink` and `pointLink`, which the
+  install is made of: an installed directory replaced whole, and a link
+  replaced only where it is one and leads into the install's own directory.
 - `onPathLine`: whether the command just installed is the one `PATH` finds,
   something else is, or nothing is — on Windows by every extension `PATHEXT`
   names.

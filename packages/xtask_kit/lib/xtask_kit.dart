@@ -53,7 +53,8 @@ export 'src/publish.dart'
         servedVersions,
         uncommittedRefusal,
         untrackedRefusal;
-export 'src/replace.dart' show notALink, pointLink, replaceDirectory;
+export 'src/replace.dart'
+    show notALink, notOurLink, pointLink, replaceDirectory;
 export 'src/vscode.dart'
     show
         ProfileNames,

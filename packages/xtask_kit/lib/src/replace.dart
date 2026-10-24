@@ -61,9 +61,34 @@ String? notALink(String path) =>
       _ => '$path is not a link; move it away first',
     };
 
+/// Why [path] is not a link this install may replace or remove, or null
+/// where it is — or where nothing is there.
+///
+/// An install lays down a link into its own directory, [within], so only a
+/// link whose target lies inside it is the install's. Anything else is
+/// somebody else's: a file ([notALink]), and a link to anywhere else, since
+/// pipx, `uv tool` and others link into `~/.local/bin` as well. The target is
+/// read from the link itself and resolved from the link's directory, so that
+/// a dangling link an earlier install left, or a relative one, is told
+/// apart by where it leads rather than by whether it still leads anywhere.
+String? notOurLink(String path, {required String within}) {
+  if (notALink(path) case final why?) {
+    return why;
+  }
+  if (!FileSystemEntity.isLinkSync(path)) {
+    return null;
+  }
+  final target = p.normalize(p.join(p.dirname(path), Link(path).targetSync()));
+  if (p.isWithin(within, target)) {
+    return null;
+  }
+  return '$path is not a link this install made — it points at $target; '
+      'move it away first';
+}
+
 /// Makes [path] a link to [target], replacing a link already there.
 ///
-/// Checked against [notALink] by the caller first; a dangling link counts as
+/// Checked against [notOurLink] by the caller first; a dangling link counts as
 /// one to replace, which is why the type is read without following it.
 void pointLink(String path, String target) {
   final link = Link(path);

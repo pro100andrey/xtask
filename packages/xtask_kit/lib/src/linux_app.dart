@@ -225,7 +225,7 @@ Future<int> _install(VerbContext context, LinuxApp app) async {
     return ExitCode.taskFailed;
   }
   final places = LinuxAppPlaces.of(app, home: home, environment: context.env);
-  if (notALink(places.binary) case final refusal?) {
+  if (notOurLink(places.binary, within: places.app) case final refusal?) {
     context.log(refusal);
     return ExitCode.taskFailed;
   }
@@ -314,7 +314,12 @@ Future<int> _uninstall(VerbContext context, LinuxApp app) async {
     return ExitCode.success;
   }
   final places = LinuxAppPlaces.of(app, home: home, environment: context.env);
-  if (FileSystemEntity.typeSync(places.binary, followLinks: false) ==
+  // Only the link into the app's own directory goes: one another installer
+  // made under the same name is that installer's to remove, and a file
+  // there is nobody's link at all.
+  if (notOurLink(places.binary, within: places.app) case final why?) {
+    context.log('$why — left as it is');
+  } else if (FileSystemEntity.typeSync(places.binary, followLinks: false) ==
       FileSystemEntityType.link) {
     Link(places.binary).deleteSync();
   }

@@ -346,28 +346,14 @@ String? _conflicting(List<String> bundles, String part) {
 /// Why [path], a command on `PATH`, is not one this install may replace or
 /// remove, or null where it is — or where nothing is there.
 ///
-/// On POSIX the install lays down links into [CliPlaces.share], so anything
-/// else is somebody else's: a file ([notALink]), and a link to anywhere else
-/// — pipx, `uv tool` and others link into `~/.local/bin` as well. Read from
-/// the link, dangling or not, since an earlier install's may point at what
-/// is no longer there. On Windows it lays down copies, and a copy is told
+/// On POSIX the install lays down links into [CliPlaces.share], and which
+/// link is its own is the rule [notOurLink] holds for every install that
+/// links. On Windows it lays down copies, and a copy is told
 /// from somebody else's file only by its bytes: it is the install's where it
 /// is the same file as an executable the earlier install holds.
 String? _notOurs(String path, CliPlaces places) {
   if (!places.windows) {
-    if (notALink(path) case final why?) {
-      return why;
-    }
-    if (FileSystemEntity.isLinkSync(path)) {
-      final target = p.normalize(
-        p.join(p.dirname(path), Link(path).targetSync()),
-      );
-      if (!p.isWithin(places.share, target)) {
-        return '$path is not a link this install made — it points at '
-            '$target; move it away first';
-      }
-    }
-    return null;
+    return notOurLink(path, within: places.share);
   }
   final type = FileSystemEntity.typeSync(path, followLinks: false);
   if (type == FileSystemEntityType.notFound) {
