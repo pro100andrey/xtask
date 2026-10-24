@@ -161,7 +161,9 @@ What is not handed over, and what is refused:
   the project's, and an entry point that does not compile answers `dart run`'s
   `254` or `255`.
 - Ctrl-C or `SIGTERM` during that `dart pub get` stops it (`SIGTERM`, then
-  `SIGKILL` after a grace), and the run is refused with `130` or `143`.
+  `SIGKILL` after a grace), and the run is refused with `130` or `143`, as it
+  is for one between the `pub get`'s end and the run's start. The `pub get` gets a stdin that ends at once,
+  so one that asks a question is answered with nothing rather than waited on.
 - Where `dart` is a batch file (`dart.bat`, as Flutter puts on `PATH`), a
   command line carrying a character `cmd.exe` would read (`&`, `|`, `%`, …) is
   refused with `2` before anything runs. The SDK's `dart.exe` ahead of it on

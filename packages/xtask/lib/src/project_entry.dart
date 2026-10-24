@@ -19,10 +19,12 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import 'boundary.dart';
+import 'context.dart' show Captured;
 import 'errors.dart';
 import 'executables.dart';
 import 'exit_codes.dart';
 import 'parse.dart';
+import 'process.dart';
 import 'reading.dart';
 import 'report.dart' show runReport;
 import 'report_file.dart';
@@ -229,8 +231,8 @@ String? _entryOf(String root) {
 /// passed on as it is; an interrupt sent to this process alone reaches the
 /// engine only as that `SIGTERM`, and is answered `143`. On Windows nothing
 /// is passed on — see [passSignalsOn]. A signal before the run is started,
-/// during the `dart pub get`, stops that instead, and the run is refused
-/// with `130` or `143`.
+/// during the `dart pub get` or after it, stops that instead, and the run is
+/// refused with `130` or `143` — a Ctrl-C on Windows as well.
 ///
 /// What it says itself is masked as the engine's lines are (`secrets.dart`):
 /// it quotes the command line, which is where a value typed after `--` is.
@@ -323,21 +325,19 @@ Future<int> runProjectEntry(
   // `pub get` running. Before the run, a signal stops what is running as the
   // engine stops a body, and the run is refused with the code a shell would
   // say; from the run's start it is passed on, as [passSignalsOn] says.
+  final windows = Platform.isWindows;
   ProcessSignal? received;
-  Process? getting;
+  final stopAsked = Completer<void>();
   Process? running;
   final watching = passSignalsOn(
-    ([signal = ProcessSignal.sigterm]) {
-      if (running case final run?) {
-        return run.kill(signal);
+    ([signal = ProcessSignal.sigterm]) => running?.kill(signal) ?? true,
+    windows: windows,
+    heard: (signal) {
+      received ??= signal;
+      if (!stopAsked.isCompleted) {
+        stopAsked.complete();
       }
-      if (getting case final resolving?) {
-        unawaited(_stop(resolving));
-      }
-      return true;
     },
-    windows: Platform.isWindows,
-    heard: (signal) => received ??= signal,
   );
   int stopped(ProcessSignal signal, String during) => refuse(
     bySignal(signal.signalNumber),
@@ -348,15 +348,25 @@ Future<int> runProjectEntry(
       // Collected rather than inherited: what `pub get` says on success is
       // noise on the stdout of a run that may be `--list` piped somewhere,
       // and what it says on failure is the only thing worth reading.
-      final Process resolving;
+      //
+      // **Through the engine's own starter, not a `Process.start` of its
+      // own.** A second way to start a process had to learn again what the
+      // first already does, and missed three of them: a stdin left open, on
+      // which a `pub get` behind a wrapper — `dart.bat` asking `Terminate
+      // batch job (Y/N)?` — waited for ever; pipes waited for but never let
+      // go, so a process `pub get` left behind kept this one alive until it
+      // ended; and a strict decoder, which one byte that is not UTF-8 turned
+      // into a crash at 255 with the report never finished. `until:` is the
+      // stop a body gets, `SIGTERM` and then `SIGKILL` after the grace.
+      final Captured got;
       try {
-        resolving = await Process.start(
+        got = await SystemProcessStarter().capture(
           dart,
           const ['pub', 'get'],
           workingDirectory: package,
           environment: environment,
-          includeParentEnvironment: false,
           runInShell: shell,
+          until: stopAsked.future,
         );
       } on ProcessException catch (failure) {
         return refuse(
@@ -364,33 +374,22 @@ Future<int> runProjectEntry(
           'xtask: `$dart pub get` could not be started: ${failure.message}',
         );
       }
-      getting = resolving;
-      if (received != null) {
-        unawaited(_stop(resolving));
-      }
-      final out = resolving.stdout.transform(systemEncoding.decoder).join();
-      final errors = resolving.stderr.transform(systemEncoding.decoder).join();
-      final got = await resolving.exitCode;
-      // Bounded, as the engine bounds a body's pipes: a process `pub get`
-      // started may hold them past its end.
-      final said = await Future.wait([
-        out,
-        errors,
-      ]).timeout(_grace, onTimeout: () => const ['', '']);
-      getting = null;
       if (received case final signal?) {
         return stopped(signal, 'during `dart pub get` in `$package`');
       }
-      if (got != ExitCode.success) {
+      if (got.exitCode != ExitCode.success) {
         return refuse(
           ExitCode.taskFailed,
           'xtask: the entry point `${entry.entry}` is in a package with no '
           'resolution, and `dart pub get` in `$package` exited with '
-          '$got:\n${said.join()}',
+          '${got.exitCode}:\n${got.stdout}${got.stderr}',
         );
       }
       _markResolved(package);
     }
+    // On Windows too: a Ctrl-C between the `pub get`'s end and this start
+    // was heard and passed on to nothing, and the run went ahead as though
+    // nobody had pressed it.
     if (received case final signal?) {
       return stopped(signal, 'before the entry point `${entry.entry}`');
     }
@@ -415,9 +414,16 @@ Future<int> runProjectEntry(
       );
     }
     running = process;
-    // Heard while it was being started: it is passed on now.
-    if (received != null) {
+    // Heard while it was being started: it is passed on now. On Windows
+    // there is nothing to pass on but an end, and a Ctrl-C the console sent
+    // before the process was there never reached it — so it is ended, before
+    // its engine has begun anything, and the run is refused as above.
+    if (received case final signal?) {
       process.kill();
+      if (windows) {
+        await process.exitCode;
+        return stopped(signal, 'before the entry point `${entry.entry}`');
+      }
     }
     final exited = await process.exitCode;
     // A run ended by a signal answers as a shell would say it, 128 and the
@@ -462,22 +468,6 @@ File? _beginReport(ProjectEntry entry, String from, Secrets secrets) {
   return File(p.join(from, asked.path));
 }
 
-/// How long a `pub get` asked to stop is given before it is made to: the
-/// engine's grace for a body.
-const _grace = Duration(seconds: 5);
-
-/// Asks [process] to stop, and makes it after [_grace] — as the engine stops
-/// a body.
-Future<void> _stop(Process process) async {
-  process.kill();
-  final ended = await process.exitCode
-      .then<int?>((code) => code)
-      .timeout(_grace, onTimeout: () => null);
-  if (ended == null) {
-    process.kill(ProcessSignal.sigkill);
-  }
-}
-
 /// Whether the report at [file] is still one written before any run began:
 /// not complete, and no task in it.
 bool _stillBegun(File file) {
@@ -511,8 +501,10 @@ bool _stillBegun(File file) {
 /// There is no `SIGTERM` to watch on Windows.
 ///
 /// [heard] is told which signal it was, before [kill] is called, so that a
-/// run refused for it answers `128 + N`; on Windows it is told nothing, as
-/// nothing is passed on.
+/// run refused for it answers `128 + N` — on Windows as well, where [kill]
+/// is not called. Told nothing there, a Ctrl-C after the `pub get` had ended
+/// and before the project was started stopped nothing and was answered by
+/// nothing: the run went ahead.
 ///
 /// [windows] and the two streams are parameters so that the decision can be
 /// tested on a machine that is not the one it is about.
@@ -524,12 +516,12 @@ List<StreamSubscription<ProcessSignal>> passSignalsOn(
   Stream<ProcessSignal>? terminations,
 }) => [
   (interrupts ?? ProcessSignal.sigint.watch()).listen(
-    windows
-        ? (_) {}
-        : (signal) {
-            heard?.call(signal);
-            kill();
-          },
+    (signal) {
+      heard?.call(signal);
+      if (!windows) {
+        kill();
+      }
+    },
   ),
   if (!windows)
     (terminations ?? ProcessSignal.sigterm.watch()).listen((signal) {

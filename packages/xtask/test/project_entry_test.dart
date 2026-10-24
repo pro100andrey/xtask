@@ -79,13 +79,14 @@ void main() {
   /// `pub get` succeeds having changed nothing, as the real one does for a
   /// resolution that is current, and its `run` ends with [runs] — after
   /// writing a finished report to `$WRITE` where the environment names one,
-  /// as a project's engine that got as far as its run would.
-  ExecutableResolver fakeDart({int runs = 0}) {
+  /// as a project's engine that got as far as its run would. [pub] is what
+  /// its `pub get` does instead, a line of `sh`.
+  ExecutableResolver fakeDart({int runs = 0, String pub = 'exit 0'}) {
     final bin = Directory(p.join(root, '.fake-bin'))..createSync();
     final dart = File(p.join(bin.path, 'dart'))
       ..writeAsStringSync(
         '#!/bin/sh\n'
-        'if [ "\$1" = pub ]; then exit 0; fi\n'
+        'if [ "\$1" = pub ]; then $pub; fi\n'
         'if [ -n "\$WRITE" ]; then\n'
         '  printf \'{"version":1,"complete":true,"code":$runs,"tasks":[]}\' '
         '> "\$WRITE"\n'
@@ -396,11 +397,13 @@ void main() {
 
   group('the signals the installed `xtask` receives', () {
     late List<ProcessSignal> sent;
+    late List<ProcessSignal> heard;
     late StreamController<ProcessSignal> interrupts;
     late StreamController<ProcessSignal> terminations;
 
     setUp(() {
       sent = [];
+      heard = [];
       interrupts = StreamController();
       terminations = StreamController();
       // Not awaited: a controller nothing listened to never finishes
@@ -418,6 +421,7 @@ void main() {
           return true;
         },
         windows: windows,
+        heard: heard.add,
         interrupts: interrupts.stream,
         terminations: terminations.stream,
       );
@@ -436,6 +440,7 @@ void main() {
     test('off Windows, reach the run as a SIGTERM', () async {
       await wired(windows: false);
       expect(sent, [ProcessSignal.sigterm, ProcessSignal.sigterm]);
+      expect(heard, [ProcessSignal.sigint, ProcessSignal.sigterm]);
     });
 
     test('on Windows, a Ctrl-C is only heard, and the run is not ended '
@@ -449,6 +454,11 @@ void main() {
       await wired(windows: true);
       expect(interrupts.hasListener, isTrue);
       expect(sent, isEmpty);
+      // Heard all the same, so that the hand-over can refuse a run it has
+      // not started yet. Told nothing, a Ctrl-C after the `pub get` and
+      // before the start reached nobody, and the project ran. Decided here
+      // by `windows:`; not run on a Windows console.
+      expect(heard, [ProcessSignal.sigint]);
     });
   });
 
@@ -579,6 +589,123 @@ void main() {
 
     expect(code, ExitCode.success);
     expect(entryFrom(app)?.resolveIn, isNull, reason: 'got, and marked so');
+  }, testOn: '!windows');
+
+  group('the `pub get` before the run is started as a body is', () {
+    // It had a `Process.start` of its own, and so learnt none of what the
+    // engine's starter already does for a body.
+    late String at;
+    Map<String, Object?> report() =>
+        jsonDecode(File(at).readAsStringSync()) as Map<String, Object?>;
+
+    Future<int> handedOver(String pub, List<String> said) {
+      repository();
+      at = p.join(root, 'run.json');
+      File(at).writeAsStringSync('{"version":1,"complete":true,"code":0}');
+      return runProjectEntry(
+        entryFrom(root, ['check', '--report', at])!,
+        environment: const {},
+        err: said.add,
+        resolver: fakeDart(pub: pub),
+      ).timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => fail('the hand-over did not end:\n${said.join()}'),
+      );
+    }
+
+    test('given a stdin that ends, which a `pub get` that reads it is '
+        'not left waiting on', () async {
+      // A stdin held open and never written: a `pub get` behind a wrapper
+      // that reads it — `dart.bat` asking `Terminate batch job (Y/N)?` —
+      // waited for ever, and the run with it.
+      final said = <String>[];
+
+      final code = await handedOver('cat >/dev/null; exit 0', said);
+
+      expect(code, ExitCode.success, reason: said.join());
+      expect(report(), containsPair('code', ExitCode.success));
+    });
+
+    test('read leniently, so a byte that is not UTF-8 is shown and not a '
+        'crash', () async {
+      // The strict decoder threw from inside the stream, where nothing
+      // caught it: the run ended at 255 with the report `complete: false`.
+      final said = <String>[];
+
+      final code = await handedOver(r"printf 'bad \377 byte\n'; exit 1", said);
+
+      expect(code, ExitCode.taskFailed);
+      expect(said.single, allOf(contains('exited with 1'), contains('bad ')));
+      expect(report(), containsPair('complete', true));
+      expect(report(), containsPair('code', ExitCode.taskFailed));
+      expect(report()['why'], contains('bad '));
+    });
+
+    test(
+      'let go of once it has ended, though something it left behind '
+      'holds its pipes',
+      () async {
+        // Waited for within the grace, but never cancelled: the installed
+        // `xtask` had its answer and stayed alive until the process `pub get`
+        // left behind ended — a minute here.
+        repository();
+        final bin = Directory(p.join(root, '.fake-bin'))..createSync();
+        final dart = File(p.join(bin.path, 'dart'))
+          ..writeAsStringSync(
+            '#!/bin/sh\n'
+            'if [ "\$1" = pub ]; then\n'
+            '  sleep 60 & echo \$! > sleeper.pid; exec sleep 60\n'
+            'fi\n'
+            'exit 0\n',
+          );
+        Process.runSync('chmod', ['+x', dart.path]);
+        final run = await Process.start(
+          'python3',
+          [
+            '-c',
+            withSignalDefaults,
+            Platform.resolvedExecutable,
+            'run',
+            p.join(Directory.current.path, 'bin', 'xtask.dart'),
+            'check',
+          ],
+          workingDirectory: root,
+          environment: {
+            'PATH': '${bin.path}:${Platform.environment['PATH']}',
+          },
+        );
+        final said = StringBuffer();
+        run.stdout.transform(utf8.decoder).listen(said.write);
+        run.stderr.transform(utf8.decoder).listen(said.write);
+        final pidFile = File(p.join(root, 'sleeper.pid'));
+        int? sleeper;
+        for (var tries = 0; tries < 300 && sleeper == null; tries++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          if (pidFile.existsSync()) {
+            sleeper = int.tryParse(pidFile.readAsStringSync().trim());
+          }
+        }
+        if (sleeper == null) {
+          run.kill(ProcessSignal.sigkill);
+          fail('`pub get` was never started:\n$said');
+        }
+        addTearDown(() => Process.killPid(sleeper!, ProcessSignal.sigkill));
+
+        run.kill();
+        final answered = await run.exitCode.timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {
+            run.kill(ProcessSignal.sigkill);
+            fail('the installed `xtask` outlived its answer:\n$said');
+          },
+        );
+
+        expect(answered, 143, reason: '$said');
+        expect(said.toString(), contains('received SIGTERM during'));
+      },
+      testOn: 'linux',
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
   }, testOn: '!windows');
 
   test('a project started that ends before its engine writes the report '

@@ -51,9 +51,14 @@ Windows.
 Before the run is started, while the installed `xtask` gets the package's
 resolution, an interrupt or a `SIGTERM` stops the `dart pub get` the way a
 body is stopped, `SIGTERM` and then `SIGKILL` after a grace, and the run is
-refused with `130` or `143`, which the `--report` says. On Windows only the
-Ctrl-C the console sends the `pub get` itself stops it, and a `pub get` so
-stopped is answered as one that failed.
+refused with `130` or `143`, which the `--report` says. The `pub get` is
+started as a body is, with a stdin that ends at once, its output read as
+UTF-8 that may be malformed, and its pipes let go of a grace after it ends,
+whatever it left running. On Windows the Ctrl-C reaches the `pub get` from the
+console, and the installed `xtask` hears it as well: a Ctrl-C from the start
+of the `pub get` to the start of the run refuses the run with `130`, the one
+between the two included. This too is decided by a test that names the
+platform, not measured on a Windows console.
 
 ## Windows
 
