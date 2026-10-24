@@ -206,7 +206,7 @@ dev_dependencies:
     // `dart_test.yaml` that is not YAML; `1` for a failing test, one that
     // does not compile, and a runner sent `SIGINT` or `SIGTERM`.
     for (final (runner, answers, why) in [
-      (79, ExitCode.success, 'no test ran: none of the kind asked for here'),
+      (79, ExitCode.taskFailed, 'no test ran: a filter that chose nothing'),
       (64, ExitCode.invalidFile, 'the runner refused its arguments'),
       (65, ExitCode.invalidFile, 'the runner refused its configuration'),
       (130, 130, 'the engine stopped it, which is not a failure'),
@@ -244,6 +244,33 @@ dev_dependencies:
 
       await packageTests()(context(member: 'packages/models'));
       expect(said.last, 'packages/models: no tests ran');
+    });
+
+    // A filter that chose nothing is a typo as often as it is a package
+    // without tests of that kind, and only the project knows which it meant.
+    test('no test ran passes only where the project allows it', () async {
+      dartPackage('packages/models');
+      answer = 79;
+
+      expect(
+        await packageTests(allowNoTests: true)(
+          context(member: 'packages/models'),
+        ),
+        ExitCode.success,
+      );
+      expect(said.last, 'packages/models: no tests ran');
+      expect(testsAnswer(79, allowNoTests: true), ExitCode.success);
+      expect(testsAnswer(79), ExitCode.taskFailed);
+    });
+
+    test('and allowing it changes no other answer', () {
+      for (final code in [1, 64, 65, 130, 124]) {
+        expect(
+          testsAnswer(code, allowNoTests: true),
+          testsAnswer(code),
+          reason: '$code',
+        );
+      }
     });
 
     test('a runner that is not installed is a 3, not a failed suite', () async {

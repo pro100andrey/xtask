@@ -29,7 +29,13 @@ import 'package:yaml/yaml.dart';
 ///
 /// `in: $each` because a task with `each:` has to write `$each` somewhere,
 /// or the engine refuses it: the member is what tells the runs apart.
-Verb packageTests() => runPackageTests;
+///
+/// [allowNoTests] is for a task that runs a kind of test across every
+/// package — `args: [-t, integration]` — where a package with none of that
+/// kind is expected. Without it, a filter that chose nothing fails the
+/// package ([testsAnswer]).
+Verb packageTests({bool allowNoTests = false}) =>
+    (context) => runPackageTests(context, allowNoTests: allowNoTests);
 
 /// Runs the tests of the package [context] is for, and answers with an
 /// [ExitCode].
@@ -60,7 +66,10 @@ Verb packageTests() => runPackageTests;
 ///
 /// It refuses, naming why, a member in no package, and a `pubspec.yaml` that
 /// cannot be read.
-Future<int> runPackageTests(VerbContext context) async {
+Future<int> runPackageTests(
+  VerbContext context, {
+  bool allowNoTests = false,
+}) async {
   final from =
       context.member ??
       p.relative(context.workingDirectory, from: context.root);
@@ -93,7 +102,7 @@ Future<int> runPackageTests(VerbContext context) async {
   if (code == _noTestsRan) {
     context.log('$package: no tests ran');
   }
-  return testsAnswer(code);
+  return testsAnswer(code, allowNoTests: allowNoTests);
 }
 
 /// `dart test`'s and `flutter test`'s number for a run in which no test
@@ -104,12 +113,16 @@ const _noTestsRan = 79;
 /// against `dart test` and `flutter test` rather than read from their
 /// documentation, which lists none of it:
 ///
-/// - `0`, every test passed, and `79`, no test ran — a `--name` or `--tags`
-///   in `args:` that this package has nothing for, or a `test/` without a
-///   test file: `0`. A package with no tests of the kind asked for is no
-///   failure of its tests, which is the rule a package without `test/`
-///   already follows, and an `each:` over every package with `-t
-///   integration` is how a project runs the packages that have some.
+/// - `0`, every test passed: `0`.
+/// - `79`, no test ran — a `--name` or `--tags` in `args:` that chose
+///   nothing here, or a `test/` without a test file: `1`, unless
+///   [allowNoTests]. A filter that chose nothing is a typo as often as it is
+///   a package without tests of that kind, and from one package the two look
+///   the same; failing is the answer that cannot let a misspelt tag pass a
+///   whole gate green. A project running a kind of test across every package
+///   says so with [allowNoTests], and then it is `0`. A package without
+///   `test/` is another matter — it has no tests at all — and is skipped
+///   before the runner is started.
 /// - `64` and `65`, the runner refusing its command line — an unknown flag
 ///   in `args:` — or its `dart_test.yaml` before any test began: `2`
 ///   ([ExitCode.invalidFile]), the request being wrong rather than the code.
@@ -128,13 +141,15 @@ const _noTestsRan = 79;
 ///
 /// [windows] is the host's unless given, so the rule for each can be asked
 /// of either.
-int testsAnswer(int code, {bool? windows}) => switch (code) {
-  ExitCode.success || _noTestsRan => ExitCode.success,
-  64 || 65 => ExitCode.invalidFile,
-  130 => 130,
-  < 0 when !(windows ?? Platform.isWindows) => 128 - code,
-  _ => ExitCode.taskFailed,
-};
+int testsAnswer(int code, {bool? windows, bool allowNoTests = false}) =>
+    switch (code) {
+      ExitCode.success => ExitCode.success,
+      _noTestsRan when allowNoTests => ExitCode.success,
+      64 || 65 => ExitCode.invalidFile,
+      130 => 130,
+      < 0 when !(windows ?? Platform.isWindows) => 128 - code,
+      _ => ExitCode.taskFailed,
+    };
 
 /// Whether the package whose `pubspec.yaml` is [pubspec] needs `flutter
 /// test`: whether anything in its `dependencies` or `dev_dependencies` comes

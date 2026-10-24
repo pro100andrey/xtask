@@ -40,10 +40,11 @@
 - `packageTests()`: `flutter test` or `dart test` in each package, by whether
   its pubspec takes anything from the Flutter SDK; a package without `test/` is
   skipped, and a runner not on `PATH` answers `3` (`runPackageTests`,
-  `usesFlutter`). The runner's code is translated, not flattened: no test
-  ran is `0`, a refused command line or configuration `2`, a suite the run
-  stopped `130`, a runner killed by a signal `128` and the signal, a failure
-  `1`.
+  `usesFlutter`). The runner's code is translated, not flattened: a refused
+  command line or configuration is `2`, a suite the run stopped `130`, a
+  runner killed by a signal `128` and the signal, a failure `1` — and so is a
+  filter that chose no test, unless the verb was registered with
+  `allowNoTests: true`.
 - `pubPublish` and `publishToPub`: a package published to pub after checking
   that the registry does not serve the version yet, the changelog names it,
   the package matches HEAD and git tracks every file pub would upload

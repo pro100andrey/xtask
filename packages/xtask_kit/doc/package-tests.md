@@ -51,11 +51,46 @@ from `dart test` and `flutter test`:
 | The runner answers | When | The task answers |
 | --- | --- | --- |
 | `0` | every test passed | `0` |
-| `79` | no test ran: a `--name` or `--tags` this package has nothing for, or a `test/` with no test file | `0`, with a line saying so — no tests of the kind asked for is no failure of them, as with no `test/` |
+| `79` | no test ran: a `--name` or `--tags` that chose nothing here, or a `test/` with no test file | `1`, with a line saying so — unless the verb was registered with `allowNoTests: true`, then `0` |
 | `64`, `65` | the runner refused an argument in `args:`, or its `dart_test.yaml`, or the package has no `test` dev dependency, before any test began | `2`: the request was wrong, not the code |
 | `130` | the engine stopped it — an `interruptible:` suite after an earlier failure | `130`, so the run reports it stopped rather than failed |
 | killed by a signal (not on Windows) | nobody in the run sent it | `128` and the signal, as a shell says it: `137` for a `SIGKILL` |
 | anything else | a failing test, one that does not compile, a timeout, the runner's own crash | `1` |
+
+### When no test ran
+
+A filter that chose nothing is a typo as often as it is a package with no
+tests of that kind, and from one package the two look the same. So by default
+it fails: a misspelt tag cannot pass a whole gate green with only a "no tests
+ran" line to show for it. A task that runs one kind of test across every
+package, where some have none, says that it means it:
+
+```dart
+exitCode = await runXtask(args, verbs: {
+  'tests': packageTests(),
+  'integration': packageTests(allowNoTests: true),
+});
+```
+
+```yaml
+version: 1
+
+sets:
+  packages:
+    include: [packages/*]
+    containing: [pubspec.yaml]
+
+tasks:
+  integration:
+    desc: the integration tests of every package that has some
+    each: packages
+    in: $each
+    do: integration
+    args: [-t, integration]
+```
+
+A package without `test/` is different — it has no tests at all — and is
+skipped either way, before the runner is started.
 
 A runner does not answer `130` or `143` on its own: `dart test` sent a
 `SIGINT` or a `SIGTERM` exits `1`. A run stopped by Ctrl-C is reported as stopped by
