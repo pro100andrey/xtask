@@ -60,6 +60,20 @@ final class RunStopped extends Skipped {
   String get sentence => 'the run stopped at an earlier failure';
 }
 
+/// The run was refused before any task in it began, and this one was not
+/// the reason.
+///
+/// Apart from [RunStopped]: nothing ran and nothing failed — a task whose
+/// `unchanged:` set could not be read refused the whole run up front — and
+/// a reader told of "an earlier failure" looks for a task that ran first and
+/// broke, which is not there.
+final class RunRefused extends Skipped {
+  const RunRefused();
+
+  @override
+  String get sentence => 'the run was refused before it began';
+}
+
 /// It began, and the run gave up before all of its members had.
 ///
 /// A member that has not started is what has not started, so a failure
@@ -172,6 +186,7 @@ final class OffPlatform extends Skipped {
 Result resultOf(Skipped why) => switch (why) {
   NeedsStopped() || FollowsStopped() || OffPlatform() => Result.skipped,
   RunStopped() ||
+  RunRefused() ||
   PartlyRun() ||
   NeverStartable() ||
   Interrupted() ||

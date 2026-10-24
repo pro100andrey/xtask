@@ -81,6 +81,10 @@ final class FakeStarter implements ProcessStarter {
   /// Which executables were given a reason to stop early, by name.
   final stoppable = <String, Future<void>>{};
 
+  /// Executables that, once asked to stop, take until this completes to
+  /// end — a body that traps the `SIGTERM` and is given its grace.
+  final lingers = <String, Completer<void>>{};
+
   /// Executables that cannot be started at all, by name.
   ///
   /// `Process.start` throws rather than answering when the working directory
@@ -135,6 +139,7 @@ final class FakeStarter implements ProcessStarter {
         until.then((_) => true),
       ]);
       if (stopped) {
+        await lingers[name]?.future;
         return SystemProcessStarter.interrupted;
       }
     } else {
@@ -2180,6 +2185,47 @@ void main() {
         reason: 'stopped, and not reported as a second failure',
       );
       expect(logged.join('\n'), isNot(summaryRow('✗', 'slow')));
+    });
+
+    test('one a failure stopped is said to have been, though a signal came '
+        'while it was still ending', () async {
+      // A body that traps the `SIGTERM` exits seconds after it was asked
+      // to. Why it was stopped was read once it had exited, so a Ctrl-C in
+      // those seconds was said to have stopped what the failure had.
+      final interruption = Interruption();
+      final ending = Completer<void>();
+      starter = FakeStarter({'ruff': 1})
+        ..holds['pytest'] = Completer<void>()
+        ..lingers['pytest'] = ending;
+      final runs = <RunSoFar>[];
+      final running = runFile(
+        'version: 1\ntasks:\n'
+            '  fmt: {desc: a, run: [ruff]}\n'
+            '  slow: {desc: b, interruptible: true, run: [pytest]}\n'
+            '  all: {desc: c, needs: [fmt, slow]}\n',
+        'all',
+        concurrency: 2,
+        interruption: interruption,
+        reportTo: runs.add,
+      );
+      await pumpEventQueue();
+      interruption.receive(2, 'SIGINT');
+      ending.complete();
+
+      expect(await running, 130, reason: 'the run still answers the signal');
+      final said = logged.join('\n');
+      expect(
+        said,
+        contains(
+          'task `slow` was stopped: an earlier failure had already answered '
+          'the run',
+        ),
+      );
+      expect(said, isNot(contains('`slow` was stopped: the run received')));
+      expect(
+        runs.last.tasks.firstWhere((ended) => ended.name == 'slow').why,
+        const Interrupted().sentence,
+      );
     });
 
     test('a task exiting 130 on its own is a failure, not a stop', () async {

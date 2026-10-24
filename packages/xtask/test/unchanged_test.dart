@@ -362,6 +362,13 @@ void main() {
         expect(code, ExitCode.invalidFile, reason: what);
         expect(ran, isEmpty, reason: what);
         expect(output(), contains('codegen'), reason: what);
+        // Nothing ran, so nothing failed first: the run was refused whole.
+        expect(
+          output(),
+          summaryRow('·', 'gen', 'the run was refused before it began'),
+          reason: what,
+        );
+        expect(output(), isNot(contains('earlier failure')), reason: what);
       }
     });
 

@@ -38,6 +38,7 @@ final class CiStep {
     this.condition,
     this.readsAnotherFile,
     this.movedBy,
+    this.directory,
     this.cannotFail = false,
     this.jobCannotFail = false,
     this.continueOnError = 'true',
@@ -86,6 +87,16 @@ final class CiStep {
   /// Decided where the root is known and carried as a fact, so that judging a
   /// step stays a question about the step.
   final String? readsAnotherFile;
+
+  /// The step's `working-directory:` as a path from the root, with `/`,
+  /// where it is one written out and inside the root; null for the root, an
+  /// expression, and a path that leaves it.
+  ///
+  /// What a relative path on the `run:` line is read from: `dart run
+  /// bin/tasks.dart` under `working-directory: tools` runs
+  /// `tools/bin/tasks.dart`, and matched as written against `entry:
+  /// tools/bin/tasks.dart` it was called any other program.
+  final String? directory;
 
   /// Where [readsAnotherFile] came from when it is not the step's own key —
   /// `its job's \`defaults: run:\`` or `the workflow's …` — so a reader looks
@@ -385,7 +396,7 @@ StepVerdict judge(
   // The marker is weighed last, and only against a step that would otherwise
   // be reported as a command. What it says is "this step is not a gate set",
   // which is a sentence about exactly one of the readings below.
-  switch (_readStep(step.command, entry: entry)) {
+  switch (_readStep(step.command, entry: entry, from: step.directory)) {
     case _Refused(:final refusal):
       problems.add(RunsSomethingRefused(step, refusal));
       if (reason != null) {
@@ -702,7 +713,7 @@ final class _Expression extends _Reading {
 /// One command line, split on whitespace. The words after xtask are handed to
 /// the command line's own parser, so `--check-ci` and `xtask` cannot disagree
 /// about what a step would do — and nothing else about the line is read.
-_Reading _readStep(String command, {String? entry}) {
+_Reading _readStep(String command, {String? entry, String? from}) {
   if (command.contains('\n')) {
     return _Script(command.split('\n').length);
   }
@@ -710,7 +721,7 @@ _Reading _readStep(String command, {String? entry}) {
     return const _Expression();
   }
   final words = command.split(RegExp(r'\s+'));
-  final arguments = _argumentsToXtask(words, entry: entry);
+  final arguments = _argumentsToXtask(words, entry: entry, from: from);
   if (arguments == null || words.any(_endsACommand)) {
     return const _Command();
   }
@@ -735,8 +746,12 @@ bool _endsACommand(String word) =>
 /// means knowing what every program does with its arguments, and that list is
 /// never finished. A step that needs a prefix has a key for it: `timeout:` on
 /// the task, `working-directory:` on the step.
-List<String>? _argumentsToXtask(List<String> words, {String? entry}) {
-  if (_namesXtask(words.first, entry: entry)) {
+List<String>? _argumentsToXtask(
+  List<String> words, {
+  String? entry,
+  String? from,
+}) {
+  if (_namesXtask(words.first, entry: entry, from: from)) {
     return words.skip(1).toList();
   }
   if (words.first != 'dart') {
@@ -747,7 +762,9 @@ List<String>? _argumentsToXtask(List<String> words, {String? entry}) {
     if (word == 'run' || word.startsWith('-')) {
       continue;
     }
-    return _namesXtask(word, entry: entry) ? words.skip(at + 1).toList() : null;
+    return _namesXtask(word, entry: entry, from: from)
+        ? words.skip(at + 1).toList()
+        : null;
   }
   return null;
 }
@@ -770,16 +787,33 @@ List<String>? _argumentsToXtask(List<String> words, {String? entry}) {
 /// `$GITHUB_WORKSPACE/tool/main.dart` do. A bare `main.dart` under
 /// `working-directory: tool` does not: read as a command, it is reported,
 /// which is a question asked where the looser reading would have been a
-/// guess.
-bool _namesXtask(String word, {String? entry}) {
+/// guess — unless the step's `working-directory:` is a directory written
+/// out, [from]: then a relative word is read from it, as the shell reads it,
+/// and `bin/main.dart` under `tool` is `tool/main.dart`'s own path.
+bool _namesXtask(String word, {String? entry, String? from}) {
   final name = word.replaceAll(r'\', '/');
   final base = name.substring(name.lastIndexOf('/') + 1);
-  return (entry != null && _endsWith(name, entry)) ||
+  return (entry != null && _endsWith(_fromRoot(name, from), entry)) ||
       base == 'xtask' ||
       base == 'xtask.exe' ||
       base == 'xtask.bat' ||
       base == 'xtask.dart' ||
       base.endsWith(':xtask');
+}
+
+/// [name], a path with `/`, read from the directory [from] under the root
+/// where it is relative, and as written otherwise: absolute, a variable's,
+/// or climbing out of the root, which is nothing this checker can follow.
+String _fromRoot(String name, String? from) {
+  if (from == null ||
+      name.startsWith(r'$') ||
+      name.startsWith('~') ||
+      p.posix.isAbsolute(name) ||
+      p.windows.isAbsolute(name)) {
+    return name;
+  }
+  final joined = p.posix.normalize(p.posix.join(from, name));
+  return joined == '..' || joined.startsWith('../') ? name : joined;
 }
 
 /// Whether the path [name] ends in every segment of [entry], both with `/`
@@ -909,6 +943,7 @@ Iterable<CiStep> _steps(File workflow, String name, String root) sync* {
         condition: condition == null ? null : '${condition.value}',
         readsAnotherFile: _anotherFile(root, where),
         movedBy: movedBy,
+        directory: _directoryOf(where),
         // Either place says it: GitHub applies a job's to every step.
         cannotFail: soft != null,
         jobCannotFail: onTheJob != null,
@@ -951,6 +986,20 @@ String? _anotherFile(String root, YamlNode? where) {
   }
   final own = p.join(underRoot(root, written), xtaskFileName);
   return File(own).existsSync() ? written : null;
+}
+
+/// [where] as a path from the root with `/`, where it is one written out
+/// inside the root and not the root itself; null otherwise.
+String? _directoryOf(YamlNode? where) {
+  if (where == null) {
+    return null;
+  }
+  final written = '${where.value}'.trim().replaceAll(r'\', '/');
+  if (written.isEmpty || isExpression(written) || leavesRoot(written)) {
+    return null;
+  }
+  final normal = p.posix.normalize(written);
+  return normal == '.' ? null : normal;
 }
 
 /// [node] as written when it is `true` or may be, and null when it is not.

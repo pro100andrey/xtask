@@ -2,7 +2,8 @@
 ///
 /// Its own module because two programs write it. The engine writes a run's,
 /// as it goes; and the installed `xtask`, handing a run to a project's own
-/// entry point, writes one only when it refuses to start that run — and
+/// entry point, writes one only when it refuses to start that run, or when
+/// the run it started ended before the project's engine wrote a word — and
 /// then has to write the same thing, in the same place, the same way, or a
 /// program reading the report would see two formats for one refusal.
 library;

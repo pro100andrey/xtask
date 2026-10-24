@@ -24,6 +24,7 @@ import 'executables.dart';
 import 'exit_codes.dart';
 import 'parse.dart';
 import 'reading.dart';
+import 'report.dart' show runReport;
 import 'report_file.dart';
 import 'request.dart';
 import 'secrets.dart';
@@ -48,9 +49,10 @@ const handOverLimit = 8;
 /// the project at `root` whose entry point is `entry` (from the root, with
 /// `/`). Where `resolveIn` is set, the package there has no resolution yet,
 /// and `dart pub get` is run in it first. `report` is the `--report` the
-/// person's command line asked for, which is written here only where the
-/// run is refused before it starts: once started, the project's engine
-/// writes it.
+/// person's command line asked for, which is written here where the run is
+/// refused before it starts, begun before it is started, and finished where
+/// the project ended before its engine wrote to it: otherwise the project's
+/// engine writes it.
 ///
 /// There is no working directory to name: the run is started in this
 /// process's own, where the person stands, because that is what every
@@ -331,7 +333,17 @@ Future<int> runProjectEntry(
         '${got.exitCode}:\n${got.stdout}${got.stderr}',
       );
     }
+    _markResolved(package);
   }
+  // **The report is begun before the project is started**, as the engine
+  // begins it before it reads anything: a project that is started and ends
+  // before its engine has written a word — an entry point that does not
+  // compile, a `dart run` that cannot resolve — left the last run's report
+  // where this one's belongs. Not written is not refused: the project's
+  // engine tries the same file next, and says why it cannot.
+  final begun = entry.report == null
+      ? null
+      : _beginReport(entry, from, secrets);
   final Process process;
   try {
     process = await Process.start(
@@ -353,15 +365,61 @@ Future<int> runProjectEntry(
   }
   final watching = passSignalsOn(process.kill, windows: Platform.isWindows);
   try {
-    final code = await process.exitCode;
+    final exited = await process.exitCode;
     // A run ended by a signal answers as a shell would say it, 128 and the
     // signal, where Dart reports the signal negated. Only off Windows: there
     // a negative code is an NTSTATUS the shell reports as it is.
-    return code < 0 && !Platform.isWindows ? bySignal(-code) : code;
+    final code = exited < 0 && !Platform.isWindows ? bySignal(-exited) : exited;
+    // Still the report begun above, or the engine's own first one: nothing
+    // ran far enough to write another, and the run's code is its answer.
+    if (begun != null && _stillBegun(begun)) {
+      reportRefusal(
+        entry.report!,
+        workingDirectory: from,
+        secrets: secrets,
+        code: code,
+        refusal:
+            'xtask: the entry point `${entry.entry}` ended with $code before '
+            'its run began',
+        err: say,
+      );
+    }
+    return code;
   } finally {
     for (final watch in watching) {
       await watch.cancel();
     }
+  }
+}
+
+/// Writes the report [entry] asked for as a run not begun yet, and answers
+/// the file, or null where it could not be written.
+File? _beginReport(ProjectEntry entry, String from, Secrets secrets) {
+  final asked = entry.report!;
+  try {
+    ReportFile(
+      asked.path,
+      workingDirectory: from,
+      secrets: secrets,
+    ).write(runReport(asked.task, null));
+  } on FileSystemException {
+    return null;
+  }
+  return File(p.join(from, asked.path));
+}
+
+/// Whether the report at [file] is still one written before any run began:
+/// not complete, and no task in it.
+bool _stillBegun(File file) {
+  try {
+    return switch (jsonDecode(file.readAsStringSync())) {
+      {'complete': false, 'tasks': []} => true,
+      _ => false,
+    };
+  } on FormatException {
+    return false;
+  } on FileSystemException {
+    return false;
   }
 }
 
@@ -486,6 +544,48 @@ String? _nearestResolution(String from) {
 String _config(String directory) =>
     p.join(directory, '.dart_tool', 'package_config.json');
 
+/// Marks the resolution of [package] as got now, as `dart run` does when it
+/// finds it current.
+///
+/// **`dart pub get` leaves a resolution it did not change as it was** —
+/// measured: after `touch pubspec.lock`, neither the lock nor
+/// `.dart_tool/package_config.json` is written — so a lock a checkout or a
+/// pull had touched stayed newer than the resolution, [_current] answered
+/// no on every run after, and every run paid a `pub get` again. `dart run
+/// :name` sets the time of `package_config.json` for this very reason, and
+/// so is it set here — to now, or to the newest of [_sources] where a clock
+/// put one ahead of now: the `pub get` that has just succeeded read them as
+/// they are, and a resolution marked older than one of them would be got
+/// again on every run, the very thing this is for. A time that cannot be
+/// set changes nothing but the next run's `pub get`.
+void _markResolved(String package) {
+  final home = _resolutionOf(package);
+  if (home == null) {
+    return;
+  }
+  try {
+    var at = DateTime.now();
+    for (final source in _sources(home, package)) {
+      final file = File(source);
+      if (file.existsSync() && file.lastModifiedSync().isAfter(at)) {
+        at = file.lastModifiedSync();
+      }
+    }
+    File(_config(home)).setLastModifiedSync(at);
+  } on FileSystemException {
+    // Not there, or not ours to touch: the next run gets it again.
+  }
+}
+
+/// The files a resolution at [home], of the entry point's [package], is got
+/// from: what [_current] holds its time against.
+Set<String> _sources(String home, String package) => {
+  p.join(home, 'pubspec.lock'),
+  p.join(home, 'pubspec.yaml'),
+  p.join(home, 'pubspec_overrides.yaml'),
+  p.join(package, 'pubspec.yaml'),
+};
+
 /// Whether the resolution at [home] is no older than what it was got from,
 /// as `dart run` judges it for the name form: a `pubspec.lock` there, and
 /// neither it nor the `pubspec.yaml` and `pubspec_overrides.yaml` beside
@@ -504,12 +604,7 @@ bool _current(String home, String package) {
       return false;
     }
     resolved = File(_config(home)).lastModifiedSync();
-    for (final source in {
-      lock.path,
-      p.join(home, 'pubspec.yaml'),
-      p.join(home, 'pubspec_overrides.yaml'),
-      p.join(package, 'pubspec.yaml'),
-    }) {
+    for (final source in _sources(home, package)) {
       final file = File(source);
       if (file.existsSync() && file.lastModifiedSync().isAfter(resolved)) {
         return false;

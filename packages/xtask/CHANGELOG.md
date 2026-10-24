@@ -83,8 +83,11 @@
   tools package, the file runs instead, since those resolutions lack the
   package's `dev_dependencies`. A resolution older than its `pubspec.yaml`,
   `pubspec.lock` or `pubspec_overrides.yaml`, or with no lock, is got again
-  before the file form runs. A failed `dart pub get` is a `1`; an entry point
-  that does not compile is `dart run`'s `254` or `255`. A batch-file `dart`
+  before the file form runs, and then marked current, as `dart run` marks
+  it, so a lock a checkout touched costs one `pub get` and not one per run. A
+  failed `dart pub get` is a `1`; an entry point that does not compile is
+  `dart run`'s `254` or `255`, and its `--report` says so, `complete` with
+  that code, rather than keeping the last run's. A batch-file `dart`
   refuses a command line `cmd.exe` would read before any `pub get`, and says
   to put the SDK's `dart.exe` ahead of it. A run the hand-over refuses before
   it starts — a loop, no `dart`, a command line `cmd.exe` would read, a
@@ -99,7 +102,9 @@
   package (the nearest `pubspec.yaml`), getting that package a resolution
   first where it has none; `--validate` says when the file is missing or in
   no package, and `--check-ci` reads a step running it as `xtask` — by the
-  file's whole path, so another file of the same name is not. An
+  file's whole path, so another file of the same name is not, and a
+  relative path under a `working-directory:` written out is read from that
+  directory. An
   absolute path, `..`, `\` or a file that is not `.dart` is refused.
 
 - `containing: [paths]` on a glob set keeps only the members that hold every
@@ -120,7 +125,8 @@
   cannot compare — missing, `values:`, reaching outside the root, a pattern
   that is none, or empty with no `produced-by:` task to fill it — is refused
   by `--dry-run` and by the run with the same `2` and sentence, before
-  anything in the run has started, its `needs:` included; `--validate`
+  anything in the run has started, its `needs:` included — the rest said to
+  be `the run was refused before it began`; `--validate`
   refuses each too. `--dry-run` says which set a task holds.
 
 - `--report <file>` writes a run as JSON, `version: 1`: the task asked for,
@@ -143,7 +149,8 @@
   `env:` sets or `env-required:` demands is refused when the file is read,
   compared without case on every host. So is one variable spelled twice in
   two cases within one `env:`, `env-paths:` or `env-unset:` — `Path` and
-  `PATH` — which Windows would hand the body as two. `--dry-run` prints each as `env  unset CI`.
+  `PATH` — which Windows would hand the body as two — and a name `env-unset:`
+  lists twice the same way. `--dry-run` prints each as `env  unset CI`.
 
 - A run stopped by Ctrl-C or `SIGTERM` stops what it started instead of
   leaving it running: nothing more starts, every process the run started — a
@@ -154,8 +161,9 @@
   to start after the signal is answered `130` and not started. Its last
   `--report` is written with `complete: true` and the signal's code, and the
   task running says it was stopped. A task an earlier failure had already
-  stopped still says so when the signal comes later: the reason is kept from
-  the moment of the stop. On Windows, Ctrl-C only.
+  stopped still says so when the signal comes later, while it is still
+  ending too: the reason is kept from the moment it is asked to stop. On
+  Windows, Ctrl-C only.
 
 ### Changed
 

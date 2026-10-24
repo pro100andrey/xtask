@@ -34,7 +34,9 @@ void main() {
 
   /// A package resolution in [directory], naming each of [packages] — name
   /// to its root, relative to [directory] — with the `pubspec.lock` beside
-  /// it, both as fresh as `dart pub get` leaves them.
+  /// it, both written at [resolved]: as a `pub get` that changed the
+  /// resolution leaves them. One that changed nothing writes neither, which
+  /// is what the fake `dart` of [fakeDart] does.
   void resolution(String directory, Map<String, String> packages) {
     File(p.join(directory, 'pubspec.lock'))
       ..createSync(recursive: true)
@@ -71,6 +73,31 @@ void main() {
     File(p.join(directory, 'pubspec.yaml'))
       ..createSync(recursive: true)
       ..writeAsStringSync('name: $name\n$more');
+  }
+
+  /// A `dart` on a PATH of its own, under [root], that writes nothing: its
+  /// `pub get` succeeds having changed nothing, as the real one does for a
+  /// resolution that is current, and its `run` ends with [runs] — after
+  /// writing a finished report to `$WRITE` where the environment names one,
+  /// as a project's engine that got as far as its run would.
+  ExecutableResolver fakeDart({int runs = 0}) {
+    final bin = Directory(p.join(root, '.fake-bin'))..createSync();
+    final dart = File(p.join(bin.path, 'dart'))
+      ..writeAsStringSync(
+        '#!/bin/sh\n'
+        'if [ "\$1" = pub ]; then exit 0; fi\n'
+        'if [ -n "\$WRITE" ]; then\n'
+        '  printf \'{"version":1,"complete":true,"code":$runs,"tasks":[]}\' '
+        '> "\$WRITE"\n'
+        'fi\n'
+        'exit $runs\n',
+      );
+    Process.runSync('chmod', ['+x', dart.path]);
+    return ExecutableResolver(
+      environment: {'PATH': bin.path},
+      windows: false,
+      isRunnable: (path) => File(path).existsSync(),
+    );
   }
 
   ProjectEntry? entryFrom(
@@ -529,6 +556,64 @@ void main() {
     File(p.join(root, 'pubspec.lock')).deleteSync();
     expect(entryFrom(app)?.resolveIn, root, reason: 'no pubspec.lock');
   });
+
+  test('a resolution got again because a source was touched is not got '
+      'again on the next run', () async {
+    // `dart pub get` writes neither the lock nor the package config where
+    // the resolution did not change (measured), so a lock a checkout had
+    // touched stayed newer than the config, and every run paid a `pub get`.
+    repository();
+    resolution(root, {'shop': ''});
+    final app = p.join(root, 'apps', 'console');
+    resolution(app, {'console': ''});
+    touch(p.join(root, 'pubspec.lock'));
+    final first = entryFrom(app)!;
+    expect(first.resolveIn, root, reason: 'the lock is newer: got again');
+
+    final code = await runProjectEntry(
+      first,
+      environment: const {},
+      err: (_) {},
+      resolver: fakeDart(),
+    );
+
+    expect(code, ExitCode.success);
+    expect(entryFrom(app)?.resolveIn, isNull, reason: 'got, and marked so');
+  }, testOn: '!windows');
+
+  test('a project started that ends before its engine writes the report '
+      "leaves that run's answer in it, not the last run's", () async {
+    // An entry point that does not compile ends `dart run` with 255 before
+    // the project's engine has begun the report the command line asked for.
+    repository();
+    resolution(root, {'shop': ''});
+    final app = p.join(root, 'apps', 'console');
+    resolution(app, {'console': ''});
+    final at = p.join(root, 'out', 'run.json');
+    Map<String, Object?> report() =>
+        jsonDecode(File(at).readAsStringSync()) as Map<String, Object?>;
+
+    for (final (runs, writes) in [(255, false), (3, true)]) {
+      File(at)
+        ..createSync(recursive: true)
+        ..writeAsStringSync('{"code": 0}');
+      final code = await runProjectEntry(
+        entryFrom(app, ['check', '--report', at])!,
+        environment: {if (writes) 'WRITE': at},
+        err: (_) {},
+        resolver: fakeDart(runs: runs),
+      );
+      expect(code, runs);
+      expect(report(), containsPair('complete', true), reason: '$runs');
+      expect(report(), containsPair('code', runs), reason: '$runs');
+      if (writes) {
+        expect(report(), isNot(contains('why')), reason: "the engine's own");
+      } else {
+        expect(report(), containsPair('task', 'check'));
+        expect(report()['why'], contains('ended with 255 before its run'));
+      }
+    }
+  }, testOn: '!windows');
 
   test('a batch-file `dart` refuses a metacharacter before it gets a '
       'resolution, and names the entry point and the way round it', () async {

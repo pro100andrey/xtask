@@ -224,14 +224,9 @@ final class _Outcomes {
   final members = <String, List<Ended>>{};
 }
 
-/// How one body ended.
-enum _Ending {
-  /// It finished, and answered success.
-  finished,
-
-  /// It was stopped because the run had given up. Not a failure.
-  stopped,
-}
+/// Why a task was cut short: what is said of its members never begun, and
+/// of the ones stopped part-way.
+typedef _Cut = ({Skipped notBegun, Skipped partWay});
 
 /// Runs a [Plan], in order, stopping at the first failure.
 final class Executor {
@@ -407,15 +402,19 @@ final class Executor {
 
   /// Why a task the run did not begin was not begun: an earlier failure, or a
   /// signal.
-  Skipped get _notBegun => switch (_signal) {
-    (:final name, number: _) => Signalled(name, began: false),
-    null => const RunStopped(),
-  };
+  Skipped get _notBegun => _cutBy(_signal).notBegun;
 
   /// Why a task the run stopped part-way was stopped.
-  Skipped get _partWay => switch (_signal) {
-    (:final name, number: _) => Signalled(name, began: true),
-    null => const Interrupted(),
+  Skipped get _partWay => _cutBy(_signal).partWay;
+
+  /// Why what the run cut short was cut: by [signal], or by an earlier
+  /// failure where there is none.
+  _Cut _cutBy(({int number, String name})? signal) => switch (signal) {
+    (:final name, number: _) => (
+      notBegun: Signalled(name, began: false),
+      partWay: Signalled(name, began: true),
+    ),
+    null => (notBegun: const RunStopped(), partWay: const Interrupted()),
   };
 
   /// Hands [reportTo] what the run has come to so far, where there is one.
@@ -551,7 +550,7 @@ final class Executor {
         outcomes.why[name] = failure.message;
         code ??= failure.code;
       } else {
-        outcomes.skipped[name] = const RunStopped();
+        outcomes.skipped[name] = const RunRefused();
       }
     }
     _givenUp.now();
@@ -942,9 +941,8 @@ final class Executor {
     // Why this task was cut short, as it was when it was: a signal that
     // reaches the run afterwards did not stop what a failure had already
     // stopped, and asking only once the task has ended would say it did.
-    ({Skipped notBegun, Skipped partWay})? cut;
-    ({Skipped notBegun, Skipped partWay}) cutNow() =>
-        cut ??= (notBegun: _notBegun, partWay: _partWay);
+    _Cut? cut;
+    _Cut cutNow() => cut ??= _cutBy(_signal);
 
     Future<void> member(int at, Lease? given) async {
       final place = given ?? await _slots.take();
@@ -965,10 +963,12 @@ final class Executor {
       int? code;
       String? why;
       try {
-        if (await _perform(resolved[at], own) == _Ending.stopped) {
+        if (await _perform(resolved[at], own) case final stoppedBy?) {
           stop = true;
           result = Result.notRun;
-          why = (outcomes.interrupted[task.name] ??= cutNow().partWay).sentence;
+          cut ??= stoppedBy;
+          why =
+              (outcomes.interrupted[task.name] ??= stoppedBy.partWay).sentence;
         }
       } on XtaskFormatException catch (thrown) {
         // The file being wrong is not a thing more members can fix, and it
@@ -1109,15 +1109,28 @@ final class Executor {
 
   // ── one body ──────────────────────────────────────────────────────────────
 
-  /// Performs [body], and says how it ended. Throws [RunFailure] when it
-  /// failed.
-  Future<_Ending> _perform(Resolved body, _Lines lines) async {
+  /// Performs [body], and answers null where it finished and why it was cut
+  /// short where it was stopped. Throws [RunFailure] when it failed.
+  Future<_Cut?> _perform(Resolved body, _Lines lines) async {
     final task = body.task;
     final where = _at(body);
 
+    // **Why it was stopped is taken when it is asked to stop**, not when it
+    // ends. A body asked to stop by a failure may take seconds to exit —
+    // it traps the `SIGTERM`, and is given its grace — and a signal that
+    // reaches the run in that time did not stop it: read once the body had
+    // ended, the signal was said to have, in its section, its row and the
+    // report. Listened to before the body starts, so this hears of the stop
+    // ahead of the starter that acts on it.
+    final stop = body is ResolvedProcess && task.interruptible
+        ? _givenUp.reached
+        : interruption?.reached;
+    _Cut? askedBy;
+    unawaited(stop?.then((_) => askedBy = _cutBy(_signal)));
+
     final int code;
     try {
-      code = await _start(body, lines);
+      code = await _start(body, lines, until: stop);
     } on ProcessException catch (failure) {
       // Only where "could not be started" is literally true. A verb that
       // shells out to `git` on a machine without it raises this too, and
@@ -1140,7 +1153,7 @@ final class Executor {
     }
 
     if (code == ExitCode.success) {
-      return _Ending.finished;
+      return null;
     }
 
     // **Any code, once the run has been told to stop.** The process was
@@ -1149,23 +1162,22 @@ final class Executor {
     // `-2`, `130` or whatever its own handler answers — before the engine's
     // `SIGTERM` is sent. Read as a failure, every Ctrl-C would print one red
     // line per body for a run that broke nothing.
-    if (_signal case (:final name, number: _)) {
-      lines('task `${task.name}`$where was stopped: the run received $name');
-      return _Ending.stopped;
+    if (askedBy case (partWay: Signalled(:final signal), notBegun: _)) {
+      lines('task `${task.name}`$where was stopped: the run received $signal');
+      return askedBy;
     }
 
     // Not a failure: it was not allowed to finish, and calling that a failure
     // would put a second red thing beside the one that actually broke. Gated
-    // on the run having given up and not on the number alone: 130 is what
-    // plenty of programs exit with on their own.
-    if (code == SystemProcessStarter.interrupted &&
-        task.interruptible &&
-        _givenUp.already) {
+    // on the run having asked it to stop and not on the number alone: 130 is
+    // what plenty of programs exit with on their own.
+    if (askedBy case final cut?
+        when code == SystemProcessStarter.interrupted && task.interruptible) {
       lines(
         'task `${task.name}`$where was stopped: an earlier failure had already '
         'answered the run',
       );
-      return _Ending.stopped;
+      return cut;
     }
 
     // A killed process is reported as killed, not as "exit code 124": the
@@ -1197,8 +1209,9 @@ final class Executor {
     );
   }
 
-  /// Starts what [body] resolved to, and answers with its exit code.
-  Future<int> _start(Resolved body, _Lines lines) {
+  /// Starts what [body] resolved to, stopped once [until] completes, and
+  /// answers with its exit code.
+  Future<int> _start(Resolved body, _Lines lines, {Future<void>? until}) {
     switch (body) {
       case ResolvedVerb(:final implementation):
         return _runVerb(body, implementation, lines);
@@ -1224,10 +1237,9 @@ final class Executor {
           timeout: timeout,
           // A failure stops only what said it may be stopped; a signal stops
           // everything, and gives the run up too, so an `interruptible:` task
-          // hears of it through the first.
-          until: body.task.interruptible
-              ? _givenUp.reached
-              : interruption?.reached,
+          // hears of it through the first. Chosen by `_perform`, which keeps
+          // why.
+          until: until,
           // A child writes to the terminal itself only where nothing between
           // it and the terminal is collecting.
           output: lines.live ? null : lines.relay,

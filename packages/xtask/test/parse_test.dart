@@ -1428,6 +1428,20 @@ tasks: {}
       }
     });
 
+    test('a name written twice the same way in `env-unset:` is refused as '
+        'listed twice, not as two spellings', () {
+      // Nothing about Windows or case is the matter with `[FOO, FOO]`, and a
+      // refusal saying so sends the reader looking for a second spelling.
+      final message = refusalOf(
+        () => parseXtaskFile(
+          'version: 1\ntasks:\n'
+          '  a: {desc: x, run: [dart], env-unset: [FOO, FOO]}\n',
+        ),
+      );
+      expect(message, contains('task `a` lists `FOO` twice in `env-unset:`'));
+      expect(message, isNot(contains('Windows')));
+    });
+
     test('a marker in `env-unset:` names nothing', () {
       final message = refusalOf(
         () => parseXtaskFile(

@@ -135,6 +135,39 @@ jobs:
       expect(check().invocations.single.gate, 'ci-analyze');
     });
 
+    test('an `entry:` file is found from the `working-directory:` the step '
+        'moved into', () {
+      // `dart run bin/tasks.dart` under `tools` runs `tools/bin/tasks.dart`,
+      // and read as written it was called any other program.
+      final entried = lake.replaceFirst(
+        'version: 1\n',
+        'version: 1\nentry: tools/bin/tasks.dart\n',
+      );
+      for (final (where, command) in [
+        ('tools', 'dart run bin/tasks.dart ci-analyze'),
+        ('./tools/', 'dart run ./bin/tasks.dart ci-analyze'),
+        ('tools/bin', 'dart run tasks.dart ci-analyze'),
+        ('tools/sub', 'dart run ../bin/tasks.dart ci-analyze'),
+      ]) {
+        steps('''
+      - run: $command
+        working-directory: $where
+''');
+        final found = check(entried);
+        expect(found.problems, isEmpty, reason: '$where: ${said(entried)}');
+        expect(found.invocations.single.gate, 'ci-analyze', reason: where);
+      }
+      steps('''
+      - run: dart run bin/tasks.dart ci-analyze
+        working-directory: app
+''');
+      expect(
+        check(entried).problems.single,
+        isA<RunsACommand>(),
+        reason: "`app/bin/tasks.dart` is another file of the entry's name",
+      );
+    });
+
     test('flags after the name are allowed, in every spelling', () {
       // The checker and the command line accept the same spellings, because
       // it is the command line's parser that reads them.

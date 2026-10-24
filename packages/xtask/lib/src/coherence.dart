@@ -143,7 +143,7 @@ Iterable<XtaskFormatException> _requiredAndUnset(
 }
 
 /// One variable spelled twice within one of `env:`, `env-paths:` or
-/// `env-unset:`, in two cases.
+/// `env-unset:`, in two cases — or, in `env-unset:`, the same spelling twice.
 ///
 /// **Two keys to YAML, one variable to Windows.** The document has `Path`
 /// and `PATH` as two entries, so nothing before this refuses them; the body
@@ -165,6 +165,15 @@ Iterable<XtaskFormatException> _spelledTwice(
       final first = seen[name.toUpperCase()];
       if (first == null) {
         seen[name.toUpperCase()] = name;
+      } else if (first == name) {
+        // The same spelling twice, which only a list can hold: nothing is
+        // read as one by Windows here, and saying so would send the reader
+        // looking for a second spelling that is not there.
+        yield XtaskFormatException(
+          'task `${task.name}` lists `$name` twice in `$key:`. Keep one',
+          keySpan?.call(key) ?? task.span,
+        );
+        break;
       } else {
         yield XtaskFormatException(
           'task `${task.name}` names one variable twice in `$key:` — '

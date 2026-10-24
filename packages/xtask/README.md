@@ -218,8 +218,11 @@ paths on the command line keep meaning what they meant:
 - When the package has never been resolved, or its `pubspec.yaml`,
   `pubspec.lock` or `pubspec_overrides.yaml` is newer than its resolution
   (or it has no lock), as after a pull that brought a dependency:
-  `dart pub get` in it, then the file, still from where you stand. The name
-  form needs none of this, since `dart run` does the same check itself.
+  `dart pub get` in it, then the file, still from where you stand, and the
+  resolution is marked current as `dart run` marks it — a `pub get` that
+  changes nothing writes nothing, so without the mark a touched lock would
+  cost one on every run. The name form needs none of this, since `dart run`
+  does the same check itself.
   `dart run :xtask` in the package would resolve it too, but only by moving
   the run there, and every relative path you typed (`--report`,
   `--check-schema`, …) would be read from the wrong directory.
@@ -229,7 +232,9 @@ an entry point with a name of its own — is a gate set's invocation to
 `--check-ci`, as `xtask check` is. A file named in `entry:` is matched by its
 whole path, `./` or a directory before it allowed: with `entry:
 tool/main.dart`, `dart run bin/main.dart serve` is the application, not a
-gate set.
+gate set. Under a `working-directory:` written out, a relative path is read
+from that directory: `dart run bin/main.dart check` in `tool` is the entry
+point.
 
 `--completion` is not handed over, and neither is `--names`, which a
 completion script asks on every TAB, while the installed engine can read the
@@ -247,6 +252,9 @@ ahead of it on `PATH` has no such limit. In this package itself there is
 nothing to hand over to: its `bin/xtask.dart` is the installed one. Each of
 those refusals writes the `--report` the command line asked for, as the
 engine's own refusals do: the run that would have written it never starts.
+So does a project that is started and ends before its engine has written a
+word — an entry point that does not compile: the report says it ended with
+that code, rather than being the last run's.
 
 On Linux and macOS an interrupt the installed `xtask` receives is passed on
 to the run as a `SIGTERM`, and a `SIGTERM` as it is. On Windows nothing is
