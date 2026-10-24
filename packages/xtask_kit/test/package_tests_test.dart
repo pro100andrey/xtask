@@ -191,15 +191,46 @@ dev_dependencies:
       expect(said.single, 'packages/lints: skipped, no test/');
     });
 
-    test('a failing suite fails the task with 1, '
-        'whatever number the runner gave', () async {
+    test('a failing suite fails the task with 1', () async {
       dartPackage('packages/models');
-      answer = 79;
+      answer = 1;
 
       expect(
         await packageTests()(context(member: 'packages/models')),
         ExitCode.taskFailed,
       );
+    });
+
+    // The numbers measured from `dart test` 1.x and `flutter test` (3.x):
+    // 79 when no test matched, 64 for an unknown flag, 65 for a
+    // `dart_test.yaml` that is not YAML; `1` for a failing test, one that
+    // does not compile, and a runner sent `SIGINT` or `SIGTERM`.
+    for (final (runner, answers, why) in [
+      (79, ExitCode.success, 'no test ran: none of the kind asked for here'),
+      (64, ExitCode.invalidFile, 'the runner refused its arguments'),
+      (65, ExitCode.invalidFile, 'the runner refused its configuration'),
+      (130, 130, 'the engine stopped it, which is not a failure'),
+      (-9, 137, 'it was killed by a signal, as a shell says it'),
+      (124, ExitCode.taskFailed, 'it timed out, which is a failure'),
+      (70, ExitCode.taskFailed, 'the runner itself broke'),
+    ]) {
+      test('a runner answering $runner answers $answers: $why', () async {
+        dartPackage('packages/models');
+        answer = runner;
+
+        expect(
+          await packageTests()(context(member: 'packages/models')),
+          answers,
+        );
+      });
+    }
+
+    test('and says so where no test ran', () async {
+      dartPackage('packages/models');
+      answer = 79;
+
+      await packageTests()(context(member: 'packages/models'));
+      expect(said.last, 'packages/models: no tests ran');
     });
 
     test('a runner that is not installed is a 3, not a failed suite', () async {

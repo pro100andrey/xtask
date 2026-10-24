@@ -89,7 +89,8 @@ Verb cliUninstall(DartCli cli) =>
 /// more after it — it calls this first and goes on where it succeeds.
 ///
 /// - every bundle's `bin/` and `lib/` into `~/.local/share/<name>`, replacing
-///   what an earlier install put there;
+///   what an earlier install put there, and marked as [DartCli.name]'s
+///   ([markDirectory]);
 /// - each command at `~/.local/bin/<command>`: a link to its executable on
 ///   POSIX, a copy on Windows — no symlink without developer mode — with the
 ///   libraries copied to `~/.local/lib`, where the copy looks for them.
@@ -101,6 +102,11 @@ Verb cliUninstall(DartCli cli) =>
 /// is a `1` naming the file rather than an exception. Once the new one is in
 /// place the install has succeeded: an earlier one that cannot be removed is
 /// left as `<name>.old-<time>`, which the next install removes.
+///
+/// **Only its own directory is replaced.** `~/.local/share` is every
+/// application's, and a `<name>` there without this install's mark is
+/// somebody else's ([notOurDirectory]): it is refused before anything
+/// changes, as is anything on `PATH` that links into it.
 ///
 /// **Only its own files on `PATH` are replaced.** `~/.local/bin` is not this
 /// tool's alone, and a file of the command's name there may be somebody
@@ -173,6 +179,10 @@ Future<int> installCliOn(
       return ExitCode.taskFailed;
     }
   }
+  if (notOurDirectory(places.share, owner: _owner(cli)) case final why?) {
+    context.log(why);
+    return ExitCode.taskFailed;
+  }
 
   final aside = '.old-${DateTime.now().millisecondsSinceEpoch}';
   final fresh = '${places.share}.new';
@@ -184,6 +194,7 @@ Future<int> installCliOn(
         _copyInto(p.join(bundle, part), into.path, aside, windows: windows);
       }
     }
+    markDirectory(fresh, owner: _owner(cli));
   } on FileSystemException catch (error) {
     context.log(
       '${_failure(error)}, so nothing installed was changed; fix that and '
@@ -257,7 +268,10 @@ Future<int> installCliOn(
 ///
 /// Tolerant and safe to repeat. A command on `PATH` that is not one this
 /// install laid down ([installCli] says which those are) is somebody else's,
-/// and stays, with a line saying so. On Windows the libraries copied to
+/// and stays, with a line saying so. A `~/.local/share/<name>` without this
+/// install's mark is somebody else's whole: nothing is removed, neither it
+/// nor what on `PATH` leads into it, and the uninstall says why and
+/// succeeds. On Windows the libraries copied to
 /// `~/.local/lib` are removed by the names the installed `lib/` has, because
 /// that directory is not only this tool's.
 Future<int> uninstallCli(VerbContext context, DartCli cli) =>
@@ -275,6 +289,10 @@ Future<int> uninstallCliOn(
     return ExitCode.taskFailed;
   }
   final places = CliPlaces.of(cli, home: home, windows: windows);
+  if (notOurDirectory(places.share, owner: _owner(cli)) case final why?) {
+    context.log('$why — nothing removed');
+    return ExitCode.success;
+  }
   final aside = '.old-${DateTime.now().millisecondsSinceEpoch}';
   try {
     // The commands first: on Windows whether a copy is this install's is
@@ -420,18 +438,41 @@ void _swapIn(String fresh, CliPlaces places, String aside) {
   Directory(fresh).renameSync(share.path);
 }
 
+/// Who [cli]'s directory belongs to, as its mark says.
+String _owner(DartCli cli) => 'cli ${cli.name}';
+
+/// Whether [a] and [b] hold the same bytes.
+///
+/// The lengths first, then a block at a time: the files compared are
+/// executables and native libraries, and reading two of them whole to tell
+/// that they differ in the first block holds both in memory for nothing.
 bool _same(File a, File b) {
   if (a.lengthSync() != b.lengthSync()) {
     return false;
   }
-  final left = a.readAsBytesSync();
-  final right = b.readAsBytesSync();
-  for (var i = 0; i < left.length; i++) {
-    if (left[i] != right[i]) {
-      return false;
+  final left = a.openSync();
+  final right = b.openSync();
+  try {
+    const block = 64 * 1024;
+    while (true) {
+      final l = left.readSync(block);
+      final r = right.readSync(block);
+      if (l.length != r.length) {
+        return false;
+      }
+      if (l.isEmpty) {
+        return true;
+      }
+      for (var i = 0; i < l.length; i++) {
+        if (l[i] != r[i]) {
+          return false;
+        }
+      }
     }
+  } finally {
+    left.closeSync();
+    right.closeSync();
   }
-  return true;
 }
 
 /// Removes [directory], and on Windows moves aside what is held in it and

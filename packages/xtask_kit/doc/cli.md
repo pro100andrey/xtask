@@ -48,6 +48,13 @@ so a copy that fails halfway leaves the earlier install working and answers
 the new install is in place it has succeeded: an earlier one that cannot be
 removed stays as `<name>.old-<time>`, and the next install removes it.
 
+The directory carries a `.xtask_kit` file naming the tool, the mark that
+tells it from a `~/.local/share/<name>` somebody else made: `~/.local/share`
+is every application's, and the install refuses a `<name>` there without the
+mark — before anything is copied — rather than replace it. The uninstall
+leaves such a directory whole, and what on `PATH` links into it, says why,
+and answers `0`.
+
 Each command goes to `~/.local/bin`: a link on Linux and macOS, a copy on
 Windows — no symlink without developer mode — with the libraries copied to
 `~/.local/lib`, which is `../lib` from the copy.
@@ -70,7 +77,8 @@ not; both verbs remove them, under the same rule as any other command.
 The install refuses with `1`, before anything is copied, without `HOME` (on
 Windows, `USERPROFILE`), where a bundle has not been built, where a command
 starts an executable no bundle has, where two bundles carry different files
-of one name, and where a command's place on `PATH` is somebody else's. A file
+of one name, where a command's place on `PATH` is somebody else's, and where
+`~/.local/share/<name>` is. A file
 it cannot copy or remove answers `1` too, naming it; so does an uninstall
 without `HOME`. `0` is the tool installed, or removed.
 

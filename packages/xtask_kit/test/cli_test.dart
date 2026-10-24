@@ -238,6 +238,56 @@ void main() {
     });
   }, testOn: '!windows');
 
+  group("somebody else's directory under ~/.local/share", () {
+    // `~/.local/share/<name>` is a name any application may have taken; a
+    // directory there is this install's only where its mark says so.
+    late File theirs;
+
+    setUp(() {
+      theirs = File(p.join(places.share, 'bin', 'their-file'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('theirs');
+    });
+
+    test('is refused by an install, and left as it was', () async {
+      bundles();
+
+      expect(await cliInstall(_cli)(context()), ExitCode.taskFailed);
+      expect(said.single, contains('not a directory this install made'));
+      expect(theirs.readAsStringSync(), 'theirs');
+      expect(Directory(places.bin).listSync(), hasLength(1));
+      expect(Directory('${places.share}.new').existsSync(), isFalse);
+    });
+
+    test('and so is one marked by another owner', () async {
+      bundles();
+      File(p.join(places.share, '.xtask_kit')).writeAsStringSync('cli other');
+
+      expect(await cliInstall(_cli)(context()), ExitCode.taskFailed);
+      expect(theirs.readAsStringSync(), 'theirs');
+    });
+
+    test('and left whole by an uninstall, with what links into it', () async {
+      Link(installed('demo'))
+        ..parent.createSync(recursive: true)
+        ..createSync(theirs.path);
+
+      expect(await cliUninstall(_cli)(context()), ExitCode.success);
+      expect(theirs.readAsStringSync(), 'theirs');
+      expect(Link(installed('demo')).targetSync(), theirs.path);
+      expect(said.single, contains('nothing removed'));
+    }, testOn: '!windows');
+
+    test('while its own install, marked, is replaced and removed', () async {
+      theirs.parent.parent.deleteSync(recursive: true);
+      bundles();
+      expect(await cliInstall(_cli)(context()), ExitCode.success);
+      expect(await cliInstall(_cli)(context()), ExitCode.success);
+      expect(await cliUninstall(_cli)(context()), ExitCode.success);
+      expect(Directory(places.share).existsSync(), isFalse);
+    });
+  });
+
   test('an uninstall removes what a failed install left beside it', () async {
     final fresh = Directory('${places.share}.new');
     File(p.join(fresh.path, 'bin', 'half'))

@@ -316,6 +316,72 @@ void main() {
       expect(await linuxAppUninstall(_app)(context()), ExitCode.success);
     });
 
+    test('refuses to replace a directory it did not lay down', () async {
+      bundle();
+      final places = LinuxAppPlaces.of(_app, home: home.path);
+      // An app unpacked there by hand, with no link onto PATH at all.
+      final unpacked = File(p.join(places.app, 'demo'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('unpacked by hand');
+
+      expect(await linuxAppInstall(_app)(context()), ExitCode.taskFailed);
+      expect(said.single, contains('not a directory this install made'));
+      expect(unpacked.readAsStringSync(), 'unpacked by hand');
+      for (final untouched in [places.binary, places.desktopEntry]) {
+        expect(
+          FileSystemEntity.typeSync(untouched, followLinks: false),
+          FileSystemEntityType.notFound,
+          reason: untouched,
+        );
+      }
+    });
+
+    /// Somebody else's install of the app, as another installer lays it
+    /// down: its directory, its menu entry and its icon, none marked.
+    List<String> theirs(LinuxAppPlaces places) {
+      final paths = [
+        p.join(places.app, 'demo'),
+        places.desktopEntry,
+        p.join(places.icons, '64x64/apps/dev.example.demo.png'),
+      ];
+      for (final path in paths) {
+        File(path)
+          ..createSync(recursive: true)
+          ..writeAsStringSync('theirs');
+      }
+      return paths;
+    }
+
+    test('and uninstalling removes nothing of an install that is not its '
+        "own, where the link is somebody else's", () async {
+      final places = LinuxAppPlaces.of(_app, home: home.path);
+      final kept = theirs(places);
+      final foreign = p.join(home.path, '.local/share/pipx/venvs/demo/demo');
+      Link(places.binary).createSync(foreign, recursive: true);
+
+      expect(await linuxAppUninstall(_app)(context()), ExitCode.success);
+      for (final path in kept) {
+        expect(File(path).readAsStringSync(), 'theirs', reason: path);
+      }
+      expect(said.single, contains('nothing removed'));
+    });
+
+    test('or where the directory has no mark of its own', () async {
+      final places = LinuxAppPlaces.of(_app, home: home.path);
+      final kept = theirs(places);
+      // A link into the directory, as the other install made it.
+      Link(
+        places.binary,
+      ).createSync(p.join(places.app, 'demo'), recursive: true);
+
+      expect(await linuxAppUninstall(_app)(context()), ExitCode.success);
+      for (final path in kept) {
+        expect(File(path).readAsStringSync(), 'theirs', reason: path);
+      }
+      expect(Link(places.binary).existsSync(), isTrue);
+      expect(said.single, contains('not a directory this install made'));
+    });
+
     test('and keeps a binary that is not a link', () async {
       final binary = LinuxAppPlaces.of(_app, home: home.path).binary;
       File(binary)

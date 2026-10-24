@@ -54,7 +54,14 @@ export 'src/publish.dart'
         uncommittedRefusal,
         untrackedRefusal;
 export 'src/replace.dart'
-    show notALink, notOurLink, pointLink, replaceDirectory;
+    show
+        markDirectory,
+        notALink,
+        notOurDirectory,
+        notOurLink,
+        ownerMark,
+        pointLink,
+        replaceDirectory;
 export 'src/vscode.dart'
     show
         ProfileNames,

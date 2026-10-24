@@ -130,15 +130,17 @@ final class LinuxAppPlaces {
 /// `do:` a verb installing [app] for whoever runs it, on Linux:
 ///
 /// - the bundle into `~/.local/lib/<binary>`, replacing an earlier one whole
-///   ([replaceDirectory]);
+///   ([replaceDirectory]) and marked as the app's ([markDirectory]);
 /// - `~/.local/bin/<binary>`, a link to it;
 /// - the menu entry into `$XDG_DATA_HOME/applications` (`~/.local/share`
 ///   without it), starting that link;
 /// - the icons into `$XDG_DATA_HOME/icons/hicolor`.
 ///
 /// It refuses, naming why, off Linux, without `HOME`, when the bundle lacks
-/// what [LinuxApp.requires] says it has, and when `~/.local/bin/<binary>` is
-/// something other than a link, which would be somebody else's. It ends by
+/// what [LinuxApp.requires] says it has, when `~/.local/bin/<binary>` is
+/// something other than a link into the app's directory, and when
+/// `~/.local/lib/<binary>` is there without the app's mark — either would be
+/// somebody else's. It ends by
 /// saying whether `PATH` reaches what it installed ([onPathLine]).
 Verb linuxAppInstall(LinuxApp app) =>
     (context) => _install(context, app);
@@ -146,9 +148,12 @@ Verb linuxAppInstall(LinuxApp app) =>
 /// `do:` a verb removing what [linuxAppInstall] laid down for [app].
 ///
 /// Tolerant and safe to repeat: a teardown that fails on a machine already
-/// clean is a puzzle rather than a tool. A `~/.local/bin/<binary>` that is
-/// not a link is somebody else's, and stays. Off Linux there is nothing it
-/// could have installed, and it says so and succeeds.
+/// clean is a puzzle rather than a tool. Where `~/.local/bin/<binary>` is
+/// not a link into the app's directory, or that directory is there without
+/// the app's mark, the install is somebody else's: nothing at all is removed
+/// — the menu entry and the icons by the same name are that install's too —
+/// and it says why and succeeds. Off Linux there is nothing it could have
+/// installed, and it says so and succeeds.
 Verb linuxAppUninstall(LinuxApp app) =>
     (context) => _uninstall(context, app);
 
@@ -270,6 +275,7 @@ Future<int> _install(VerbContext context, LinuxApp app) async {
         p.join(bundle, name),
     ],
     into: places.app,
+    owner: _owner(app),
   );
   if (replaced != ExitCode.success) {
     return replaced;
@@ -314,14 +320,27 @@ Future<int> _uninstall(VerbContext context, LinuxApp app) async {
     return ExitCode.success;
   }
   final places = LinuxAppPlaces.of(app, home: home, environment: context.env);
-  // Only the link into the app's own directory goes: one another installer
-  // made under the same name is that installer's to remove, and a file
-  // there is nobody's link at all.
-  if (notOurLink(places.binary, within: places.app) case final why?) {
-    context.log('$why — left as it is');
-  } else if (FileSystemEntity.typeSync(places.binary, followLinks: false) ==
+  // All or nothing: a link another installer made under the same name, or a
+  // directory of that name without the mark, says the app installed here is
+  // somebody else's, and the menu entry and icons named for its id are then
+  // theirs as well.
+  if (notOurLink(places.binary, within: places.app) ??
+          notOurDirectory(places.app, owner: _owner(app))
+      case final why?) {
+    context.log('$why — nothing removed');
+    return ExitCode.success;
+  }
+  if (FileSystemEntity.typeSync(places.binary, followLinks: false) ==
       FileSystemEntityType.link) {
     Link(places.binary).deleteSync();
+  }
+  // The install lays the directory down before anything else and the
+  // uninstall removes it last, so without it the menu entry and icons by
+  // the app's id were not laid down by this install: only the link into it,
+  // dangling, is.
+  if (!Directory(places.app).existsSync()) {
+    context.log('${app.binary}: nothing installed in ${places.app}');
+    return ExitCode.success;
   }
   if (File(places.desktopEntry).existsSync()) {
     File(places.desktopEntry).deleteSync();
@@ -349,6 +368,10 @@ Future<int> _uninstall(VerbContext context, LinuxApp app) async {
   context.log('✓ ${app.binary} removed from ${places.app}');
   return ExitCode.success;
 }
+
+/// Who [app]'s directory belongs to, as its mark says: by the id, which is
+/// what names the menu entry and the icons the uninstall would remove too.
+String _owner(LinuxApp app) => 'linux-app ${app.applicationId}';
 
 /// Each icon's source, absolute, by where it goes in the hicolor theme.
 Map<String, String> _icons(VerbContext context, LinuxIcons? icons) =>

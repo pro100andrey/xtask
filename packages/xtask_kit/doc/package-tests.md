@@ -38,10 +38,29 @@ in the package's directory, and the task's `args:` follow `test`.
 
 ## Refusals and exit codes
 
-A package without `test/` is skipped with a line, and succeeds. A failing
-suite answers `1`, whatever the runner said; a runner that is not on `PATH` —
-`flutter` on a machine with only Dart — answers `3`, asked before it starts. A member in no package is refused
-with `2`; a `pubspec.yaml` that is not YAML answers `1`, naming the file.
+A package without `test/` is skipped with a line, and succeeds. A runner that
+is not on `PATH` — `flutter` on a machine with only Dart — answers `3`, asked
+before it starts. A member in no package is refused with `2`; a `pubspec.yaml`
+that is not YAML answers `1`, naming the file.
+
+What the runner answers is translated to the engine's table rather than
+passed on, which the runner has never heard of, and not flattened to `1`,
+since three of its endings are not a failing suite. The numbers are measured
+from `dart test` and `flutter test`:
+
+| The runner answers | When | The task answers |
+| --- | --- | --- |
+| `0` | every test passed | `0` |
+| `79` | no test ran: a `--name` or `--tags` this package has nothing for, or a `test/` with no test file | `0`, with a line saying so — no tests of the kind asked for is no failure of them, as with no `test/` |
+| `64`, `65` | the runner refused an argument in `args:`, or its `dart_test.yaml`, before any test began | `2`: the request was wrong, not the code |
+| `130` | the engine stopped it — an `interruptible:` suite after an earlier failure | `130`, so the run reports it stopped rather than failed |
+| killed by a signal | nobody in the run sent it | `128` and the signal, as a shell says it: `137` for a `SIGKILL` |
+| anything else | a failing test, one that does not compile, a timeout, the runner's own crash | `1` |
+
+A runner does not answer `130` or `143` on its own: `dart test` sent a
+`SIGINT` or a `SIGTERM` exits `1`. A run stopped by Ctrl-C is reported as stopped by
+the engine whatever the task answers. `flutter test` answers `1` for a
+`test/` with no test file, so there it is a failure.
 
 ## On Windows
 

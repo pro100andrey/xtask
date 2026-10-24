@@ -49,7 +49,9 @@ tasks:
 
 - the bundle in `~/.local/lib/<binary>`, copied beside an earlier install
   first and swapped in, so a copy that fails halfway leaves the earlier one
-  working;
+  working, with a `.xtask_kit` file in it naming the app's id — the mark
+  that tells this install's directory from one of the same name somebody
+  else put there;
 - a link to it at `~/.local/bin/<binary>`;
 - the menu entry in `$XDG_DATA_HOME/applications` (`~/.local/share` without
   it), its `Exec=` and `TryExec=` naming that link rather than the bare
@@ -69,10 +71,16 @@ reported as one, and `--dry-run` shows its command line — neither is true of a
 
 ## What `uninstall` removes
 
-`uninstall` removes the link (if it is the install's own; anything else there
-it leaves and says so), the menu entry, every icon named
-for the application id, and the app's directory. It succeeds on a machine with
-nothing installed.
+`uninstall` removes the link, the menu entry, every icon named for the
+application id, and the app's directory. It succeeds on a machine with nothing
+installed.
+
+All of it or none: where `~/.local/bin/<binary>` is anything but a link into
+`~/.local/lib/<binary>`, or that directory is there without the install's
+mark, the app installed here is somebody else's, and so are the menu entry
+and icons named for its id. The uninstall then removes nothing, says why, and
+answers `0`. Without the directory there is nothing of this install's to
+remove but a link left dangling into it.
 
 ## Refusals and exit codes
 
@@ -81,7 +89,9 @@ lacks a file `requires:` names, and when `~/.local/bin/<binary>` is something
 other than a link into `~/.local/lib/<binary>` — a file, or a link pipx,
 `uv tool` or another installer made, is somebody else's, and replacing it
 would destroy it. A link into the app's own directory is the earlier
-install's, dangling or not. Every refusal answers `1`, as does a copy that
+install's, dangling or not. It refuses as well a `~/.local/lib/<binary>` that
+has no `.xtask_kit` naming the app — an app unpacked there by hand, say —
+rather than replace it whole. Every refusal answers `1`, as does a copy that
 fails; `0` is an app installed.
 
 ## On Windows and macOS

@@ -43,9 +43,12 @@ Verb packageTests() => runPackageTests;
 ///
 /// A package without `test/` is skipped, and the verb says so and succeeds:
 /// both runners fail there, and a package without tests is no failure of its
-/// tests. A failing suite answers 1 whatever number the runner gave, because
-/// what a verb answers is read against [ExitCode]'s table, which a test
-/// runner has never heard of.
+/// tests.
+///
+/// What the runner answers is translated ([testsAnswer]) rather than passed
+/// on, because what a verb answers is read against [ExitCode]'s table, which
+/// a test runner has never heard of — and not flattened to 1 either, because
+/// three of its endings are not a failing suite.
 ///
 /// A runner that is not installed is a 3 ([ExitCode.missingTool]), not a
 /// failed suite: "Flutter is not on this machine" is repaired by somebody
@@ -85,8 +88,46 @@ Future<int> runPackageTests(VerbContext context) async {
   }
   context.log('$package: ${argv.join(' ')}');
   final code = await context.run(argv, workingDirectory: package);
-  return code == ExitCode.success ? ExitCode.success : ExitCode.taskFailed;
+  if (code == _noTestsRan) {
+    context.log('$package: no tests ran');
+  }
+  return testsAnswer(code);
 }
+
+/// `dart test`'s and `flutter test`'s number for a run in which no test
+/// matched — sysexits has none, and the runner took the next free one.
+const _noTestsRan = 79;
+
+/// What [runPackageTests] answers for the test runner's exit [code], measured
+/// against `dart test` and `flutter test` rather than read from their
+/// documentation, which lists none of it:
+///
+/// - `0`, every test passed, and `79`, no test ran — a `--name` or `--tags`
+///   in `args:` that this package has nothing for, or a `test/` without a
+///   test file: `0`. A package with no tests of the kind asked for is no
+///   failure of its tests, which is the rule a package without `test/`
+///   already follows, and an `each:` over every package with `-t
+///   integration` is how a project runs the packages that have some.
+/// - `64` and `65`, the runner refusing its command line — an unknown flag
+///   in `args:` — or its `dart_test.yaml` before any test began: `2`
+///   ([ExitCode.invalidFile]), the request being wrong rather than the code.
+/// - `130`, what the engine answers for a process it stopped
+///   (`SystemProcessStarter.interrupted`): as it is, so that the engine reads
+///   a stopped `interruptible:` suite as stopped rather than failed. A
+///   runner does not answer it on its own: `dart test` exits `1` on a
+///   `SIGINT` or a `SIGTERM`.
+/// - a negative number, the runner killed by a signal nobody in the run
+///   sent — Dart reports it negated: `128` and the signal, as a shell says
+///   it (`137` for a `SIGKILL`), since it was stopped and did not fail.
+/// - anything else — a failing test, one that does not compile, a timeout,
+///   the runner's own crash: `1` ([ExitCode.taskFailed]).
+int testsAnswer(int code) => switch (code) {
+  ExitCode.success || _noTestsRan => ExitCode.success,
+  64 || 65 => ExitCode.invalidFile,
+  130 => 130,
+  < 0 => 128 - code,
+  _ => ExitCode.taskFailed,
+};
 
 /// Whether the package whose `pubspec.yaml` is [pubspec] needs `flutter
 /// test`: whether anything in its `dependencies` or `dev_dependencies` comes
