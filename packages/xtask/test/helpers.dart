@@ -52,3 +52,17 @@ Matcher summaryRow(String mark, String name, [String rest = '']) => matches(
     multiLine: true,
   ),
 );
+
+/// Resets SIGINT and SIGQUIT to their defaults and becomes the program named
+/// after it.
+///
+/// **Because of where the suite may be running.** A non-interactive shell
+/// starts its background jobs with SIGINT and SIGQUIT ignored, that
+/// disposition is inherited across `exec`, and Dart's `watch()` on an ignored
+/// signal receives nothing — so a test that sends one would be measuring how
+/// the suite was launched.
+const withSignalDefaults =
+    'import os, signal, sys\n'
+    'signal.signal(signal.SIGINT, signal.SIG_DFL)\n'
+    'signal.signal(signal.SIGQUIT, signal.SIG_DFL)\n'
+    'os.execvp(sys.argv[1], sys.argv[1:])';

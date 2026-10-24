@@ -973,6 +973,15 @@ counts against it. That is the question being asked, whether the committed
 files are what this run leaves behind, so a task meant to rewrite them is not
 one to hold them unchanged.
 
+**Keep the set narrow.** Every file it reaches is held in memory, whole, from
+the first reading to the comparison, and is read again when the task ends,
+so a set over a large tree costs that tree's size twice. A member that is a
+directory is walked to the bottom with nothing left out: a `.dart_tool`, a
+`.git` or a `build` directory that the set reaches is compared like any
+other file, and what a tool writes there fails the task. Name the generated
+files themselves, as `generated` above does, and leave out what is not
+yours with [`exclude:`](#include-and-exclude).
+
 ## The command
 
 ```shell

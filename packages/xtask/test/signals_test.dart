@@ -16,20 +16,6 @@ import 'package:test/test.dart';
 
 import 'helpers.dart';
 
-/// Resets SIGINT and SIGQUIT to their defaults and becomes the program named
-/// after it.
-///
-/// **Because of where the suite may be running.** A non-interactive shell
-/// starts its background jobs with SIGINT and SIGQUIT ignored, that
-/// disposition is inherited across `exec`, and Dart's `watch()` on an ignored
-/// signal receives nothing — so a test that sends one would be measuring how
-/// the suite was launched.
-const _withDefaults =
-    'import os, signal, sys\n'
-    'signal.signal(signal.SIGINT, signal.SIG_DFL)\n'
-    'signal.signal(signal.SIGQUIT, signal.SIG_DFL)\n'
-    'os.execvp(sys.argv[1], sys.argv[1:])';
-
 /// A body that writes its pid and waits a minute. `exec`, so the pid it
 /// writes is the process the engine started.
 const _holds = r"run: [sh, -c, 'echo $$ > body.pid; exec sleep 60']";
@@ -76,11 +62,11 @@ void main() {
     return Process.runSync('kill', ['-0', '$pid']).exitCode == 0;
   }
 
-  /// The engine on [args] in the repository, through [_withDefaults].
+  /// The engine on [args] in the repository, through [withSignalDefaults].
   Future<({Process run, StringBuffer said})> engine(List<String> args) async {
     final run = await Process.start('python3', [
       '-c',
-      _withDefaults,
+      withSignalDefaults,
       Platform.resolvedExecutable,
       'run',
       p.join(Directory.current.path, 'test', 'fixtures', 'engine.dart'),

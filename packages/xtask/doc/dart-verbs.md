@@ -160,6 +160,8 @@ What is not handed over, and what is refused:
   `dart pub get` that fails is shown and answered `1`. Otherwise the code is
   the project's, and an entry point that does not compile answers `dart run`'s
   `254` or `255`.
+- Ctrl-C or `SIGTERM` during that `dart pub get` stops it (`SIGTERM`, then
+  `SIGKILL` after a grace), and the run is refused with `130` or `143`.
 - Where `dart` is a batch file (`dart.bat`, as Flutter puts on `PATH`), a
   command line carrying a character `cmd.exe` would read (`&`, `|`, `%`, …) is
   refused with `2` before anything runs. The SDK's `dart.exe` ahead of it on
@@ -169,7 +171,9 @@ Each of those refusals writes the `--report` the command line asked for, as
 the engine's own refusals do, because the run that would have written it never
 starts. So does a project that starts and ends before its engine has written a
 word, such as an entry point that does not compile: the report says it ended
-with that code, rather than still being the last run's. In this package itself
+with that code, rather than still being the last run's. The report is begun,
+`complete: false`, before anything is started, the `dart pub get` included. In
+this package itself
 there is nothing to hand over to: its `bin/xtask.dart` is the installed one.
 
 What an interrupt does to a handed-over run, on each platform, is in

@@ -228,7 +228,9 @@ String? _entryOf(String root) {
 /// it changes nothing — the run answers `130` either way. A `SIGTERM` is
 /// passed on as it is; an interrupt sent to this process alone reaches the
 /// engine only as that `SIGTERM`, and is answered `143`. On Windows nothing
-/// is passed on — see [passSignalsOn].
+/// is passed on — see [passSignalsOn]. A signal before the run is started,
+/// during the `dart pub get`, stops that instead, and the run is refused
+/// with `130` or `143`.
 ///
 /// What it says itself is masked as the engine's lines are (`secrets.dart`):
 /// it quotes the command line, which is where a value typed after `--` is.
@@ -305,66 +307,118 @@ Future<int> runProjectEntry(
       );
     }
   }
-  if (entry.resolveIn case final package?) {
-    // Collected rather than inherited: what `pub get` says on success is
-    // noise on the stdout of a run that may be `--list` piped somewhere, and
-    // what it says on failure is the only thing worth reading.
-    final ProcessResult got;
-    try {
-      got = await Process.run(
-        dart,
-        const ['pub', 'get'],
-        workingDirectory: package,
-        environment: environment,
-        includeParentEnvironment: false,
-        runInShell: shell,
-      );
-    } on ProcessException catch (failure) {
-      return refuse(
-        ExitCode.taskFailed,
-        'xtask: `$dart pub get` could not be started: ${failure.message}',
-      );
-    }
-    if (got.exitCode != ExitCode.success) {
-      return refuse(
-        ExitCode.taskFailed,
-        'xtask: the entry point `${entry.entry}` is in a package with no '
-        'resolution, and `dart pub get` in `$package` exited with '
-        '${got.exitCode}:\n${got.stdout}${got.stderr}',
-      );
-    }
-    _markResolved(package);
-  }
-  // **The report is begun before the project is started**, as the engine
+  // **The report is begun before anything is started**, as the engine
   // begins it before it reads anything: a project that is started and ends
   // before its engine has written a word — an entry point that does not
   // compile, a `dart run` that cannot resolve — left the last run's report
-  // where this one's belongs. Not written is not refused: the project's
-  // engine tries the same file next, and says why it cannot.
+  // where this one's belongs, and so did a long `pub get`, all the while it
+  // ran. Not written is not refused: the project's engine tries the same file
+  // next, and says why it cannot.
   final begun = entry.report == null
       ? null
       : _beginReport(entry, from, secrets);
-  final Process process;
+  // **Signals are listened to from here, not from the run's start.** Heard
+  // only once the project was started, a signal during the `pub get` before
+  // it ended this process at once — no report, no `128 + N` — and left the
+  // `pub get` running. Before the run, a signal stops what is running as the
+  // engine stops a body, and the run is refused with the code a shell would
+  // say; from the run's start it is passed on, as [passSignalsOn] says.
+  ProcessSignal? received;
+  Process? getting;
+  Process? running;
+  final watching = passSignalsOn(
+    ([signal = ProcessSignal.sigterm]) {
+      if (running case final run?) {
+        return run.kill(signal);
+      }
+      if (getting case final resolving?) {
+        unawaited(_stop(resolving));
+      }
+      return true;
+    },
+    windows: Platform.isWindows,
+    heard: (signal) => received ??= signal,
+  );
+  int stopped(ProcessSignal signal, String during) => refuse(
+    bySignal(signal.signalNumber),
+    'xtask: the run received ${signal.name} $during, and was not started',
+  );
   try {
-    process = await Process.start(
-      dart,
-      entry.arguments,
-      environment: {...environment, handOverVariable: '${depth + 1}'},
-      includeParentEnvironment: false,
-      runInShell: shell,
-      mode: ProcessStartMode.inheritStdio,
-    );
-  } on ProcessException catch (failure) {
-    // 1 and not 3, as the engine answers a task that could not be started:
-    // the resolver found `dart`, so this is not the proof of absence 3 is.
-    return refuse(
-      ExitCode.taskFailed,
-      'xtask: `$dart ${entry.arguments.join(' ')}` could not be started: '
-      '${failure.message}',
-    );
-  }
-  final watching = passSignalsOn(process.kill, windows: Platform.isWindows);
-  try {
+    if (entry.resolveIn case final package?) {
+      // Collected rather than inherited: what `pub get` says on success is
+      // noise on the stdout of a run that may be `--list` piped somewhere,
+      // and what it says on failure is the only thing worth reading.
+      final Process resolving;
+      try {
+        resolving = await Process.start(
+          dart,
+          const ['pub', 'get'],
+          workingDirectory: package,
+          environment: environment,
+          includeParentEnvironment: false,
+          runInShell: shell,
+        );
+      } on ProcessException catch (failure) {
+        return refuse(
+          ExitCode.taskFailed,
+          'xtask: `$dart pub get` could not be started: ${failure.message}',
+        );
+      }
+      getting = resolving;
+      if (received != null) {
+        unawaited(_stop(resolving));
+      }
+      final out = resolving.stdout.transform(systemEncoding.decoder).join();
+      final errors = resolving.stderr.transform(systemEncoding.decoder).join();
+      final got = await resolving.exitCode;
+      // Bounded, as the engine bounds a body's pipes: a process `pub get`
+      // started may hold them past its end.
+      final said = await Future.wait([
+        out,
+        errors,
+      ]).timeout(_grace, onTimeout: () => const ['', '']);
+      getting = null;
+      if (received case final signal?) {
+        return stopped(signal, 'during `dart pub get` in `$package`');
+      }
+      if (got != ExitCode.success) {
+        return refuse(
+          ExitCode.taskFailed,
+          'xtask: the entry point `${entry.entry}` is in a package with no '
+          'resolution, and `dart pub get` in `$package` exited with '
+          '$got:\n${said.join()}',
+        );
+      }
+      _markResolved(package);
+    }
+    if (received case final signal?) {
+      return stopped(signal, 'before the entry point `${entry.entry}`');
+    }
+    final Process process;
+    try {
+      process = await Process.start(
+        dart,
+        entry.arguments,
+        environment: {...environment, handOverVariable: '${depth + 1}'},
+        includeParentEnvironment: false,
+        runInShell: shell,
+        mode: ProcessStartMode.inheritStdio,
+      );
+    } on ProcessException catch (failure) {
+      // 1 and not 3, as the engine answers a task that could not be
+      // started: the resolver found `dart`, so this is not the proof of
+      // absence 3 is.
+      return refuse(
+        ExitCode.taskFailed,
+        'xtask: `$dart ${entry.arguments.join(' ')}` could not be started: '
+        '${failure.message}',
+      );
+    }
+    running = process;
+    // Heard while it was being started: it is passed on now.
+    if (received != null) {
+      process.kill();
+    }
     final exited = await process.exitCode;
     // A run ended by a signal answers as a shell would say it, 128 and the
     // signal, where Dart reports the signal negated. Only off Windows: there
@@ -408,6 +462,22 @@ File? _beginReport(ProjectEntry entry, String from, Secrets secrets) {
   return File(p.join(from, asked.path));
 }
 
+/// How long a `pub get` asked to stop is given before it is made to: the
+/// engine's grace for a body.
+const _grace = Duration(seconds: 5);
+
+/// Asks [process] to stop, and makes it after [_grace] — as the engine stops
+/// a body.
+Future<void> _stop(Process process) async {
+  process.kill();
+  final ended = await process.exitCode
+      .then<int?>((code) => code)
+      .timeout(_grace, onTimeout: () => null);
+  if (ended == null) {
+    process.kill(ProcessSignal.sigkill);
+  }
+}
+
 /// Whether the report at [file] is still one written before any run began:
 /// not complete, and no task in it.
 bool _stillBegun(File file) {
@@ -440,18 +510,32 @@ bool _stillBegun(File file) {
 /// over a run still printing; it then waits for the run as it always does.
 /// There is no `SIGTERM` to watch on Windows.
 ///
+/// [heard] is told which signal it was, before [kill] is called, so that a
+/// run refused for it answers `128 + N`; on Windows it is told nothing, as
+/// nothing is passed on.
+///
 /// [windows] and the two streams are parameters so that the decision can be
 /// tested on a machine that is not the one it is about.
 List<StreamSubscription<ProcessSignal>> passSignalsOn(
   bool Function([ProcessSignal signal]) kill, {
   required bool windows,
+  void Function(ProcessSignal signal)? heard,
   Stream<ProcessSignal>? interrupts,
   Stream<ProcessSignal>? terminations,
 }) => [
   (interrupts ?? ProcessSignal.sigint.watch()).listen(
-    windows ? (_) {} : (_) => kill(),
+    windows
+        ? (_) {}
+        : (signal) {
+            heard?.call(signal);
+            kill();
+          },
   ),
-  if (!windows) (terminations ?? ProcessSignal.sigterm.watch()).listen(kill),
+  if (!windows)
+    (terminations ?? ProcessSignal.sigterm.watch()).listen((signal) {
+      heard?.call(signal);
+      kill(signal);
+    }),
 ];
 
 bool _isCompletionScript(String argument) =>

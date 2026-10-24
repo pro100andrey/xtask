@@ -7,7 +7,8 @@
 - The installed `xtask` runs a project's verbs: in a repository with an entry
   point of its own, it hands the run to it and answers with its exit code. The
   run starts where you stand, a package never resolved gets `dart pub get`
-  first, and `XTASK_HAND_OVERS` stops a loop at eight.
+  first — which Ctrl-C or `SIGTERM` stops, answering `130` or `143` — and
+  `XTASK_HAND_OVERS` stops a loop at eight.
   [Your own entry point](doc/dart-verbs.md#your-own-entry-point).
 - `entry:` names that entry point where it is not `bin/xtask.dart` — a tools
   package's `tools/bin/xtask.dart`, say. `--validate` says when the file is

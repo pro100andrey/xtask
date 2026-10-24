@@ -87,10 +87,13 @@ void main() {
         // verb reads off a program it ran — and `print` needs no import. Nor
         // where the import shows only other names: `context.dart` takes
         // `File` and `Directory` from it, and its `stdout` is `Captured`'s.
+        // Nor after a dot: `resolving.stdout` is the pipe of a process this
+        // module started, not this process's terminal — and a `dart:io`
+        // imported under a prefix is not matched by the import above anyway.
         if ((RegExp(
                   r"import 'dart:io'(;|\s+show[^;]*\b(stdout|stderr)\b)",
                 ).hasMatch(source) &&
-                RegExp(r'\b(stdout|stderr)[.,)]').hasMatch(source)) ||
+                RegExp(r'(?<![.\w])(stdout|stderr)[.,)]').hasMatch(source)) ||
             RegExp(r'(?<![.\w])print\(').hasMatch(source))
           file,
     };

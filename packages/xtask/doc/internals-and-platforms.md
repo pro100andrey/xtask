@@ -48,6 +48,13 @@ platform, not measured on a Windows console. An interrupt sent to the
 installed `xtask` alone, from outside the console, does not reach the run on
 Windows.
 
+Before the run is started, while the installed `xtask` gets the package's
+resolution, an interrupt or a `SIGTERM` stops the `dart pub get` the way a
+body is stopped, `SIGTERM` and then `SIGKILL` after a grace, and the run is
+refused with `130` or `143`, which the `--report` says. On Windows only the
+Ctrl-C the console sends the `pub get` itself stops it, and a `pub get` so
+stopped is answered as one that failed.
+
 ## Windows
 
 `timeout:` ends a process outright here. There is no signal to ask with first,

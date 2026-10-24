@@ -615,6 +615,87 @@ void main() {
     }
   }, testOn: '!windows');
 
+  for (final (signal, code) in [
+    (ProcessSignal.sigterm, 143),
+    (ProcessSignal.sigint, 130),
+  ]) {
+    test('$signal during the `pub get` before the run stops it, and is '
+        'answered $code with the report begun before it', () async {
+      // Heard only once the project was started, the signal ended the
+      // installed `xtask` at once, with the last run's report in place and
+      // the `pub get` still running; and the report was begun only after the
+      // `pub get`, so all the while it ran the file was the last run's.
+      repository();
+      final at = p.join(root, 'run.json');
+      File(at).writeAsStringSync('{"version":1,"complete":true,"code":0}');
+      final bin = Directory(p.join(root, '.fake-bin'))..createSync();
+      final dart = File(p.join(bin.path, 'dart'))
+        ..writeAsStringSync(
+          '#!/bin/sh\n'
+          'if [ "\$1" = pub ]; then echo \$\$ > pub.pid; exec sleep 60; fi\n'
+          'exit 0\n',
+        );
+      Process.runSync('chmod', ['+x', dart.path]);
+      final run = await Process.start(
+        'python3',
+        [
+          '-c',
+          withSignalDefaults,
+          Platform.resolvedExecutable,
+          'run',
+          p.join(Directory.current.path, 'bin', 'xtask.dart'),
+          'check',
+          '--report',
+          'run.json',
+        ],
+        workingDirectory: root,
+        environment: {
+          'PATH': '${bin.path}:${Platform.environment['PATH']}',
+        },
+      );
+      final said = StringBuffer();
+      run.stdout.transform(utf8.decoder).listen(said.write);
+      run.stderr.transform(utf8.decoder).listen(said.write);
+      final pidFile = File(p.join(root, 'pub.pid'));
+      int? pub;
+      for (var tries = 0; tries < 300 && pub == null; tries++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        if (pidFile.existsSync()) {
+          pub = int.tryParse(pidFile.readAsStringSync().trim());
+        }
+      }
+      if (pub == null) {
+        run.kill(ProcessSignal.sigkill);
+        fail('`pub get` was never started:\n$said');
+      }
+      addTearDown(() => Process.killPid(pub!, ProcessSignal.sigkill));
+      Map<String, Object?> report() =>
+          jsonDecode(File(at).readAsStringSync()) as Map<String, Object?>;
+
+      expect(report(), containsPair('complete', false), reason: 'begun');
+      expect(report(), containsPair('task', 'check'));
+
+      run.kill(signal);
+      final answered = await run.exitCode.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => fail('the installed `xtask` did not end:\n$said'),
+      );
+
+      expect(answered, code, reason: '$said');
+      expect(
+        File('/proc/$pub/status').existsSync() &&
+            !RegExp(
+              r'State:\s+Z',
+            ).hasMatch(File('/proc/$pub/status').readAsStringSync()),
+        isFalse,
+        reason: 'the `pub get` was left running',
+      );
+      expect(report(), containsPair('complete', true));
+      expect(report(), containsPair('code', code));
+      expect(report()['why'], contains('received ${signal.name}'));
+    }, testOn: 'linux');
+  }
+
   test('a batch-file `dart` refuses a metacharacter before it gets a '
       'resolution, and names the entry point and the way round it', () async {
     // Refused afterwards, the `pub get` had already rewritten the
