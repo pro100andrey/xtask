@@ -13,6 +13,21 @@ const _package = PubPackage(
   waits: [Duration.zero, Duration(seconds: 5), Duration(seconds: 10)],
 );
 
+/// What `dart pub publish --dry-run` prints for the demo package.
+const _listing = '''
+Resolving dependencies...
+Got dependencies!
+Publishing demo 1.2.0 to https://pub.dev:
+├── CHANGELOG.md (<1 KB)
+├── lib
+│   └── demo.dart (<1 KB)
+└── pubspec.yaml (<1 KB)
+
+Total compressed archive size: <1 KB.
+Validating package...
+Package has 0 warnings.
+''';
+
 void main() {
   late Directory root;
   late List<String> said;
@@ -23,12 +38,15 @@ void main() {
 
   // What the fakes answer, set per test.
   late String porcelain;
+  late List<String> tracked;
+  late String listing;
+  late Map<String, String> env;
   late int published;
   late List<Object> registry;
 
   VerbContext context() => VerbContext(
     args: const [],
-    env: const {},
+    env: env,
     root: root.path,
     workingDirectory: root.path,
     log: said.add,
@@ -38,7 +56,22 @@ void main() {
     },
     collect: (argv, {workingDirectory, timeout}) async {
       captured.add((argv: argv, workingDirectory: workingDirectory));
-      return (exitCode: 0, stdout: porcelain, stderr: '');
+      return switch (argv) {
+        ['git', 'status', ...] => (exitCode: 0, stdout: porcelain, stderr: ''),
+        ['git', 'ls-files', ...] => (
+          exitCode: 0,
+          stdout: tracked.map((path) => '$path\u0000').join(),
+          stderr: '',
+        ),
+        // 65 as pub answers a dry run with warnings: the listing is there all
+        // the same.
+        ['dart', 'pub', 'publish', '--dry-run'] => (
+          exitCode: 65,
+          stdout: listing,
+          stderr: '',
+        ),
+        _ => throw StateError('nothing captures $argv'),
+      };
     },
   );
 
@@ -82,6 +115,13 @@ void main() {
     paused = [];
     asked = [];
     porcelain = '';
+    env = {};
+    tracked = [
+      'packages/demo/CHANGELOG.md',
+      'packages/demo/lib/demo.dart',
+      'packages/demo/pubspec.yaml',
+    ];
+    listing = _listing;
     published = ExitCode.success;
     registry = [
       {'1.1.0'},
@@ -149,14 +189,44 @@ void main() {
 
     test('asking git about the package only, from the root', () async {
       await run();
-      expect(captured.single.argv, [
+      expect(captured.first.argv, [
         'git',
         'status',
         '--porcelain',
         '--',
         'packages/demo',
       ]);
-      expect(captured.single.workingDirectory, root.path);
+      expect(captured.first.workingDirectory, root.path);
+    });
+
+    test('a file pub would upload and git does not track refuses', () async {
+      // What `git status` cannot see: a file git ignores, which pub packs
+      // all the same once a `.pubignore` stands beside the `.gitignore`.
+      listing = _listing.replaceFirst(
+        '└── pubspec.yaml (<1 KB)',
+        '├── pubspec.yaml (<1 KB)\n└── secret.env (<1 KB)',
+      );
+      expect(await run(), ExitCode.taskFailed);
+      expect(said.join('\n'), contains('secret.env'));
+      expect(started, isEmpty);
+      expect(
+        captured.map((c) => c.argv.take(4).join(' ')),
+        containsAll([
+          'git ls-files -z --',
+          'dart pub publish --dry-run',
+        ]),
+      );
+      expect(
+        captured.firstWhere((c) => c.argv[0] == 'dart').workingDirectory,
+        'packages/demo',
+      );
+    });
+
+    test('and a dry run that lists nothing is no permission', () async {
+      listing = 'Resolving dependencies...\nBecause demo depends on ...\n';
+      expect(await run(), ExitCode.taskFailed);
+      expect(said.join('\n'), contains('--dry-run'));
+      expect(started, isEmpty);
     });
 
     test('a version the registry already serves refuses', () async {
@@ -187,6 +257,20 @@ void main() {
       await run();
       expect(asked.first, 'https://deps.example/ demo');
     });
+
+    test('or PUB_HOSTED_URL, which pub uploads to without one', () async {
+      env = {'PUB_HOSTED_URL': 'https://mirror.example'};
+      await run();
+      expect(asked.first, 'https://mirror.example demo');
+      asked.clear();
+      registry = [
+        <String>{},
+        const {'1.2.0'},
+      ];
+      manifest(publishTo: 'https://deps.example/');
+      await run();
+      expect(asked.first, 'https://deps.example/ demo');
+    });
   });
 
   group('the upload', () {
@@ -198,10 +282,31 @@ void main() {
 
     test('refused by pub is a 1, and nothing is waited for', () async {
       published = 65;
+      registry = [
+        {'1.1.0'},
+      ];
       expect(await run(), ExitCode.taskFailed);
       expect(said.join('\n'), contains('65'));
-      expect(asked, hasLength(1));
+      // Asked once after, because a failing pub is not proof of nothing
+      // uploaded.
+      expect(asked, hasLength(2));
       expect(paused, isEmpty);
+    });
+
+    test('failing after the archive went up is a 0 if it is served', () async {
+      published = 1;
+      expect(await run(), ExitCode.success);
+      expect(said.last, contains('serves demo 1.2.0'));
+    });
+
+    test('and a 4 where the registry cannot say', () async {
+      published = 1;
+      registry = [
+        {'1.1.0'},
+        const RegistryUnavailable('connection reset'),
+      ];
+      expect(await run(), ExitCode.continuationFailed);
+      expect(said.last, contains('may have been uploaded'));
     });
   });
 
@@ -228,6 +333,25 @@ void main() {
       expect(said.join('\n'), contains('timed out'));
     });
 
+    test(
+      'a probe that throws anything at all is waited out, never a 1',
+      () async {
+        var calls = 0;
+        final code = await pubPublish(
+          _package,
+          probe: (url, name) async {
+            if (calls++ == 0) {
+              return {'1.1.0'};
+            }
+            throw StateError("a probe of the project's own, broken");
+          },
+          pause: (delay) async {},
+        )(context());
+        expect(code, ExitCode.continuationFailed);
+        expect(said.join('\n'), contains('broken'));
+      },
+    );
+
     test('one that never serves it is a 4: the upload is not undone', () async {
       registry = [
         {'1.1.0'},
@@ -250,6 +374,48 @@ void main() {
       expect(changelogNames('## 11.2.0\n', '1.2.0'), isFalse);
       expect(changelogNames('## 1.2.0-dev.1\n', '1.2.0'), isFalse);
       expect(changelogNames('## 1.2.0.1\n', '1.2.0'), isFalse);
+    });
+  });
+
+  group("pub's dry run lists", () {
+    test('every file, by its path in the package', () {
+      expect(publishedFiles(_listing), [
+        'CHANGELOG.md',
+        'lib/demo.dart',
+        'pubspec.yaml',
+      ]);
+    });
+
+    test('nested, and with a name pub would not have shortened', () {
+      expect(
+        publishedFiles(
+          'Publishing demo 1.2.0 to https://pub.dev:\n'
+          '├── lib\n'
+          '│   ├── src\n'
+          '│   │   └── a (1 KB).dart (<1 KB)\n'
+          '│   └── demo.dart (2 KB)\n'
+          '└── pubspec.yaml (<1 KB)\n'
+          '\n'
+          'Total compressed archive size: 3 KB.\n',
+        ),
+        ['lib/src/a (1 KB).dart', 'lib/demo.dart', 'pubspec.yaml'],
+      );
+    });
+
+    test('drawn in ASCII where the terminal has no Unicode', () {
+      expect(
+        publishedFiles(
+          'Publishing demo 1.2.0 to https://pub.dev:\n'
+          '|-- lib\n'
+          "|   '-- demo.dart (<1 KB)\n"
+          "'-- pubspec.yaml (<1 KB)\n",
+        ),
+        ['lib/demo.dart', 'pubspec.yaml'],
+      );
+    });
+
+    test('or nothing, where pub listed none', () {
+      expect(publishedFiles('Resolving dependencies...\n'), isNull);
     });
   });
 
@@ -328,6 +494,29 @@ void main() {
       // is what the first publish of every package sees.
       expect(await askRegistry(url, 'absent'), isEmpty);
     });
+
+    test(
+      'and is unavailable when TLS fails or the answer is not text',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(server.close);
+        server.listen((request) async {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..add([0xff, 0xfe, 0xfd]);
+          await request.response.close();
+        });
+        // HTTPS against a server that speaks plain HTTP: the handshake fails.
+        await expectLater(
+          askRegistry('https://127.0.0.1:${server.port}', 'demo'),
+          throwsA(isA<RegistryUnavailable>()),
+        );
+        await expectLater(
+          askRegistry('http://127.0.0.1:${server.port}', 'demo'),
+          throwsA(isA<RegistryUnavailable>()),
+        );
+      },
+    );
 
     test('and is unavailable when nothing answers', () async {
       final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);

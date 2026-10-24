@@ -155,14 +155,37 @@ Verb linuxAppUninstall(LinuxApp app) =>
 /// The desktop entry [text] with its `Exec=` and `TryExec=` starting
 /// [installed], an absolute path, where they started the bare [binary]; its
 /// other lines as they are.
+///
+/// **`Exec=` is a command line and `TryExec=` is a path**, so the desktop
+/// entry specification writes them differently. In `Exec=` a path with a
+/// space or another reserved character is quoted — unquoted, a home of
+/// `/home/my name` starts `/home/my` — with `"`, `` ` ``, `$` and `\`
+/// escaped inside the quotes, every `\` then doubled because the value is a
+/// string, and `%` written `%%` because it would start a field code.
+/// `TryExec=` is the path as it is.
 String installedDesktopEntry(
   String text, {
   required String binary,
   required String installed,
 }) => text.replaceAllMapped(
   RegExp('^(Exec|TryExec)=${RegExp.escape(binary)}(?=\\s|\$)', multiLine: true),
-  (match) => '${match[1]}=$installed',
+  (match) => switch (match[1]) {
+    'Exec' => 'Exec=${_execArgument(installed)}',
+    _ => 'TryExec=$installed',
+  },
 );
+
+/// [argument] as one argument of an `Exec=` line, by the desktop entry
+/// specification's rules for one.
+String _execArgument(String argument) {
+  // The characters the specification reserves, which an argument holding
+  // any of them has to be quoted for.
+  final reserved = RegExp('[ \\t\\n"\'\\\\><~|&;\$*?#()`]');
+  final quoted = reserved.hasMatch(argument)
+      ? '"${argument.replaceAllMapped(RegExp(r'["`$\\]'), (m) => '\\${m[0]}')}"'
+      : argument;
+  return quoted.replaceAll(r'\', r'\\').replaceAll('%', '%%');
+}
 
 /// What the bundle at [bundle] lacks of [app], as a sentence, or null when
 /// it has it all.

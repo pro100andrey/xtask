@@ -29,6 +29,20 @@ void main() {
       );
     });
 
+    test('quoting the path in Exec= where the spec says to', () {
+      // A home with a space in it: unquoted, the session would start
+      // `/home/my` with the rest as arguments.
+      expect(
+        installedDesktopEntry(
+          'Exec=demo %U\nTryExec=demo\n',
+          binary: 'demo',
+          installed: r'/home/my "name"/$x\.local/100%/demo',
+        ),
+        'Exec="/home/my \\\\"name\\\\"/\\\\\$x\\\\\\\\.local/100%%/demo" %U\n'
+        'TryExec=/home/my "name"/\$x\\.local/100%/demo\n',
+      );
+    });
+
     test('and leaves a command that only begins with the name alone', () {
       const text = 'Exec=demo-helper\nExec=/usr/bin/demo\n';
       expect(

@@ -115,6 +115,16 @@ Future<Set<String>> askRegistry(String registry, String package) async {
     throw RegistryUnavailable(error.message);
   } on HttpException catch (error) {
     throw RegistryUnavailable(error.message);
+  } on TlsException catch (error) {
+    throw RegistryUnavailable(error.message);
+  } on IOException catch (error) {
+    // Every other way the connection can fail. Escaping as itself it would
+    // end the run as a crash, which before the upload reads as a defect here
+    // and after it as a failed publish — neither of which it is.
+    throw RegistryUnavailable('$error');
+  } on FormatException catch (error) {
+    // An answer that is not UTF-8, or a URL that is not one.
+    throw RegistryUnavailable(error.message);
   } on TimeoutException {
     throw const RegistryUnavailable('it did not answer in time');
   } finally {
@@ -158,17 +168,22 @@ Verb pubPublish(
 /// cannot be uploaded twice and nothing after it can be taken back.
 ///
 /// - the manifest names the package and its version, and does not say
-///   `publish_to: none` — its registry is the URL there, or pub.dev;
+///   `publish_to: none` — its registry is the URL there, or `PUB_HOSTED_URL`,
+///   or pub.dev: where pub uploads it;
 /// - the changelog names the version in a heading ([changelogNames]): the
 ///   archive carries the changelog, and the page pub.dev shows for a version
 ///   is the one it was uploaded with;
-/// - git says the package matches HEAD ([uncommittedRefusal]);
+/// - git says the package matches HEAD ([uncommittedRefusal]), and every
+///   file pub would upload is one git tracks ([untrackedRefusal]);
 /// - the registry does not already serve the version, and could be asked.
 ///
 /// Then `dart pub publish --force` in the package. `--force` because the
 /// checks above are the confirmation, and a prompt is what a CI job cannot
-/// answer; pub still refuses what it would refuse, and a refusal is a `1` with
-/// nothing uploaded.
+/// answer; pub still refuses what it would refuse. That it answered other
+/// than `0` does not prove nothing went up — the connection can fail after
+/// the archive did — so the registry is asked once: serving the version is a
+/// `0`, not serving it a `1`, and not answering a `4`, since the upload may
+/// have happened.
 ///
 /// **Everything passed**, `0`: the registry serves the version — looked for
 /// after each of [PubPackage.waits], because pub answers when the archive is
@@ -179,7 +194,8 @@ Verb pubPublish(
 /// ([ExitCode.continuationFailed]): the registry did not serve the version in
 /// time. Not a `1`, which would tell a pipeline the publish failed — false,
 /// and unrecoverable in the wrong direction, since the registry will not take
-/// that version again.
+/// that version again. Nothing after the upload answers `1`: a probe that
+/// throws, of whatever kind, is one more look that found nothing.
 Future<int> publishToPub(
   VerbContext context,
   PubPackage package, {
@@ -218,7 +234,14 @@ Future<int> publishToPub(
     );
     return ExitCode.invalidFile;
   }
-  final registry = publishTo ?? 'https://pub.dev';
+  // Where pub uploads it, in pub's order: a registry asked other than the
+  // one uploaded to would answer about a different package.
+  final registry =
+      publishTo ??
+      switch (context.env['PUB_HOSTED_URL']?.trim()) {
+        final String hosted when hosted.isNotEmpty => hosted,
+        _ => 'https://pub.dev',
+      };
   final release = '$name $version';
 
   final changelog = File(p.join(directory.path, package.changelog));
@@ -269,6 +292,57 @@ Future<int> publishToPub(
     return ExitCode.taskFailed;
   }
 
+  // What pub itself would pack, against what git tracks. `git status` does
+  // not show what git ignores, and pub does not read every ignore git does:
+  // a `.pubignore` stops it reading the `.gitignore` beside it, and
+  // `.git/info/exclude` it never reads. A file ignored by one and not the
+  // other is uploaded from a state that exists on one machine.
+  final dryRun = await context.capture([
+    'dart',
+    'pub',
+    'publish',
+    '--dry-run',
+  ], workingDirectory: package.directory);
+  final shipped = publishedFiles(dryRun.stdout);
+  if (shipped == null) {
+    // Its exit code is no verdict — a dry run with warnings answers 65 — but
+    // a run that listed nothing leaves what would be uploaded unknown.
+    final said = [
+      dryRun.stdout.trim(),
+      dryRun.stderr.trim(),
+    ].where((text) => text.isNotEmpty);
+    context.log(
+      '`dart pub publish --dry-run` (exit ${dryRun.exitCode}) listed no '
+      'files, so what would be uploaded is not known:\n${said.join('\n')}',
+    );
+    return ExitCode.taskFailed;
+  }
+  final tracked = await context.capture([
+    'git',
+    'ls-files',
+    '-z',
+    '--',
+    package.directory,
+  ], workingDirectory: context.root);
+  if (tracked.exitCode != 0) {
+    context.log(
+      '`git ls-files` failed (exit ${tracked.exitCode}), so whether git '
+      'tracks what pub would upload is not known: ${tracked.stderr.trim()}',
+    );
+    return ExitCode.taskFailed;
+  }
+  if (untrackedRefusal(
+        package.directory,
+        shipped: shipped,
+        tracked: tracked.stdout
+            .split('\u0000')
+            .where((path) => path.isNotEmpty),
+      )
+      case final refusal?) {
+    context.log(refusal);
+    return ExitCode.taskFailed;
+  }
+
   try {
     if ((await probe(registry, name)).contains(version)) {
       context.log(
@@ -296,10 +370,29 @@ Future<int> publishToPub(
     '--force',
   ], workingDirectory: package.directory);
   if (published != ExitCode.success) {
+    final String why;
+    try {
+      if ((await probe(registry, name)).contains(version)) {
+        context.log(
+          '`dart pub publish` answered $published, but ✓ $registry serves '
+          '$release: the upload went through',
+        );
+        return ExitCode.success;
+      }
+      context.log(
+        '`dart pub publish` answered $published and $registry does not serve '
+        '$release, so it was not uploaded',
+      );
+      return ExitCode.taskFailed;
+    } on Object catch (error) {
+      why = error is RegistryUnavailable ? error.reason : '$error';
+    }
     context.log(
-      '`dart pub publish` answered $published, so $release was not uploaded',
+      '`dart pub publish` answered $published, and whether $release may have '
+      'been uploaded is not known — $why. Look at $registry before '
+      'publishing it again',
     );
-    return ExitCode.taskFailed;
+    return ExitCode.continuationFailed;
   }
 
   for (final (index, delay) in package.waits.indexed) {
@@ -311,11 +404,13 @@ Future<int> publishToPub(
         return ExitCode.success;
       }
       why = 'not listed yet';
-    } on RegistryUnavailable catch (error) {
+    } on Object catch (error) {
       // After the upload, a registry that cannot be asked is one more reason
       // to look again, not a verdict: what is being waited out is the
-      // registry catching up.
-      why = error.reason;
+      // registry catching up. Whatever the probe threw — a project's own
+      // probe may throw anything — since a crash here would end the run as a
+      // `1`, the one answer the upload rules out.
+      why = error is RegistryUnavailable ? error.reason : '$error';
     }
     context.log('  ${index + 1}/${package.waits.length}: $why');
   }
@@ -343,6 +438,79 @@ String? uncommittedRefusal(String package, List<String> porcelain) {
       'index, so these would be uploaded as they are; commit or clean them '
       'first:\n'
       '${porcelain.map((line) => '  $line').join('\n')}';
+}
+
+/// Why what pub would upload of [package] is not what git tracks, or null
+/// when every file of it is tracked.
+///
+/// [shipped] is [publishedFiles], from the package; [tracked] is
+/// `git ls-files -- <package>`, from the root. Only that way round: a
+/// tracked file pub leaves out is what a `.pubignore` is for.
+String? untrackedRefusal(
+  String package, {
+  required List<String> shipped,
+  required Iterable<String> tracked,
+}) {
+  final base = p.posix.normalize(package.replaceAll(r'\', '/'));
+  final inGit = {
+    for (final path in tracked) p.posix.relative(path, from: base),
+  };
+  final untracked = [
+    for (final path in shipped)
+      if (!inGit.contains(path)) path,
+  ];
+  if (untracked.isEmpty) {
+    return null;
+  }
+  return 'pub would upload these from $package, which git does not track — '
+      'a `.pubignore` stops pub reading the `.gitignore` beside it, and it '
+      'never reads `.git/info/exclude`; list them in `.pubignore` or commit '
+      'them first:\n'
+      '${untracked.map((path) => '  $path').join('\n')}';
+}
+
+/// The files `dart pub publish --dry-run` lists in [dryRun], its output, by
+/// their paths in the package and written with `/`; null where it lists
+/// none.
+///
+/// Read from the tree pub draws, in Unicode or — on a terminal without it —
+/// in ASCII. A line is a directory where the next one is deeper, and a file
+/// otherwise, which ends with its size in parentheses; telling them apart by
+/// what follows, not by the parentheses, keeps a file named `a (1 KB).dart`
+/// what it is.
+List<String>? publishedFiles(String dryRun) {
+  final lines = const LineSplitter().convert(
+    dryRun.replaceAll(RegExp('\x1B\\[[0-9;]*m'), ''),
+  );
+  final header = lines.indexWhere(
+    (line) => line.startsWith('Publishing ') && line.endsWith(':'),
+  );
+  if (header < 0) {
+    return null;
+  }
+  final entry = RegExp(r"^((?:[│|]   |    )*)(?:├── |└── |\|-- |'-- )(.*)$");
+  final entries = <(int, String)>[];
+  for (final line in lines.skip(header + 1)) {
+    final match = entry.firstMatch(line);
+    if (match == null) {
+      break;
+    }
+    entries.add((match[1]!.length ~/ 4, match[2]!));
+  }
+  final files = <String>[];
+  final above = <String>[];
+  for (final (index, (depth, name)) in entries.indexed) {
+    above.length = depth;
+    final next = index + 1 < entries.length ? entries[index + 1].$1 : -1;
+    if (next > depth) {
+      above.add(name);
+    } else {
+      files.add(
+        [...above, name.replaceFirst(RegExp(r' \([^()]*\)$'), '')].join('/'),
+      );
+    }
+  }
+  return files.isEmpty ? null : files;
 }
 
 /// Whether [text], a changelog, names [version] in a heading — `## 1.2.0`,

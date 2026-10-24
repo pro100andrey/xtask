@@ -12,13 +12,16 @@
   functions: the bundles `dart build cli` leaves, installed into one `bin/`
   and `lib/` under `~/.local/share` with each command on `PATH` — a link, or
   on Windows a copy, with what a running process holds moved aside rather
-  than failed on. `conflictingLibraries` is the check that two bundles can
-  share one `lib/`.
+  than failed on. Copied beside the earlier install and swapped in, and a
+  file on `PATH` the install did not lay down is refused rather than
+  replaced. `conflictingLibraries` is the check that two bundles can share
+  one `lib/`; executables of one name are checked the same way.
 - `replaceDirectory`, `notALink` and `pointLink`, which the install is made
   of: an installed directory replaced whole, and a link replaced only where it
   is one.
 - `onPathLine`: whether the command just installed is the one `PATH` finds,
-  something else is, or nothing is.
+  something else is, or nothing is — on Windows by every extension `PATHEXT`
+  names.
 - `homeOf` and `dataHome`.
 - `vsCodeInstall`, `vsCodeUninstall` and `vsCodeProfiles`: a project's own VS
   Code extension, built as a VSIX, installed into the profile `PROFILE` or
@@ -29,8 +32,12 @@
   bash, never WSL's launcher (`findGitBash`, `runBashScript`).
 - `packageTests()`: `flutter test` or `dart test` in each package, by whether
   its pubspec takes anything from the Flutter SDK; a package without `test/` is
-  skipped (`runPackageTests`, `usesFlutter`).
+  skipped, and a runner not on `PATH` answers `3` (`runPackageTests`,
+  `usesFlutter`).
 - `pubPublish` and `publishToPub`: a package published to pub after checking
   that the registry does not serve the version yet, the changelog names it,
-  and the package matches HEAD; then a wait until the registry serves it,
-  answering `4` where the upload happened and the registry has not caught up.
+  the package matches HEAD and git tracks every file pub would upload
+  (`publishedFiles`, `untrackedRefusal`); then a wait until the registry
+  serves it, answering `4` where the upload happened and the registry has not
+  caught up, or where pub failed and the registry cannot say whether it did.
+  The registry is pub's: `publish_to:`, `PUB_HOSTED_URL`, pub.dev.

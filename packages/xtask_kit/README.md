@@ -59,7 +59,9 @@ tasks:
 - the menu entry in `$XDG_DATA_HOME/applications` (`~/.local/share` without
   it), its `Exec=` and `TryExec=` naming that link rather than the bare
   command — a session started by a display manager often has no
-  `~/.local/bin` on its `PATH`;
+  `~/.local/bin` on its `PATH`. In `Exec=` the path is quoted where it has a
+  space or another character the desktop entry specification reserves;
+  `TryExec=` is a plain path and takes it as it is;
 - the icons in `$XDG_DATA_HOME/icons/hicolor`.
 
 It refuses, saying why, off Linux, without `HOME`, when the bundle lacks a
@@ -96,21 +98,30 @@ exitCode = await runXtask(args, verbs: {
 
 Every bundle goes into one `~/.local/share/<name>/bin` and one `.../lib`, so
 each executable finds every native library at `../lib`, where a Dart
-executable looks. That makes a library two bundles carry under one name a
-conflict unless it is the same file, and the install refuses one that is not,
-before anything is copied.
+executable looks. That makes a library — or an executable — two bundles carry
+under one name a conflict unless it is the same file, and the install refuses
+one that is not, before anything is copied. The bundles are copied into
+`<name>.new` beside the earlier install and swapped in once the copy is whole,
+so a copy that fails halfway leaves the earlier install working and answers
+`1`, naming the file.
 
 Each command goes to `~/.local/bin`: a link on Linux and macOS, a copy on
 Windows — no symlink without developer mode — with the libraries copied to
-`~/.local/lib`, which is `../lib` from the copy. On Windows a running
-executable cannot be deleted but can be renamed, so what the install cannot
-remove it moves aside as `<file>.old-<time>`, and the next install removes
-what nothing holds any more. It is meant to reinstall the
+`~/.local/lib`, which is `../lib` from the copy. That directory is not only
+this tool's, so the install replaces only what it laid down there: on Linux
+and macOS a link, on Windows a copy of an executable the earlier install
+holds. Anything else of a command's name is somebody else's; the install
+refuses, naming it, and the uninstall leaves it and says so. On Windows a
+running executable cannot be deleted but can be renamed, so what the install
+cannot remove it moves aside as `<file>.old-<time>`, and the next install
+removes what nothing holds any more — only names of exactly that shape, and
+only on Windows; elsewhere nothing is moved aside, and a `.old-` file is
+somebody's backup. It is meant to reinstall the
 tool an editor is running; this package's own suite runs on Windows but does
 not hold a file open while it does.
 
 `retired:` names commands an earlier version put on `PATH` and this one does
-not; both verbs remove them. `installCli` and `uninstallCli` are the same work
+not; both verbs remove them, under the same rule as any other command. `installCli` and `uninstallCli` are the same work
 as functions, for an install that does more after it: call it first, and go
 on where it answers `0`.
 
@@ -241,7 +252,8 @@ inside it; without `each:` it is found from the task's `in:`. A task with
 in the package's directory, and the task's `args:` follow `test`.
 
 A package without `test/` is skipped with a line, and succeeds. A failing
-suite answers `1`, whatever the runner said. A member in no package is refused
+suite answers `1`, whatever the runner said; a runner that is not on `PATH` —
+`flutter` on a machine with only Dart — answers `3`, asked before it starts. A member in no package is refused
 with `2`; a `pubspec.yaml` that is not YAML answers `1`, naming the file.
 `runPackageTests` is the same as a function, and `usesFlutter` the check on
 its own.
@@ -279,18 +291,26 @@ before it the verb checks:
   the changelog it was uploaded with;
 - that `git status` shows the package matching HEAD, untracked files
   included — pub packs the directory, not the index;
+- that every file `dart pub publish --dry-run` lists is one git tracks — a
+  `.pubignore` stops pub reading the `.gitignore` beside it, and pub never
+  reads `.git/info/exclude`, so a file git ignores can be in the archive
+  without `git status` showing it;
 - that the registry does not already serve the version, and could be asked.
 
 Then `dart pub publish --force` in the package, and a bounded wait,
 `registryWaits` (about three and a half minutes), until the registry lists the
-version. The registry is the `publish_to:` URL, or pub.dev, asked through
+version. The registry is where pub uploads: the `publish_to:` URL, or
+`PUB_HOSTED_URL`, or pub.dev, asked through
 pub's API without a credential; a private registry that wants one takes a
 `probe:` of the project's own.
 
 Three endings. Nothing was uploaded: `2` where there is no package to publish
 (no `pubspec.yaml`, no name or version, `publish_to: none`), `1` for any other
-refusal, pub's included. Uploaded and served: `0`. Uploaded, and the registry
-has not served it in time: `4`. The upload is not undone, and a pipeline must
+refusal. Uploaded and served: `0`. Uploaded, and the registry
+has not served it in time: `4`. Pub answering other than `0` is not proof
+that nothing went up, so the registry is asked once then: serving the version
+is a `0`, not serving it a `1`, not answering a `4` — it may have been
+uploaded. The upload is not undone, and a pipeline must
 not read that as a failed publish — the registry will not take the version
 again. `publishToPub` is the same as a function.
 

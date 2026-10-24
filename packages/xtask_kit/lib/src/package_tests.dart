@@ -18,10 +18,15 @@ import 'package:yaml/yaml.dart';
 ///
 /// ```yaml
 /// pkg-test:
+///   desc: every package's tests, with the runner each needs
 ///   each: packages
+///   in: $each
 ///   do: tests
 ///   args: [--reporter=failures-only]
 /// ```
+///
+/// `in: $each` because a task with `each:` has to write `$each` somewhere,
+/// or the engine refuses it: the member is what tells the runs apart.
 Verb packageTests() => runPackageTests;
 
 /// Runs the tests of the package [context] is for, and answers with an
@@ -41,6 +46,12 @@ Verb packageTests() => runPackageTests;
 /// tests. A failing suite answers 1 whatever number the runner gave, because
 /// what a verb answers is read against [ExitCode]'s table, which a test
 /// runner has never heard of.
+///
+/// A runner that is not installed is a 3 ([ExitCode.missingTool]), not a
+/// failed suite: "Flutter is not on this machine" is repaired by somebody
+/// other than whoever repairs a test. Asked before it starts
+/// ([VerbContext.which]) rather than read from the code it answered with,
+/// because a runner may answer 3 for reasons of its own.
 ///
 /// It refuses, naming why, a member in no package, and a `pubspec.yaml` that
 /// cannot be read.
@@ -66,6 +77,12 @@ Future<int> runPackageTests(VerbContext context) async {
     return ExitCode.taskFailed;
   }
   final argv = [if (flutter) 'flutter' else 'dart', 'test', ...context.args];
+  if (context.which(argv.first, workingDirectory: package) == null) {
+    context.log(
+      '$package: `${argv.first}` is not on PATH, and its tests need it',
+    );
+    return ExitCode.missingTool;
+  }
   context.log('$package: ${argv.join(' ')}');
   final code = await context.run(argv, workingDirectory: package);
   return code == ExitCode.success ? ExitCode.success : ExitCode.taskFailed;

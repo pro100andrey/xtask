@@ -48,9 +48,11 @@ export 'src/publish.dart'
         manifestField,
         pubPublish,
         publishToPub,
+        publishedFiles,
         registryWaits,
         servedVersions,
-        uncommittedRefusal;
+        uncommittedRefusal,
+        untrackedRefusal;
 export 'src/replace.dart' show notALink, pointLink, replaceDirectory;
 export 'src/vscode.dart'
     show

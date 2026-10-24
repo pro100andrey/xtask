@@ -61,6 +61,7 @@ dev_dependencies:
     late List<String> said;
     late List<({List<String> argv, String? workingDirectory})> started;
     late int answer;
+    late Set<String> absent;
 
     VerbContext context({
       String? member,
@@ -77,6 +78,8 @@ dev_dependencies:
         started.add((argv: argv, workingDirectory: workingDirectory));
         return answer;
       },
+      locate: (name, {workingDirectory}) =>
+          absent.contains(name) ? null : '/sdk/bin/$name',
     );
 
     void write(String path, String content) => File(p.join(root.path, path))
@@ -104,6 +107,7 @@ dev_dependencies:
       said = [];
       started = [];
       answer = ExitCode.success;
+      absent = {};
     });
 
     tearDown(() => root.deleteSync(recursive: true));
@@ -191,6 +195,29 @@ dev_dependencies:
         'whatever number the runner gave', () async {
       dartPackage('packages/models');
       answer = 79;
+
+      expect(
+        await packageTests()(context(member: 'packages/models')),
+        ExitCode.taskFailed,
+      );
+    });
+
+    test('a runner that is not installed is a 3, not a failed suite', () async {
+      flutterPackage('packages/ui');
+      absent = {'flutter'};
+      // What the engine's start answers for a program nothing on PATH is.
+      answer = ExitCode.missingTool;
+
+      expect(
+        await packageTests()(context(member: 'packages/ui')),
+        ExitCode.missingTool,
+      );
+      expect(said.join('\n'), contains('`flutter`'));
+    });
+
+    test('while a runner that answers 3 itself is a failed suite', () async {
+      dartPackage('packages/models');
+      answer = 3;
 
       expect(
         await packageTests()(context(member: 'packages/models')),
