@@ -758,18 +758,48 @@ List<String>? _argumentsToXtask(List<String> words, {String? entry}) {
 /// `xtask:xtask`, `bin/xtask.dart`, `.\xtask.exe` — because the entry point
 /// is the project's, and a checker that only recognised one spelling would
 /// report a working workflow as broken. A file named by `entry:` is one
-/// more, by its file name: `dart run tool/tasks.dart check` runs a gate set
-/// in a project whose entry point is that file.
+/// more: `dart run tool/tasks.dart check` runs a gate set in a project whose
+/// entry point is that file.
+///
+/// **That file by its whole path, not its name.** A name like `xtask` is
+/// this tool's and nobody else's, so any directory may come before it; a
+/// name like `main.dart` is everybody's, and `dart run bin/main.dart serve`
+/// beside `entry: tool/main.dart` is the application starting, not a gate
+/// set called `serve` that the file does not declare. The word must end in
+/// every segment of `entry:` — `./tool/main.dart` and
+/// `$GITHUB_WORKSPACE/tool/main.dart` do. A bare `main.dart` under
+/// `working-directory: tool` does not: read as a command, it is reported,
+/// which is a question asked where the looser reading would have been a
+/// guess.
 bool _namesXtask(String word, {String? entry}) {
   final name = word.replaceAll(r'\', '/');
   final base = name.substring(name.lastIndexOf('/') + 1);
-  return (entry != null &&
-          base == entry.substring(entry.lastIndexOf('/') + 1)) ||
+  return (entry != null && _endsWith(name, entry)) ||
       base == 'xtask' ||
       base == 'xtask.exe' ||
       base == 'xtask.bat' ||
       base == 'xtask.dart' ||
       base.endsWith(':xtask');
+}
+
+/// Whether the path [name] ends in every segment of [entry], both with `/`
+/// — and neither with a `.` or an empty segment, which name nothing.
+bool _endsWith(String name, String entry) {
+  List<String> segments(String path) => [
+    for (final segment in path.split('/'))
+      if (segment != '.' && segment.isNotEmpty) segment,
+  ];
+  final whole = segments(name);
+  final tail = segments(entry);
+  if (whole.length < tail.length) {
+    return false;
+  }
+  for (var at = 1; at <= tail.length; at++) {
+    if (whole[whole.length - at] != tail[tail.length - at]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /// [word] without a pair of quotes around the whole of it.

@@ -90,18 +90,22 @@ const defaultEntry = 'bin/xtask.dart';
 ///
 /// - `dart run <package>:xtask` where the entry point is its package's
 ///   `bin/xtask.dart` and the package resolution nearest to
-///   [workingDirectory] has that package in it, there. It is `dart run
+///   [workingDirectory] is that package's own — its `.dart_tool`, or its
+///   workspace's where it says `resolution: workspace`. It is `dart run
 ///   :xtask` by name, with the snapshot `dart run` keeps — a third of a
 ///   second — and it works from any package of a workspace, where `:xtask`
-///   means the package the person is in.
-/// - `dart run <path to the entry point>` where it does not, or where the
+///   means the package the person is in. A resolution that merely names the
+///   package, as a package depending on it has, is not enough: it lacks the
+///   package's dev_dependencies, `xtask` usually among them.
+/// - `dart run <path to the entry point>` where it is not, or where the
 ///   entry point is any other file: `dart` resolves a file's packages from
 ///   where the file is. Correct, and about a second and a half, since a file
 ///   is compiled on every run. The path is relative to [workingDirectory], so
 ///   the names of the directories above the root are not on the command line
 ///   — `cmd.exe` would read a `&` or a `%` in them, which nobody typed.
-/// - Where the package has no resolution yet: `dart pub get` in it, and then
-///   the file form, for a `bin/xtask.dart` as for any other file. `dart run
+/// - Where the package has no resolution of its own yet, or one older than
+///   its pubspec, lock or overrides: `dart pub get` in it, and then the file
+///   form, for a `bin/xtask.dart` as for any other file. `dart run
 ///   :xtask` in the package would resolve it as well, but only by starting
 ///   the run there, and a run started anywhere but [workingDirectory] reads
 ///   every relative path the person typed against the wrong directory —
@@ -144,7 +148,16 @@ ProjectEntry? projectEntry(
   if (named && name == 'xtask') {
     return null;
   }
-  if (named && _resolves(name, package, from: workingDirectory)) {
+  final home = _resolutionOf(package);
+  final resolved = home != null && _names(home, name, package);
+  // **Its own resolution, not any that mentions it.** A resolution has
+  // every package it names, but only its own package's dev_dependencies —
+  // and the entry point's `xtask` is one more often than not. An `example/`
+  // that depends on the library by path, or a root that depends on its
+  // tools package, names the package where it is and cannot build its
+  // `bin/xtask.dart`: `dart run <name>:xtask` from there fails to compile.
+  final nearest = _nearestResolution(workingDirectory);
+  if (named && resolved && nearest != null && p.equals(nearest, home)) {
     return (
       root: root,
       entry: entry,
@@ -160,7 +173,11 @@ ProjectEntry? projectEntry(
       p.relative(file, from: workingDirectory),
       ...args,
     ],
-    resolveIn: _resolves(name, package, from: package) ? null : package,
+    // `dart run <file>` takes the resolution it finds as it is, where the
+    // name form gets it again when it is behind its pubspec: without this a
+    // pull that brought a dependency fails to compile until the person runs
+    // `dart pub get` themselves.
+    resolveIn: resolved && _current(home, package) ? null : package,
   );
 }
 
@@ -240,6 +257,25 @@ Future<int> runProjectEntry(
     return ExitCode.missingTool;
   }
   final shell = paths.needsShell(dart);
+  // The batch-shim rule, for the person's own command line this time:
+  // `cmd.exe` reads it before `dart.bat` does. Asked before the resolution is
+  // got, so that a run refused here has not rewritten the package's lock
+  // first. Not `dart run :xtask` as the way round: that goes through the
+  // same batch file; the SDK's `dart.exe` does not.
+  if (shell) {
+    if (shellMetacharacterIn(entry.arguments) case (
+      :final argument,
+      :final character,
+    )) {
+      say(
+        'xtask: `$argument` cannot be handed to `$dart`, which is a batch '
+        'file: `cmd.exe` would read `$character` in it before the project '
+        "does. Put the Dart SDK's `dart.exe` ahead of it on PATH, or run "
+        '`${entry.entry}` with that `dart.exe` yourself',
+      );
+      return ExitCode.invalidFile;
+    }
+  }
   if (entry.resolveIn case final package?) {
     // Collected rather than inherited: what `pub get` says on success is
     // noise on the stdout of a run that may be `--list` piped somewhere, and
@@ -267,22 +303,6 @@ Future<int> runProjectEntry(
       return ExitCode.taskFailed;
     }
   }
-  if (shell) {
-    // The batch-shim rule, for the person's own command line this time:
-    // `cmd.exe` reads it before `dart.bat` does.
-    if (shellMetacharacterIn(entry.arguments) case (
-      :final argument,
-      :final character,
-    )) {
-      say(
-        'xtask: `$argument` cannot be handed to `$dart`, which is a batch '
-        'file: `cmd.exe` would read `$character` in it before the project '
-        'does. Run `dart run :xtask` from the root instead',
-      );
-      return ExitCode.invalidFile;
-    }
-  }
-
   final Process process;
   try {
     process = await Process.start(
@@ -351,42 +371,128 @@ String? _packageName(String root) {
   }
 }
 
-/// Whether the package resolution nearest to [from] has [name] in it, as the
+/// The directory whose `.dart_tool/package_config.json` is the resolution
+/// of the package at [package]: the package itself, or the root of its
+/// workspace where its pubspec says `resolution: workspace`.
+///
+/// The workspace root is the nearest directory above with a pubspec that
+/// has a `workspace:` list, past one that is itself a member of a workspace
+/// further up. Whether the list names this package is not read here — it
+/// may be a glob — and need not be: a member the list leaves out is one
+/// `dart pub get` refuses, and the file form runs that and says why. Null
+/// where no such directory is there to name.
+String? _resolutionOf(String package) {
+  if (!_inWorkspace(package)) {
+    return package;
+  }
+  for (var directory = p.dirname(package); ; directory = p.dirname(directory)) {
+    if (_pubspec(directory) case {'workspace': _}) {
+      if (!_inWorkspace(directory)) {
+        return directory;
+      }
+    }
+    if (p.dirname(directory) == directory) {
+      return null;
+    }
+  }
+}
+
+bool _inWorkspace(String directory) => switch (_pubspec(directory)) {
+  {'resolution': 'workspace'} => true,
+  _ => false,
+};
+
+/// The `pubspec.yaml` at [directory], read, or null where there is none that
+/// reads as YAML.
+Object? _pubspec(String directory) {
+  final file = File(p.join(directory, 'pubspec.yaml'));
+  try {
+    return file.existsSync() ? loadYaml(file.readAsStringSync()) : null;
+  } on Exception {
+    return null;
+  }
+}
+
+/// The directory with the package resolution nearest to [from], at or above
+/// it: the one `dart run` reads there.
+String? _nearestResolution(String from) {
+  for (var directory = p.absolute(from); ; directory = p.dirname(directory)) {
+    if (File(_config(directory)).existsSync()) {
+      return directory;
+    }
+    if (p.dirname(directory) == directory) {
+      return null;
+    }
+  }
+}
+
+String _config(String directory) =>
+    p.join(directory, '.dart_tool', 'package_config.json');
+
+/// Whether the resolution at [home] is no older than what it was got from,
+/// as `dart run` judges it for the name form: a `pubspec.lock` there, and
+/// neither it nor the `pubspec.yaml` and `pubspec_overrides.yaml` beside
+/// it, nor the pubspec of the [package] the entry point is in, written
+/// since.
+///
+/// By the files' times alone — what `pub` looks at before anything else —
+/// and not by what they say. A clock that went backwards, or a dependency
+/// by path whose own pubspec changed, is not noticed here; the compile that
+/// follows says what is missing.
+bool _current(String home, String package) {
+  final DateTime resolved;
+  final lock = File(p.join(home, 'pubspec.lock'));
+  try {
+    if (!lock.existsSync()) {
+      return false;
+    }
+    resolved = File(_config(home)).lastModifiedSync();
+    for (final source in {
+      lock.path,
+      p.join(home, 'pubspec.yaml'),
+      p.join(home, 'pubspec_overrides.yaml'),
+      p.join(package, 'pubspec.yaml'),
+    }) {
+      final file = File(source);
+      if (file.existsSync() && file.lastModifiedSync().isAfter(resolved)) {
+        return false;
+      }
+    }
+  } on FileSystemException {
+    // Gone or unreadable between the look and the read: get it again, which
+    // says what is wrong if anything is.
+    return false;
+  }
+  return true;
+}
+
+/// Whether the package resolution at [home] has [name] in it, as the
 /// package at [root] — not merely a package of that name.
 ///
 /// A resolution that cannot be read, or names the package somewhere that is
 /// not a directory on this machine, answers no: the file form needs none of
 /// it, and a run must not fail here before the engine has said a word.
-bool _resolves(String name, String root, {required String from}) {
-  for (var directory = p.absolute(from); ; directory = p.dirname(directory)) {
-    final config = File(
-      p.join(directory, '.dart_tool', 'package_config.json'),
-    );
-    if (config.existsSync()) {
-      try {
-        final packages = switch (jsonDecode(config.readAsStringSync())) {
-          {'packages': final List<Object?> packages} => packages,
-          _ => const <Object?>[],
-        };
-        for (final package in packages) {
-          if (package case {
-            'name': final String named,
-            'rootUri': final String uri,
-          } when named == name) {
-            final at = Uri.directory(p.dirname(config.path)).resolve(uri);
-            return at.isScheme('file') &&
-                p.equals(p.normalize(p.fromUri(at)), root);
-          }
-        }
-      } on FormatException {
-        // Not JSON, or a `rootUri` that is not a URI.
-      } on FileSystemException {
-        // There, and not readable.
+bool _names(String home, String name, String root) {
+  final config = File(_config(home));
+  try {
+    final packages = switch (jsonDecode(config.readAsStringSync())) {
+      {'packages': final List<Object?> packages} => packages,
+      _ => const <Object?>[],
+    };
+    for (final package in packages) {
+      if (package case {
+        'name': final String named,
+        'rootUri': final String uri,
+      } when named == name) {
+        final at = Uri.directory(p.dirname(config.path)).resolve(uri);
+        return at.isScheme('file') &&
+            p.equals(p.normalize(p.fromUri(at)), root);
       }
-      return false;
     }
-    if (p.dirname(directory) == directory) {
-      return false;
-    }
+  } on FormatException {
+    // Not JSON, or a `rootUri` that is not a URI.
+  } on FileSystemException {
+    // Not there, or there and not readable.
   }
+  return false;
 }

@@ -205,22 +205,31 @@ package. The project's entry is started where you are standing, so relative
 paths on the command line keep meaning what they meant:
 
 - `dart run <package>:xtask`, when the entry point is its package's
-  `bin/xtask.dart` and the package resolution nearest to you has that package
-  in it — from the package or any other of its workspace. It costs what
-  `dart run :xtask` costs, about a third of a second, on top of the installed
-  binary's start.
+  `bin/xtask.dart` and the package resolution nearest to you is that
+  package's own — from the package, or from any package of its workspace
+  where it says `resolution: workspace`. It costs what `dart run :xtask`
+  costs, about a third of a second, on top of the installed binary's start.
 - `dart run <path>/<entry>`, otherwise: from outside that resolution, or for
   an entry point that is any other file. Correct, and slower: a file is
-  compiled every time.
-- When the package has never been resolved: `dart pub get` in it, then the
-  file, still from where you stand — once; from then on the package resolves
-  and the forms above apply. `dart run :xtask` in the package would resolve
-  it too, but only by moving the run there, and every relative path you typed
-  (`--report`, `--check-schema`, …) would be read from the wrong directory.
+  compiled every time. A resolution that only depends on the package — an
+  `example/` beside a library, a root depending on its tools package — gets
+  this form too: it has the package but not the package's
+  `dev_dependencies`, which is where `xtask` usually is.
+- When the package has never been resolved, or its `pubspec.yaml`,
+  `pubspec.lock` or `pubspec_overrides.yaml` is newer than its resolution
+  (or it has no lock), as after a pull that brought a dependency:
+  `dart pub get` in it, then the file, still from where you stand. The name
+  form needs none of this, since `dart run` does the same check itself.
+  `dart run :xtask` in the package would resolve it too, but only by moving
+  the run there, and every relative path you typed (`--report`,
+  `--check-schema`, …) would be read from the wrong directory.
 
 A workflow step running that file — `dart run tools/bin/xtask.dart check`, or
 an entry point with a name of its own — is a gate set's invocation to
-`--check-ci`, as `xtask check` is.
+`--check-ci`, as `xtask check` is. A file named in `entry:` is matched by its
+whole path, `./` or a directory before it allowed: with `entry:
+tool/main.dart`, `dart run bin/main.dart serve` is the application, not a
+gate set.
 
 `--completion` is not handed over, and neither is `--names`, which a
 completion script asks on every TAB, while the installed engine can read the
@@ -229,8 +238,20 @@ Arguments after `--` are a task's and decide nothing here. A task that runs
 `xtask` hands over again, as the person typing it would; a run handed over
 eight times deep is taken for a loop (`XTASK_HAND_OVERS` counts) and refused
 with `2`. Without `dart` on `PATH` the installed `xtask` says so and answers
-`3`. In this package itself there is nothing to hand over to: its
-`bin/xtask.dart` is the installed one.
+`3`; a `dart pub get` that fails is shown and answered `1`; otherwise the code
+is the project's, and an entry point that does not compile is `dart run`'s
+`254` or `255`. Where `dart` is a batch file (`dart.bat`, as Flutter puts on
+`PATH`), a command line carrying a character `cmd.exe` would read — `&`, `|`,
+`%`, … — is refused with `2` before anything runs; the SDK's `dart.exe`
+ahead of it on `PATH` has no such limit. In this package itself there is
+nothing to hand over to: its `bin/xtask.dart` is the installed one.
+
+Not verified on Windows: with a batch-file `dart`, the run is started through
+`cmd.exe`, and an interrupt passed on ends that `cmd.exe` — Windows ends a
+process without its children. Ctrl-C at a console reaches every process on
+it, the project's run among them, so that case is expected to stop the run
+all the same; an interrupt sent to the installed `xtask` alone may leave the
+run going.
 
 `dart run` pays the JIT's start-up — around half a second, every invocation. It
 is nothing against a gate that spends seconds inside a test runner, and it is
@@ -871,9 +892,16 @@ An exit code is not a success flag; it is the shortest possible bug report.
 | `0` | everything asked for ran and passed |
 | `1` | a task ran and failed |
 | `2` | the request was refused — a bad document, an unknown key, a cycle, a dangling reference, a set that expands to nothing; and a command line the parser turns down, or a `--check-ci` that found something |
-| `3` | a task's executable was not found |
+| `3` | a task's executable was not found — or, for a run handed to the project's entry point, `dart` |
 | `4` | a task's body succeeded and one of its `then:` continuations failed |
 | `128`+N | the run was stopped by signal N — `130` for Ctrl-C, `143` for `SIGTERM` |
+
+A run handed to the project's own entry point answers with that run's code.
+Before it starts, the installed `xtask` adds two of its own: `1` where the
+`dart pub get` it runs to resolve the entry point's package fails, and `2`
+for a hand-over loop or a command line a batch-file `dart` cannot carry.
+After it starts, an entry point that does not compile answers what `dart run`
+does — `254` or `255` — passed through as it is.
 
 A `4` stops the run exactly as a `1` does: what has not started does not
 start, what is running is left alone, and the summary names the rest. The code

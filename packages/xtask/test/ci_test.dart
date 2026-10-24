@@ -848,6 +848,53 @@ void _judgeTable() {
       );
     });
 
+    test('a file `entry:` names is matched by its whole path, so another file '
+        'of that name is any other program', () {
+      for (final command in [
+        'dart run tool/main.dart check',
+        'dart run ./tool/main.dart check',
+        r'dart run .\tool\main.dart check',
+        r'dart run $GITHUB_WORKSPACE/tool/main.dart check',
+      ]) {
+        expect(
+          judge(
+            step(command),
+            declared,
+            const {},
+            entry: 'tool/main.dart',
+          ).gate,
+          'check',
+          reason: command,
+        );
+      }
+      expect(
+        judge(
+          step('dart run tool/main.dart check'),
+          declared,
+          const {},
+          entry: './tool/main.dart',
+        ).gate,
+        'check',
+        reason: 'an `entry:` written with `./`',
+      );
+      for (final command in [
+        'dart run bin/main.dart check',
+        'dart run main.dart check',
+        'dart run other_tool/main.dart check',
+      ]) {
+        expect(
+          judge(
+            step(command),
+            declared,
+            const {},
+            entry: 'tool/main.dart',
+          ).problems.single,
+          isA<RunsACommand>(),
+          reason: command,
+        );
+      }
+    });
+
     test('the readings', () {
       expect(judge(step('xtask check'), declared, const {}).gate, 'check');
       expect(

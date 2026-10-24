@@ -76,14 +76,24 @@
   once, and is then run as a file. `--completion` is
   still answered by the engine, and so is `--names` while it can read the
   file; a task's own `xtask` hands over again; `XTASK_HAND_OVERS` stops a loop
-  at eight; no `dart` on `PATH` is a `3`.
+  at eight; no `dart` on `PATH` is a `3`. The name form is used only where
+  the nearest resolution is the package's own (or its workspace's): from an
+  `example/` that depends on the library, or a root that depends on its
+  tools package, the file runs instead, since those resolutions lack the
+  package's `dev_dependencies`. A resolution older than its `pubspec.yaml`,
+  `pubspec.lock` or `pubspec_overrides.yaml`, or with no lock, is got again
+  before the file form runs. A failed `dart pub get` is a `1`; an entry point
+  that does not compile is `dart run`'s `254` or `255`. A batch-file `dart`
+  refuses a command line `cmd.exe` would read before any `pub get`, and says
+  to put the SDK's `dart.exe` ahead of it.
 
 - `entry:` names the project's entry point, from the root, where it is not
   `bin/xtask.dart` — `tools/bin/xtask.dart` in a tools package of its own, or
   `tool/xtask.dart`. The installed `xtask` hands runs to it, from its own
   package (the nearest `pubspec.yaml`), getting that package a resolution
   first where it has none; `--validate` says when the file is missing or in
-  no package, and `--check-ci` reads a step running it as `xtask`. An
+  no package, and `--check-ci` reads a step running it as `xtask` — by the
+  file's whole path, so another file of the same name is not. An
   absolute path, `..`, `\` or a file that is not `.dart` is refused.
 
 - `containing: [paths]` on a glob set keeps only the members that hold every

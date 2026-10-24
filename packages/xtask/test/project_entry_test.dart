@@ -26,9 +26,19 @@ void main() {
     }
   }
 
+  /// When [resolution] says its resolution was got: an hour from now, so
+  /// that every `pubspec.yaml` a test writes is older than it, whichever
+  /// order the test writes them in, unless the test [touch]es one later.
+  final resolved = DateTime.now().add(const Duration(hours: 1));
+
   /// A package resolution in [directory], naming each of [packages] — name
-  /// to its root, relative to [directory].
+  /// to its root, relative to [directory] — with the `pubspec.lock` beside
+  /// it, both as fresh as `dart pub get` leaves them.
   void resolution(String directory, Map<String, String> packages) {
+    File(p.join(directory, 'pubspec.lock'))
+      ..createSync(recursive: true)
+      ..writeAsStringSync('packages: {}\n')
+      ..setLastModifiedSync(resolved);
     File(p.join(directory, '.dart_tool', 'package_config.json'))
       ..createSync(recursive: true)
       ..writeAsStringSync(
@@ -39,7 +49,27 @@ void main() {
               {'name': name, 'rootUri': '../$at', 'packageUri': 'lib/'},
           ],
         }),
-      );
+      )
+      ..setLastModifiedSync(resolved);
+  }
+
+  /// [file] written, or rewritten, after the resolution was got.
+  void touch(String file, [String text = '']) {
+    final written = File(file);
+    if (!written.existsSync()) {
+      written
+        ..createSync(recursive: true)
+        ..writeAsStringSync(text);
+    }
+    written.setLastModifiedSync(resolved.add(const Duration(hours: 1)));
+  }
+
+  /// A `pubspec.yaml` at [directory] for a package called [name], with
+  /// [more] after the name.
+  void pubspec(String directory, String name, [String more = '']) {
+    File(p.join(directory, 'pubspec.yaml'))
+      ..createSync(recursive: true)
+      ..writeAsStringSync('name: $name\n$more');
   }
 
   ProjectEntry? entryFrom(
@@ -323,6 +353,113 @@ void main() {
     expect(said.single, contains('`a&b`'));
   });
 
+  test("a package that depends on the root is not the root's resolution: "
+      'the file form, which the root resolves itself', () {
+    // A library with `xtask` in its dev_dependencies and an `example/` that
+    // depends on it by path: the example's resolution names `mylib` at the
+    // root, and has none of the root's dev_dependencies in it.
+    repository(name: 'mylib');
+    resolution(root, {'mylib': ''});
+    final example = p.join(root, 'example');
+    pubspec(example, 'example', 'dependencies:\n  mylib:\n    path: ..\n');
+    resolution(example, {'example': '', 'mylib': '..'});
+
+    expect(fields(entryFrom(example)), [
+      root,
+      ['run', p.join('..', 'bin', 'xtask.dart'), 'check'],
+      null,
+    ]);
+  });
+
+  test("a workspace member's resolution is the workspace's: run by name from "
+      'any package of it, and got in the member where there is none', () {
+    pubspec(root, 'shop', 'workspace:\n  - packages/tools\n');
+    File(p.join(root, 'xtask.yaml')).writeAsStringSync(
+      'version: 1\nentry: packages/tools/bin/xtask.dart\n',
+    );
+    final tools = p.join(root, 'packages', 'tools');
+    pubspec(tools, 'tools', 'resolution: workspace\n');
+    File(p.join(tools, 'bin', 'xtask.dart'))
+      ..createSync(recursive: true)
+      ..writeAsStringSync('void main() {}\n');
+
+    expect(fields(entryFrom(root)), [
+      root,
+      ['run', p.join('packages', 'tools', 'bin', 'xtask.dart'), 'check'],
+      tools,
+    ], reason: 'never resolved');
+
+    resolution(root, {'shop': '', 'tools': 'packages/tools'});
+    for (final from in [root, tools]) {
+      expect(fields(entryFrom(from)), [
+        root,
+        ['run', 'tools:xtask', 'check'],
+        null,
+      ], reason: from);
+    }
+
+    touch(p.join(tools, 'pubspec.yaml'));
+    final app = p.join(root, 'apps', 'console');
+    resolution(app, {'console': ''});
+    expect(
+      entryFrom(app)?.resolveIn,
+      tools,
+      reason: "a member's pubspec.yaml edited since: got again",
+    );
+  });
+
+  test('a resolution older than what it was got from is got again before '
+      'the file form runs, as `dart run` would for the name form', () {
+    // `dart run <file>` does not look whether the resolution is current, and
+    // a pull that brought a new dependency would fail to compile until the
+    // person ran `dart pub get` themselves.
+    repository();
+    resolution(root, {'shop': ''});
+    final app = p.join(root, 'apps', 'console');
+    resolution(app, {'console': ''});
+    expect(entryFrom(app)?.resolveIn, isNull, reason: 'fresh');
+
+    for (final changed in [
+      'pubspec.yaml',
+      'pubspec.lock',
+      'pubspec_overrides.yaml',
+    ]) {
+      resolution(root, {'shop': ''});
+      touch(p.join(root, changed));
+      expect(entryFrom(app)?.resolveIn, root, reason: '$changed newer');
+      File(p.join(root, 'pubspec_overrides.yaml'))
+        ..createSync()
+        ..deleteSync();
+    }
+
+    resolution(root, {'shop': ''});
+    File(p.join(root, 'pubspec.lock')).deleteSync();
+    expect(entryFrom(app)?.resolveIn, root, reason: 'no pubspec.lock');
+  });
+
+  test('a batch-file `dart` refuses a metacharacter before it gets a '
+      'resolution, and names the entry point and the way round it', () async {
+    // Refused afterwards, the `pub get` had already rewritten the
+    // package's lock for a run that was never going to start.
+    repository();
+    final said = <String>[];
+
+    final code = await runProjectEntry(
+      entryFrom(root, ['check', 'a&b'])!,
+      environment: const {},
+      err: said.add,
+      resolver: ExecutableResolver(
+        environment: const {'PATH': r'C:\dart', 'PATHEXT': '.BAT'},
+        windows: true,
+        isRunnable: (path) => path.toLowerCase().endsWith('dart.bat'),
+      ),
+    );
+
+    expect(code, ExitCode.invalidFile);
+    expect(said.single, allOf(contains('`a&b`'), contains('bin/xtask.dart')));
+    expect(said.single, contains('dart.exe'));
+  });
+
   group('`entry:`', () {
     /// [file] under [root], with `entry:` naming it, and a package with
     /// [name] at [package] (from the root).
@@ -356,6 +493,27 @@ void main() {
         ['run', p.join('tools', 'bin', 'xtask.dart'), 'check'],
         reason: 'from the root, outside its resolution: the file',
       );
+    });
+
+    test("a root that depends on the tools package is not the tools' "
+        'resolution: the file form, with the tools resolved first', () {
+      // The root's resolution names `tools` at `tools/`, and has none of the
+      // tools' own dev_dependencies — `xtask` among them.
+      declared('tools/bin/xtask.dart', package: 'tools', name: 'tools');
+      pubspec(root, 'app', 'dev_dependencies:\n  tools:\n    path: tools\n');
+      resolution(root, {'app': '', 'tools': 'tools'});
+      final tools = p.join(root, 'tools');
+
+      expect(fields(entryFrom(root)), [
+        root,
+        ['run', p.join('tools', 'bin', 'xtask.dart'), 'check'],
+        tools,
+      ]);
+      expect(fields(entryFrom(tools)), [
+        root,
+        ['run', p.join('bin', 'xtask.dart'), 'check'],
+        tools,
+      ]);
     });
 
     test('any other file is run as a file, from where the person stands', () {
