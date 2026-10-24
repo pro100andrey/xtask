@@ -36,16 +36,19 @@ Future<int> replaceDirectory(
   }
   final fresh = '$into.new';
   final old = '$into.old';
+  // A leftover of an earlier run that cannot go is said before anything is
+  // copied: past this point a failure has a half-made directory to explain.
   for (final leftover in [fresh, old]) {
-    if (Directory(leftover).existsSync()) {
-      Directory(leftover).deleteSync(recursive: true);
+    if (_removed(leftover) case final why?) {
+      context.log('$leftover is left from an earlier run and $why');
+      return ExitCode.taskFailed;
     }
   }
   Directory(fresh).createSync(recursive: true);
   final copied = await context.run(['cp', '-a', ...sources, fresh]);
   if (copied != ExitCode.success) {
     context.log('`cp -a` into $fresh exited with $copied');
-    Directory(fresh).deleteSync(recursive: true);
+    _removed(fresh);
     return ExitCode.taskFailed;
   }
   markDirectory(fresh, owner: owner);
@@ -54,10 +57,29 @@ Future<int> replaceDirectory(
   }
   Directory(p.dirname(into)).createSync(recursive: true);
   Directory(fresh).renameSync(into);
-  if (Directory(old).existsSync()) {
-    Directory(old).deleteSync(recursive: true);
+  // The swap is done and the install works; the earlier copy that will not
+  // go is said, and cleared by the next run — not a reason to answer that
+  // the install failed, which is the rule the CLI install keeps too.
+  if (_removed(old) case final why?) {
+    context.log('the earlier copy stays at $old: $why');
   }
   return ExitCode.success;
+}
+
+/// Removes the directory at [path] where there is one, and answers why it
+/// could not, or null where it is gone.
+String? _removed(String path) {
+  final directory = Directory(path);
+  if (!directory.existsSync()) {
+    return null;
+  }
+  try {
+    directory.deleteSync(recursive: true);
+    return null;
+  } on FileSystemException catch (failure) {
+    return 'cannot be removed: ${failure.osError?.message ?? failure.message}'
+        '${failure.path == null ? '' : ' (${failure.path})'}';
+  }
 }
 
 /// The file an install leaves in the directory it lays down, holding who laid

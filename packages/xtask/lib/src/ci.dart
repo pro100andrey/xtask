@@ -242,14 +242,6 @@ final class RunsAnUndeclaredGate extends CiProblem {
   final Set<String> declared;
 }
 
-/// A step naming a task where a gate set belongs.
-///
-/// **Its own finding, because the other one's sentence is untrue about it.**
-/// A step running a declared task runs something; reported as an undeclared
-/// gate set it was told "the job runs nothing", which sends the reader to look
-/// for a typo in a name that is spelt correctly. What is actually wrong is
-/// that the CI file has named a MEMBER of a list where the list belongs, so
-/// the next task added to that gate is one no job runs and nothing says so.
 /// A step that runs a gate set somewhere other than the repository root.
 ///
 /// The invocation reads the `xtask.yaml` in that directory, so it says nothing
@@ -287,6 +279,14 @@ final class RunsAGateThatCannotFail extends CiProblem {
   final String written;
 }
 
+/// A step naming a task where a gate set belongs.
+///
+/// **Its own finding, because the other one's sentence is untrue about it.**
+/// A step running a declared task runs something; reported as an undeclared
+/// gate set it was told "the job runs nothing", which sends the reader to look
+/// for a typo in a name that is spelt correctly. What is actually wrong is
+/// that the CI file has named a MEMBER of a list where the list belongs, so
+/// the next task added to that gate is one no job runs and nothing says so.
 final class RunsATaskNotAGate extends CiProblem {
   const RunsATaskNotAGate(super.step, this.task, this.declared);
 

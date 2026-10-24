@@ -8,7 +8,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:xtask/xtask.dart';
-import 'package:yaml/yaml.dart';
+
+import 'pubspec.dart';
 
 /// How long [publishToPub] holds off before each look at the registry, once
 /// the upload is through.
@@ -566,16 +567,11 @@ bool changelogNames(String text, String version) {
 /// value is something other than a string — `version: 1.0` is a number, and
 /// pub refuses it; reading it back as text would let a publish start on a
 /// manifest pub will not take.
-String? manifestField(String text, String key) {
-  final document = loadYaml(text);
-  if (document is! Map) {
-    throw const FormatException('a pubspec is a map');
-  }
-  return switch (document[key]) {
-    null => null,
-    final String value => value,
-    _ => throw FormatException('`$key:` is not a string'),
-  };
-}
+String? manifestField(String text, String key) =>
+    switch (readPubspec(text)[key]) {
+      null => null,
+      final String value => value,
+      _ => throw FormatException('`$key:` is not a string'),
+    };
 
 Future<void> _delay(Duration delay) => Future<void>.delayed(delay);

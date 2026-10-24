@@ -6,7 +6,8 @@ import 'dart:io' show Platform;
 
 import 'package:path/path.dart' as p;
 import 'package:xtask/xtask.dart';
-import 'package:yaml/yaml.dart';
+
+import 'pubspec.dart';
 
 /// `do:` a verb running one package's tests ([runPackageTests]).
 ///
@@ -163,10 +164,7 @@ int testsAnswer(int code, {bool? windows, bool allowNoTests = false}) =>
 ///
 /// Throws a [FormatException] when [pubspec] is not YAML, or not a map.
 bool usesFlutter(String pubspec) {
-  final document = loadYaml(pubspec);
-  if (document is! Map) {
-    throw const FormatException('a pubspec is a map');
-  }
+  final document = readPubspec(pubspec);
   for (final section in ['dependencies', 'dev_dependencies']) {
     if (document[section] case final Map<Object?, Object?> dependencies) {
       for (final dependency in dependencies.values) {
