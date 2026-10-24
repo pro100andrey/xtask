@@ -210,7 +210,6 @@ dev_dependencies:
       (64, ExitCode.invalidFile, 'the runner refused its arguments'),
       (65, ExitCode.invalidFile, 'the runner refused its configuration'),
       (130, 130, 'the engine stopped it, which is not a failure'),
-      (-9, 137, 'it was killed by a signal, as a shell says it'),
       (124, ExitCode.taskFailed, 'it timed out, which is a failure'),
       (70, ExitCode.taskFailed, 'the runner itself broke'),
     ]) {
@@ -224,6 +223,20 @@ dev_dependencies:
         );
       });
     }
+
+    // A negative number means two different things, and which one is the
+    // host's: a signal negated off Windows, an NTSTATUS on it.
+    test('a runner killed by a signal answers as a shell says it', () {
+      expect(testsAnswer(-9, windows: false), 137);
+      expect(testsAnswer(-15, windows: false), 143);
+    });
+
+    test('and on Windows a negative number is a crash, not a signal', () {
+      // STATUS_ACCESS_VIOLATION and STATUS_CONTROL_C_EXIT, as Dart reports
+      // them: 128 minus either is a number no table gives a meaning to.
+      expect(testsAnswer(-1073741819, windows: true), ExitCode.taskFailed);
+      expect(testsAnswer(-1073741510, windows: true), ExitCode.taskFailed);
+    });
 
     test('and says so where no test ran', () async {
       dartPackage('packages/models');

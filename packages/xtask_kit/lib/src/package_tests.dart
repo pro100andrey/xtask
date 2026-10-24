@@ -2,6 +2,8 @@
 /// test` where it depends on the Flutter SDK, `dart test` where it does not.
 library;
 
+import 'dart:io' show Platform;
+
 import 'package:path/path.dart' as p;
 import 'package:xtask/xtask.dart';
 import 'package:yaml/yaml.dart';
@@ -116,16 +118,21 @@ const _noTestsRan = 79;
 ///   a stopped `interruptible:` suite as stopped rather than failed. A
 ///   runner does not answer it on its own: `dart test` exits `1` on a
 ///   `SIGINT` or a `SIGTERM`.
-/// - a negative number, the runner killed by a signal nobody in the run
-///   sent — Dart reports it negated: `128` and the signal, as a shell says
-///   it (`137` for a `SIGKILL`), since it was stopped and did not fail.
+/// - a negative number off Windows, the runner killed by a signal nobody in
+///   the run sent — Dart reports it negated: `128` and the signal, as a shell
+///   says it (`137` for a `SIGKILL`), since it was stopped and did not fail.
+///   On Windows a negative number is an NTSTATUS — an access violation, a
+///   console closed — which is the runner crashing, and so `1` below.
 /// - anything else — a failing test, one that does not compile, a timeout,
 ///   the runner's own crash: `1` ([ExitCode.taskFailed]).
-int testsAnswer(int code) => switch (code) {
+///
+/// [windows] is the host's unless given, so the rule for each can be asked
+/// of either.
+int testsAnswer(int code, {bool? windows}) => switch (code) {
   ExitCode.success || _noTestsRan => ExitCode.success,
   64 || 65 => ExitCode.invalidFile,
   130 => 130,
-  < 0 => 128 - code,
+  < 0 when !(windows ?? Platform.isWindows) => 128 - code,
   _ => ExitCode.taskFailed,
 };
 

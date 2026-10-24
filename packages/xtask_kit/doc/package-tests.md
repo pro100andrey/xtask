@@ -52,9 +52,9 @@ from `dart test` and `flutter test`:
 | --- | --- | --- |
 | `0` | every test passed | `0` |
 | `79` | no test ran: a `--name` or `--tags` this package has nothing for, or a `test/` with no test file | `0`, with a line saying so — no tests of the kind asked for is no failure of them, as with no `test/` |
-| `64`, `65` | the runner refused an argument in `args:`, or its `dart_test.yaml`, before any test began | `2`: the request was wrong, not the code |
+| `64`, `65` | the runner refused an argument in `args:`, or its `dart_test.yaml`, or the package has no `test` dev dependency, before any test began | `2`: the request was wrong, not the code |
 | `130` | the engine stopped it — an `interruptible:` suite after an earlier failure | `130`, so the run reports it stopped rather than failed |
-| killed by a signal | nobody in the run sent it | `128` and the signal, as a shell says it: `137` for a `SIGKILL` |
+| killed by a signal (not on Windows) | nobody in the run sent it | `128` and the signal, as a shell says it: `137` for a `SIGKILL` |
 | anything else | a failing test, one that does not compile, a timeout, the runner's own crash | `1` |
 
 A runner does not answer `130` or `143` on its own: `dart test` sent a
@@ -64,8 +64,11 @@ the engine whatever the task answers. `flutter test` answers `1` for a
 
 ## On Windows
 
-Nothing differs: the runner is found on `PATH` and started by the engine as
-any `run:` body's program is, so Flutter's `flutter.bat` is found as `flutter`.
+The runner is found on `PATH` and started by the engine as any `run:` body's
+program is, so Flutter's `flutter.bat` is found as `flutter`. One answer
+differs: a negative exit code there is an NTSTATUS — the runner crashing, an
+access violation or a console closed under it — not a signal, so it answers
+`1`, a failure, rather than `128` and a number.
 
 ## As functions
 
