@@ -12,8 +12,10 @@ import 'package:xtask/xtask.dart';
 ///
 /// **Only a directory [owner] laid down is replaced.** [into] is refused,
 /// naming why, where it exists without [owner]'s mark ([notOurDirectory]) —
-/// an app unpacked there by hand, another installer's — and the fresh one is
-/// marked before it is swapped in ([markDirectory]), so the next run knows it.
+/// an app unpacked there by hand, another installer's — unless [adopt] shows
+/// it to be an earlier install's, by [links] or its files; and the fresh one
+/// is marked before it is swapped in ([markDirectory]), so the next run knows
+/// it.
 ///
 /// The copy is `cp -a`, started through [context] like any other process the
 /// verb starts: it keeps the executable bits, which `dart:io` cannot set, and
@@ -29,8 +31,11 @@ Future<int> replaceDirectory(
   required List<String> sources,
   required String into,
   required String owner,
+  EarlierInstall? adopt,
+  List<String> links = const [],
 }) async {
-  if (notOurDirectory(into, owner: owner) case final why?) {
+  if (notOurDirectory(into, owner: owner, adopt: adopt, links: links)
+      case final why?) {
     context.log(why);
     return ExitCode.taskFailed;
   }
@@ -96,26 +101,80 @@ const ownerMark = '.xtask_kit';
 void markDirectory(String directory, {required String owner}) =>
     File(p.join(directory, ownerMark)).writeAsStringSync('$owner\n');
 
+/// What shows a directory without [ownerMark] to be one an earlier install
+/// laid down — a project's own install from before it used this package,
+/// which marked nothing — so that the first install after the move replaces
+/// it rather than refusing it as somebody else's.
+///
+/// Evidence rather than a guess from the contents, as for the mark: a
+/// directory that merely looks like the install is exactly the one not to
+/// replace. Either kind suffices; a directory with neither is refused as
+/// before, and so is one whose mark names another owner.
+final class EarlierInstall {
+  const EarlierInstall({this.linked = false, this.files = const []});
+
+  /// Whether a command the install puts on `PATH`, found there as a link
+  /// into the directory, shows it to be the earlier install's — the link
+  /// that install made. A copy, as a Windows install makes, shows nothing.
+  final bool linked;
+
+  /// Files, from the directory, only the earlier install wrote — a build
+  /// stamp, say; any one of them there shows it.
+  final List<String> files;
+}
+
 /// Why [path] is not a directory [owner] may replace or remove, or null
 /// where it is — or where nothing is there.
 ///
-/// It is [owner]'s only where it holds [owner]'s mark ([markDirectory]).
-/// Anything else is somebody else's, and so is a mark naming another owner:
-/// two installs under one name are two installs, not one to replace the
-/// other.
-String? notOurDirectory(String path, {required String owner}) {
+/// It is [owner]'s where it holds [owner]'s mark ([markDirectory]), or where
+/// it holds no mark and [adopt] shows it to be an earlier install's: by one
+/// of [links], the commands the install puts on `PATH`, leading into it, or
+/// by one of its files. Anything else is somebody else's, and so is a mark
+/// naming another owner: two installs under one name are two installs, not
+/// one to replace the other.
+String? notOurDirectory(
+  String path, {
+  required String owner,
+  EarlierInstall? adopt,
+  Iterable<String> links = const [],
+}) {
   final type = FileSystemEntity.typeSync(path, followLinks: false);
   if (type == FileSystemEntityType.notFound) {
     return null;
   }
   final mark = File(p.join(path, ownerMark));
-  if (type == FileSystemEntityType.directory &&
-      mark.existsSync() &&
-      mark.readAsStringSync().trim() == owner) {
-    return null;
+  if (type == FileSystemEntityType.directory) {
+    if (mark.existsSync()) {
+      if (mark.readAsStringSync().trim() == owner) {
+        return null;
+      }
+    } else if (adopt != null && _earlier(path, adopt, links)) {
+      return null;
+    }
   }
   return '$path is not a directory this install made — it has no '
       '$ownerMark naming $owner; move it away first';
+}
+
+/// Whether [adopt]'s evidence is there for [directory]: one of [links] a
+/// link leading into it, where [EarlierInstall.linked], or one of its files.
+bool _earlier(String directory, EarlierInstall adopt, Iterable<String> links) {
+  if (adopt.linked) {
+    for (final link in links) {
+      if (FileSystemEntity.isLinkSync(link) &&
+          p.isWithin(
+            directory,
+            p.normalize(p.join(p.dirname(link), Link(link).targetSync())),
+          )) {
+        return true;
+      }
+    }
+  }
+  return adopt.files.any(
+    (file) =>
+        FileSystemEntity.typeSync(p.join(directory, file)) !=
+        FileSystemEntityType.notFound,
+  );
 }
 
 /// Why [path] cannot be made a link this install owns, or null where it can.

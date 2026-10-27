@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `adopt:` on `LinuxApp` and `DartCli`, an `EarlierInstall`: what shows an
+  installed directory without the `.xtask_kit` mark to be the project's own
+  install from before it used this package — a command on `PATH` linking into
+  it, or a file only that install wrote. Such a directory is replaced and
+  removed like a marked one, so the first install after the move no longer
+  refuses it; without the evidence it is refused as before, and so is one
+  whose mark names another owner. `notOurDirectory` and `replaceDirectory`
+  take the same evidence.
+
 ## 0.1.0
 
 ### Added

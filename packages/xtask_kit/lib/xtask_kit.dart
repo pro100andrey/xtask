@@ -55,6 +55,7 @@ export 'src/publish.dart'
         untrackedRefusal;
 export 'src/replace.dart'
     show
+        EarlierInstall,
         markDirectory,
         notALink,
         notOurDirectory,

@@ -72,6 +72,14 @@ uninstall leaves it and says so.
 `retired:` names commands an earlier version put on `PATH` and this one does
 not; both verbs remove them, under the same rule as any other command.
 
+`adopt:` takes a `~/.local/share/<name>` without the mark as this tool's own
+— the install a project's verbs laid down before it used this package — on
+the evidence an `EarlierInstall` names: `linked: true`, a command or a retired
+one on `PATH` linking into it (on Linux and macOS, where a command is a link),
+or `files:`, a file from the directory only that install wrote, such as
+`files: ['bin/BUILD']`. Either is enough for both verbs to treat it as
+marked; without it, the directory is refused as before.
+
 ## Refusals and exit codes
 
 The install refuses with `1`, before anything is copied, without `HOME` (on

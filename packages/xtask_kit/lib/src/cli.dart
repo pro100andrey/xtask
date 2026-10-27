@@ -26,6 +26,7 @@ final class DartCli {
     required this.bundles,
     required this.commands,
     this.retired = const [],
+    this.adopt,
   });
 
   /// The directory under `~/.local/share` the bundles go into.
@@ -44,6 +45,13 @@ final class DartCli {
   /// install laid down: a file of that name that is not is refused like any
   /// other on `PATH` ([installCli]).
   final List<String> retired;
+
+  /// What shows a `~/.local/share/<name>` without the install's mark to be
+  /// this tool's own earlier install, to replace and remove like a marked
+  /// one; null for none, which refuses it. [EarlierInstall.linked] takes a
+  /// command or a retired one on `PATH` leading into it as that — on POSIX
+  /// only, where a command is a link.
+  final EarlierInstall? adopt;
 }
 
 /// Where a [DartCli] is installed for a person whose home is `home`.
@@ -76,6 +84,18 @@ final class CliPlaces {
   String exe(String name) => windows ? '$name.exe' : name;
 }
 
+/// Why [places]' directory is not [cli]'s, as [notOurDirectory] says, with
+/// [DartCli.adopt] and its commands on `PATH` as the evidence it weighs.
+String? _notOurDirectory(DartCli cli, CliPlaces places) => notOurDirectory(
+  places.share,
+  owner: _owner(cli),
+  adopt: cli.adopt,
+  links: [
+    for (final command in [...cli.commands.keys, ...cli.retired])
+      p.join(places.bindir, places.exe(command)),
+  ],
+);
+
 /// `do:` a verb installing [cli] for whoever runs it ([installCli]).
 Verb cliInstall(DartCli cli) =>
     (context) => installCli(context, cli);
@@ -105,8 +125,9 @@ Verb cliUninstall(DartCli cli) =>
 ///
 /// **Only its own directory is replaced.** `~/.local/share` is every
 /// application's, and a `<name>` there without this install's mark is
-/// somebody else's ([notOurDirectory]): it is refused before anything
-/// changes, as is anything on `PATH` that links into it.
+/// somebody else's ([notOurDirectory]) unless [DartCli.adopt] shows it to be
+/// an earlier install's: it is refused before anything changes, as is
+/// anything on `PATH` that links into it.
 ///
 /// **Only its own files on `PATH` are replaced.** `~/.local/bin` is not this
 /// tool's alone, and a file of the command's name there may be somebody
@@ -179,7 +200,7 @@ Future<int> installCliOn(
       return ExitCode.taskFailed;
     }
   }
-  if (notOurDirectory(places.share, owner: _owner(cli)) case final why?) {
+  if (_notOurDirectory(cli, places) case final why?) {
     context.log(why);
     return ExitCode.taskFailed;
   }
@@ -289,7 +310,7 @@ Future<int> uninstallCliOn(
     return ExitCode.taskFailed;
   }
   final places = CliPlaces.of(cli, home: home, windows: windows);
-  if (notOurDirectory(places.share, owner: _owner(cli)) case final why?) {
+  if (_notOurDirectory(cli, places) case final why?) {
     context.log('$why — nothing removed');
     return ExitCode.success;
   }

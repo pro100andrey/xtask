@@ -288,6 +288,83 @@ void main() {
     });
   });
 
+  group('an install from before the mark', () {
+    // What a project's own verbs laid down before it used this package: the
+    // tool's directory, unmarked, with a stamp only they wrote.
+    late File earlier;
+
+    setUp(() {
+      earlier = File(p.join(places.bin, exe('demo_cli')))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('earlier build');
+    });
+
+    DartCli adopting(EarlierInstall adopt) => DartCli(
+      name: _cli.name,
+      bundles: _cli.bundles,
+      commands: _cli.commands,
+      retired: _cli.retired,
+      adopt: adopt,
+    );
+
+    test('is replaced where a command on PATH links into it', () async {
+      bundles();
+      Link(installed('demo'))
+        ..parent.createSync(recursive: true)
+        ..createSync(earlier.path);
+
+      final cli = adopting(const EarlierInstall(linked: true));
+      expect(await cliInstall(cli)(context()), ExitCode.success);
+      expect(earlier.readAsStringSync(), 'cli');
+      expect(
+        File(p.join(places.share, ownerMark)).readAsStringSync(),
+        'cli demo\n',
+      );
+    }, testOn: '!windows');
+
+    test('or a retired one does', () async {
+      bundles();
+      Link(installed('demo-old'))
+        ..parent.createSync(recursive: true)
+        ..createSync(earlier.path);
+
+      final cli = adopting(const EarlierInstall(linked: true));
+      expect(await cliInstall(cli)(context()), ExitCode.success);
+      expect(
+        FileSystemEntity.typeSync(installed('demo-old'), followLinks: false),
+        FileSystemEntityType.notFound,
+      );
+    }, testOn: '!windows');
+
+    test('or where it holds the file named as its trace', () async {
+      bundles();
+      File(p.join(places.bin, 'BUILD')).writeAsStringSync('commit=abc');
+
+      final cli = adopting(const EarlierInstall(files: ['bin/BUILD']));
+      expect(await cliInstall(cli)(context()), ExitCode.success);
+      expect(File(p.join(places.bin, 'BUILD')).existsSync(), isFalse);
+    });
+
+    test('and removed by an uninstall on the same evidence', () async {
+      File(p.join(places.bin, 'BUILD')).writeAsStringSync('commit=abc');
+
+      final cli = adopting(const EarlierInstall(files: ['bin/BUILD']));
+      expect(await cliUninstall(cli)(context()), ExitCode.success);
+      expect(Directory(places.share).existsSync(), isFalse);
+    });
+
+    test('but is refused without the evidence asked for', () async {
+      bundles();
+
+      final cli = adopting(
+        const EarlierInstall(linked: true, files: ['bin/BUILD']),
+      );
+      expect(await cliInstall(cli)(context()), ExitCode.taskFailed);
+      expect(said.single, contains('not a directory this install made'));
+      expect(earlier.readAsStringSync(), 'earlier build');
+    });
+  });
+
   test('an uninstall removes what a failed install left beside it', () async {
     final fresh = Directory('${places.share}.new');
     File(p.join(fresh.path, 'bin', 'half'))
