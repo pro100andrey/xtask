@@ -44,18 +44,7 @@ Future<int> runBashScript(
     context.log('bash: which script? `args: [<script>, …]`');
     return ExitCode.invalidFile;
   }
-  if (!(windows ?? Platform.isWindows)) {
-    return context.run(['bash', ...context.args]);
-  }
-  final bash = await findGitBash(
-    environment: context.env,
-    which: context.which,
-    gitExecPath: () async {
-      final answer = await context.capture(['git', '--exec-path']);
-      return answer.exitCode == ExitCode.success ? answer.stdout.trim() : null;
-    },
-    exists: exists ?? (path) => File(path).existsSync(),
-  );
+  final bash = await findBash(context, windows: windows, exists: exists);
   if (bash == null) {
     context.log(
       'bash: no Git bash found — looked beside the git on PATH, where git '
@@ -66,6 +55,35 @@ Future<int> runBashScript(
     return ExitCode.missingTool;
   }
   return context.run([bash, ...context.args]);
+}
+
+/// The bash [runBashScript] runs a script under, found from [context] as it
+/// finds it: `bash`, for `PATH` to find, off Windows, and on Windows Git's
+/// ([findGitBash]) or null where none is found.
+///
+/// For a verb of the project's that starts bash itself — a suite of shell
+/// scripts it runs one at a time — so that it runs under the bash the `bash`
+/// verb would, without putting together what [findGitBash] is handed: the
+/// task's environment, its `PATH` lookup, `git --exec-path` started through
+/// the context. [windows] and [exists] are this machine's unless given, as
+/// for [runBashScript].
+Future<String?> findBash(
+  VerbContext context, {
+  bool? windows,
+  bool Function(String path)? exists,
+}) async {
+  if (!(windows ?? Platform.isWindows)) {
+    return 'bash';
+  }
+  return findGitBash(
+    environment: context.env,
+    which: context.which,
+    gitExecPath: () async {
+      final answer = await context.capture(['git', '--exec-path']);
+      return answer.exitCode == ExitCode.success ? answer.stdout.trim() : null;
+    },
+    exists: exists ?? (path) => File(path).existsSync(),
+  );
 }
 
 /// Git's own bash on a Windows machine, or null where none is found.
@@ -87,7 +105,8 @@ Future<int> runBashScript(
 ///
 /// [exists] says whether a file is there. Everything is injected so that the
 /// order can be tested away from Windows, where these paths do not exist;
-/// they are read as Windows paths whatever this machine is.
+/// they are read as Windows paths whatever this machine is. A verb has all
+/// of it in its context, and [findBash] hands it over from there.
 Future<String?> findGitBash({
   required Map<String, String> environment,
   required String? Function(String name) which,

@@ -24,6 +24,9 @@
   `CliUninstallStep` run after an uninstall that answered `0`, handed that
   outcome. An uninstall with nothing to remove now says so rather than
   `✓ removed`.
+- `findBash(context)`: the bash the `bash` verb runs a script under — `bash`
+  off Windows, Git's on it — found from a verb's context, for a verb that
+  starts bash itself, without handing `findGitBash` its lookups by hand.
 - `foreignRetired: ForeignRetired.leave` on `DartCli`: a file under a
   `retired:` name the install did not lay down is left, with a warning,
   rather than refusing the install, which stays the default.

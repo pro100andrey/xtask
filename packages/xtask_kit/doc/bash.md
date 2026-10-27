@@ -43,4 +43,7 @@ code is the task's.
 ## As functions
 
 `runBashScript` is the same as a function, for a verb that does more around
-the script; `findGitBash` is the search on its own.
+the script. `findBash(context)` answers which bash that is — `bash` off
+Windows, Git's on it, null where there is none — for a verb that starts bash
+itself, such as one running a suite of scripts. `findGitBash` is the Windows
+search on its own, with everything it reads handed to it, for a test.

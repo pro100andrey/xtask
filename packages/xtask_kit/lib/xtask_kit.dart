@@ -14,7 +14,7 @@
 /// its own, which the install `needs:`.
 library;
 
-export 'src/bash.dart' show bashScript, findGitBash, runBashScript;
+export 'src/bash.dart' show bashScript, findBash, findGitBash, runBashScript;
 export 'src/cli.dart'
     show
         CliPlaces,

@@ -212,6 +212,91 @@ void main() {
     });
   });
 
+  group('findBash', () {
+    VerbContext context({
+      required List<List<String>> started,
+      Map<String, String> commands = const {},
+      String? execPath,
+    }) => VerbContext(
+      args: const ['tool/release.sh'],
+      env: const {},
+      root: Directory.systemTemp.path,
+      workingDirectory: Directory.systemTemp.path,
+      log: (_) {},
+      start: (argv, {workingDirectory}) async {
+        started.add(argv);
+        return ExitCode.success;
+      },
+      locate: (name, {workingDirectory}) => commands[name],
+      collect: (argv, {workingDirectory, timeout}) async => execPath == null
+          ? (exitCode: ExitCode.taskFailed, stdout: '', stderr: '')
+          : (exitCode: ExitCode.success, stdout: '$execPath\n', stderr: ''),
+    );
+
+    /// What [findBash] answers from a context, beside what [runBashScript]
+    /// starts from the same one.
+    Future<(String?, String?)> both({
+      required bool windows,
+      Set<String> files = const {},
+      Map<String, String> commands = const {},
+      String? execPath,
+    }) async {
+      final started = <List<String>>[];
+      final found = await findBash(
+        context(commands: commands, execPath: execPath, started: started),
+        windows: windows,
+        exists: files.contains,
+      );
+      await runBashScript(
+        context(commands: commands, execPath: execPath, started: started),
+        windows: windows,
+        exists: files.contains,
+      );
+      return (found, started.isEmpty ? null : started.single.first);
+    }
+
+    test('is the bash the bash verb runs a script under', () async {
+      final cases = [
+        await both(windows: false),
+        await both(
+          windows: true,
+          files: {'$git\\bin\\bash.exe', wsl},
+          commands: {'git': '$git\\cmd\\git.exe', 'bash': wsl},
+        ),
+        await both(
+          windows: true,
+          files: {r'C:\scoop\apps\git\current\bin\bash.exe'},
+          commands: {'git': r'C:\scoop\shims\git.exe'},
+          execPath: 'C:/scoop/apps/git/current/mingw64/libexec/git-core',
+        ),
+        await both(windows: true, files: {wsl}, commands: {'bash': wsl}),
+      ];
+      for (final (found, ran) in cases) {
+        expect(found, ran);
+      }
+      // Each of them found, but the last, which is only WSL's.
+      expect(cases.map((found) => found.$1), [
+        'bash',
+        '$git\\bin\\bash.exe',
+        r'C:\scoop\apps\git\current\bin\bash.exe',
+        null,
+      ]);
+    });
+
+    test("`bash` off Windows, and Git's on it", () async {
+      expect((await both(windows: false)).$1, 'bash');
+      expect(
+        (await both(
+          windows: true,
+          files: {'$git\\bin\\bash.exe'},
+          commands: {'git': '$git\\cmd\\git.exe'},
+        )).$1,
+        '$git\\bin\\bash.exe',
+      );
+      expect((await both(windows: true)).$1, isNull);
+    });
+  });
+
   group('on a real Windows machine', testOn: 'windows', () {
     test("finds Git's bash, and it is Git's", () async {
       final bash = await findGitBash(
