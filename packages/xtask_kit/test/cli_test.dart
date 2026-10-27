@@ -146,6 +146,57 @@ void main() {
       expect(File(installed('demo-old')).readAsStringSync(), 'my own demo-old');
     }, testOn: '!windows');
 
+    group('where retired names are to be left', () {
+      const leaving = DartCli(
+        name: 'demo',
+        bundles: ['build/cli/bundle', 'build/server/bundle'],
+        commands: {'demo': 'demo_cli', 'demo-server': 'demo_server'},
+        retired: ['demo-old'],
+        foreignRetired: ForeignRetired.leave,
+      );
+
+      test('one under a retired name is left, with a warning', () async {
+        bundles();
+        File(installed('demo-old'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('my own demo-old');
+
+        expect(await cliInstall(leaving)(context()), ExitCode.success);
+        expect(
+          File(installed('demo-old')).readAsStringSync(),
+          'my own demo-old',
+        );
+        expect(
+          said.first,
+          startsWith('⚠ ${installed('demo-old')} is not a link'),
+        );
+        expect(said.first, endsWith('retired, so left as it is'));
+      });
+
+      test('while a link it made under that name still goes', () async {
+        bundles();
+        Link(installed('demo-old'))
+          ..parent.createSync(recursive: true)
+          ..createSync(p.join(places.bin, 'gone'));
+
+        expect(await cliInstall(leaving)(context()), ExitCode.success);
+        expect(
+          FileSystemEntity.typeSync(installed('demo-old'), followLinks: false),
+          FileSystemEntityType.notFound,
+        );
+      });
+
+      test("and one under a command's name is still refused", () async {
+        bundles();
+        File(installed('demo'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('my own demo');
+
+        expect(await cliInstall(leaving)(context()), ExitCode.taskFailed);
+        expect(File(installed('demo')).readAsStringSync(), 'my own demo');
+      });
+    }, testOn: '!windows');
+
     test('and an uninstall leaves it, saying so', () async {
       File(installed('demo'))
         ..createSync(recursive: true)

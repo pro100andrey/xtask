@@ -20,6 +20,7 @@ export 'src/cli.dart'
         CliPlaces,
         CliStep,
         DartCli,
+        ForeignRetired,
         cliInstall,
         cliUninstall,
         conflictingLibraries,

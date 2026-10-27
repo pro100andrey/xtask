@@ -26,6 +26,7 @@ final class DartCli {
     required this.bundles,
     required this.commands,
     this.retired = const [],
+    this.foreignRetired = ForeignRetired.refuse,
     this.adopt,
     this.forbiddenLibraries = const {},
     this.afterInstall,
@@ -48,6 +49,13 @@ final class DartCli {
   /// install laid down: a file of that name that is not is refused like any
   /// other on `PATH` ([installCli]).
   final List<String> retired;
+
+  /// What an install does with a file under a [retired] name that it did
+  /// not lay down: refuse, as for any command, or leave it and say so. The
+  /// second is for a project whose earlier version removed whatever was
+  /// there, so that somebody's own file under that name does not stop every
+  /// install after the move.
+  final ForeignRetired foreignRetired;
 
   /// What shows a `~/.local/share/<name>` without the install's mark to be
   /// this tool's own earlier install, to replace and remove like a marked
@@ -82,6 +90,16 @@ final class DartCli {
 /// ([DartCli.afterInstall], [DartCli.beforeUninstall]): run in [context],
 /// with the [places] the tool is installed to, answering an [ExitCode].
 typedef CliStep = Future<int> Function(VerbContext context, CliPlaces places);
+
+/// What [installCli] does with a file under a [DartCli.retired] name that is
+/// not one it laid down ([DartCli.foreignRetired]).
+enum ForeignRetired {
+  /// Refuse the install, before anything changes, as for any command.
+  refuse,
+
+  /// Leave the file as it is, say so, and go on.
+  leave,
+}
 
 /// Where a [DartCli] is installed for a person whose home is `home`.
 final class CliPlaces {
@@ -165,7 +183,9 @@ Verb cliUninstall(DartCli cli) =>
 /// of an executable the earlier install holds — which is why a copy is
 /// written as `<command>.new` and renamed into place, so that one cut off
 /// halfway is not mistaken for somebody else's. Either is refused before
-/// anything changes, retired commands included.
+/// anything changes, retired commands included — unless
+/// [DartCli.foreignRetired] says to leave one under a retired name, which it
+/// then does, saying so.
 ///
 /// **Windows holds what is running.** A file a running process has open
 /// cannot be deleted there — the very tool being reinstalled, serving an
@@ -226,9 +246,16 @@ Future<int> installCliOn(
     context.log(why);
     return ExitCode.taskFailed;
   }
+  final left = <String>{};
   for (final command in [...cli.commands.keys, ...cli.retired]) {
     if (_notOurs(p.join(places.bindir, places.exe(command)), places)
         case final why?) {
+      if (!cli.commands.containsKey(command) &&
+          cli.foreignRetired == ForeignRetired.leave) {
+        context.log('⚠ $why — retired, so left as it is');
+        left.add(command);
+        continue;
+      }
       context.log(why);
       return ExitCode.taskFailed;
     }
@@ -261,7 +288,9 @@ Future<int> installCliOn(
     _swapIn(fresh, places, aside);
     Directory(places.bindir).createSync(recursive: true);
     for (final command in cli.retired) {
-      _retire(p.join(places.bindir, places.exe(command)), aside, windows);
+      if (!left.contains(command)) {
+        _retire(p.join(places.bindir, places.exe(command)), aside, windows);
+      }
     }
     for (final MapEntry(key: command, value: executable)
         in cli.commands.entries) {

@@ -70,7 +70,12 @@ command's name is somebody else's; the install refuses, naming it, and the
 uninstall leaves it and says so.
 
 `retired:` names commands an earlier version put on `PATH` and this one does
-not; both verbs remove them, under the same rule as any other command.
+not; both verbs remove them, under the same rule as any other command. A file
+under a retired name that the install did not lay down is refused like any
+other, unless `foreignRetired: ForeignRetired.leave` says to leave it: the
+install then goes on and says it left it. That is for a project whose earlier
+version removed whatever was there, so somebody's own file under that name
+would otherwise stop every install after the move.
 
 `adopt:` takes a `~/.local/share/<name>` without the mark as this tool's own
 — the install a project's verbs laid down before it used this package — on

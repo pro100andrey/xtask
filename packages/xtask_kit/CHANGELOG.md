@@ -18,6 +18,9 @@
   with the `CliPlaces` the tool is installed to: a project's own step after a
   successful install, answering for it, and before an uninstall removes
   anything, stopping it where it fails.
+- `foreignRetired: ForeignRetired.leave` on `DartCli`: a file under a
+  `retired:` name the install did not lay down is left, with a warning,
+  rather than refusing the install, which stays the default.
 
 ## 0.1.0
 
