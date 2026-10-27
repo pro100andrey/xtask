@@ -31,6 +31,7 @@ final class DartCli {
     this.forbiddenLibraries = const {},
     this.afterInstall,
     this.beforeUninstall,
+    this.afterUninstall,
   });
 
   /// The directory under `~/.local/share` the bundles go into.
@@ -84,12 +85,29 @@ final class DartCli {
   /// the install is somebody else's. Anything but `0` stops the uninstall
   /// with nothing removed, and is what it answers.
   final CliStep? beforeUninstall;
+
+  /// A step of the project's once the uninstall has done what it does,
+  /// handed what that came to — a key in a registry to forget only where
+  /// the tool is gone ([Uninstalled.removed]), say. Run where the uninstall
+  /// answered `0`: after a removal, on a machine with nothing installed, and
+  /// over an install that is somebody else's. What it answers is what the
+  /// uninstall answers.
+  final CliUninstallStep? afterUninstall;
 }
 
 /// A step a project adds to [installCli] or [uninstallCli]
 /// ([DartCli.afterInstall], [DartCli.beforeUninstall]): run in [context],
 /// with the [places] the tool is installed to, answering an [ExitCode].
 typedef CliStep = Future<int> Function(VerbContext context, CliPlaces places);
+
+/// A step a project adds after [uninstallCli] ([DartCli.afterUninstall]): a
+/// [CliStep] handed as well what the uninstall came to.
+typedef CliUninstallStep =
+    Future<int> Function(
+      VerbContext context,
+      CliPlaces places,
+      Uninstalled outcome,
+    );
 
 /// What [installCli] does with a file under a [DartCli.retired] name that is
 /// not one it laid down ([DartCli.foreignRetired]).
@@ -355,14 +373,44 @@ Future<int> installCliOn(
 /// install's mark is somebody else's whole: nothing is removed, neither it
 /// nor what on `PATH` leads into it, and the uninstall says why and
 /// succeeds. Otherwise [DartCli.beforeUninstall] runs first, and anything but
-/// `0` from it stops the uninstall there. On Windows the libraries copied to
-/// `~/.local/lib` are removed by the names the installed `lib/` has, because
-/// that directory is not only this tool's.
+/// `0` from it stops the uninstall there. Where it answers `0`,
+/// [DartCli.afterUninstall] runs last, with what it came to
+/// ([uninstallCliWithOutcome] answers that too), and answers for it. On
+/// Windows the libraries copied to `~/.local/lib` are removed by the names
+/// the installed `lib/` has, because that directory is not only this tool's.
 Future<int> uninstallCli(VerbContext context, DartCli cli) =>
     uninstallCliOn(context, cli, windows: Platform.isWindows);
 
+/// [uninstallCli], answering as well what it came to ([Uninstalled]) — for
+/// a project whose step after it depends on whether the tool is gone, which
+/// the exit code, `0` for a removal and for an install left as somebody
+/// else's alike, does not say.
+Future<({int code, Uninstalled outcome})> uninstallCliWithOutcome(
+  VerbContext context,
+  DartCli cli,
+) => _uninstallCli(context, cli, windows: Platform.isWindows);
+
 /// [uninstallCli] under [windows]' rules rather than the running platform's.
 Future<int> uninstallCliOn(
+  VerbContext context,
+  DartCli cli, {
+  required bool windows,
+}) async => (await _uninstallCli(context, cli, windows: windows)).code;
+
+/// What [uninstallCli] came to, whatever it answered.
+enum Uninstalled {
+  /// It removed something of this install's.
+  removed,
+
+  /// There was nothing of this install's to remove.
+  nothing,
+
+  /// The install there is somebody else's, and nothing was removed.
+  foreign,
+}
+
+/// [uninstallCliOn], with what it came to.
+Future<({int code, Uninstalled outcome})> _uninstallCli(
   VerbContext context,
   DartCli cli, {
   required bool windows,
@@ -370,12 +418,21 @@ Future<int> uninstallCliOn(
   final home = homeOf(context.env, windows: windows);
   if (home == null) {
     context.log('no HOME${windows ? ' or USERPROFILE' : ''} is set');
-    return ExitCode.taskFailed;
+    return (code: ExitCode.taskFailed, outcome: Uninstalled.nothing);
   }
   final places = CliPlaces.of(cli, home: home, windows: windows);
+  Future<({int code, Uninstalled outcome})> after(
+    Uninstalled outcome,
+  ) async => (
+    code:
+        await cli.afterUninstall?.call(context, places, outcome) ??
+        ExitCode.success,
+    outcome: outcome,
+  );
+
   if (_notOurDirectory(cli, places) case final why?) {
     context.log('$why — nothing removed');
-    return ExitCode.success;
+    return after(Uninstalled.foreign);
   }
   if (cli.beforeUninstall case final step?) {
     final stepped = await step(context, places);
@@ -383,10 +440,26 @@ Future<int> uninstallCliOn(
       context.log(
         'the step before the uninstall answered $stepped — nothing removed',
       );
-      return stepped;
+      return (code: stepped, outcome: Uninstalled.nothing);
     }
   }
   final aside = '.old-${DateTime.now().millisecondsSinceEpoch}';
+  var removed = false;
+  void retire(String path) {
+    if (FileSystemEntity.typeSync(path, followLinks: false) !=
+        FileSystemEntityType.notFound) {
+      removed = true;
+    }
+    _retire(path, aside, windows);
+  }
+
+  void clear(Directory directory) {
+    if (directory.existsSync()) {
+      removed = true;
+    }
+    _clear(directory, aside, windows: windows);
+  }
+
   try {
     // The commands first: on Windows whether a copy is this install's is
     // read from the installed `bin/`, which goes next.
@@ -396,32 +469,35 @@ Future<int> uninstallCliOn(
         context.log('$why — left as it is');
         continue;
       }
-      _retire(onPath, aside, windows);
+      retire(onPath);
       if (windows) {
-        _retire('$onPath.new', aside, windows);
+        retire('$onPath.new');
       }
     }
     if (windows && Directory(places.lib).existsSync()) {
       for (final library in Directory(
         places.lib,
       ).listSync().whereType<File>()) {
-        _retire(
-          p.join(places.bindirLib, p.basename(library.path)),
-          aside,
-          windows,
-        );
+        retire(p.join(places.bindirLib, p.basename(library.path)));
       }
     }
     // With what a failed install left beside it, which is this install's
     // too and nothing else removes.
-    _clear(Directory('${places.share}.new'), aside, windows: windows);
-    _clear(Directory(places.share), aside, windows: windows);
+    clear(Directory('${places.share}.new'));
+    clear(Directory(places.share));
   } on FileSystemException catch (error) {
     context.log('${_failure(error)}; fix that and uninstall again');
-    return ExitCode.taskFailed;
+    return (
+      code: ExitCode.taskFailed,
+      outcome: removed ? Uninstalled.removed : Uninstalled.nothing,
+    );
+  }
+  if (!removed) {
+    context.log('${cli.name}: nothing installed in ${places.share}');
+    return after(Uninstalled.nothing);
   }
   context.log('✓ ${cli.name} removed from ${places.share}');
-  return ExitCode.success;
+  return after(Uninstalled.removed);
 }
 
 /// Why one of [cli]'s bundles, read from [context]'s root, must not be

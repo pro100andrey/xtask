@@ -19,13 +19,16 @@ export 'src/cli.dart'
     show
         CliPlaces,
         CliStep,
+        CliUninstallStep,
         DartCli,
         ForeignRetired,
+        Uninstalled,
         cliInstall,
         cliUninstall,
         conflictingLibraries,
         installCli,
-        uninstallCli;
+        uninstallCli,
+        uninstallCliWithOutcome;
 export 'src/home.dart' show dataHome, homeOf;
 export 'src/linux_app.dart'
     show

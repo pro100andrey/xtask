@@ -131,6 +131,26 @@ nothing installed too, so it is to be as tolerant as the uninstall — and not
 over an install that is somebody else's. Anything but `0` from it stops the
 uninstall with nothing removed, and is what the uninstall answers.
 
+`afterUninstall:` runs once the uninstall has answered `0`, handed what it
+came to as well — `Uninstalled.removed`, `nothing` or `foreign` — since the
+exit code is `0` for all three. A key that names the tool is to be forgotten
+only where the tool is gone:
+
+```dart
+Future<int> forget(
+  VerbContext context,
+  CliPlaces places,
+  Uninstalled outcome,
+) async {
+  if (outcome == Uninstalled.removed) {
+    // forget the key that names the tool
+  }
+  return 0;
+}
+```
+
+What it answers is what the uninstall answers.
+
 ## Refusals and exit codes
 
 The install refuses with `1`, before anything is copied, without `HOME` (on
@@ -156,3 +176,5 @@ not hold a file open while it does.
 
 `installCli` and `uninstallCli` are the same work as functions, for an install
 that does more after it: call it first, and go on where it answers `0`.
+`uninstallCliWithOutcome` is `uninstallCli` answering what it came to as
+well, as `(code: 0, outcome: Uninstalled.removed)`.

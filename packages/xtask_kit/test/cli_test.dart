@@ -557,6 +557,84 @@ void main() {
     });
   });
 
+  group('what an uninstall came to', () {
+    test('is removed where it removed the install', () async {
+      bundles();
+      await cliInstall(_cli)(context());
+
+      expect(await uninstallCliWithOutcome(context(), _cli), (
+        code: ExitCode.success,
+        outcome: Uninstalled.removed,
+      ));
+    });
+
+    test('nothing where there was nothing to remove', () async {
+      expect(await uninstallCliWithOutcome(context(), _cli), (
+        code: ExitCode.success,
+        outcome: Uninstalled.nothing,
+      ));
+      expect(said.single, contains('nothing installed'));
+    });
+
+    test("and foreign where the install is somebody else's", () async {
+      File(p.join(places.share, 'bin', 'their-file'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('theirs');
+
+      expect(await uninstallCliWithOutcome(context(), _cli), (
+        code: ExitCode.success,
+        outcome: Uninstalled.foreign,
+      ));
+    });
+
+    group('handed to the step after it', () {
+      late List<Uninstalled> handed;
+
+      setUp(() => handed = []);
+
+      DartCli stepping({int answer = 0, CliStep? beforeUninstall}) => DartCli(
+        name: _cli.name,
+        bundles: _cli.bundles,
+        commands: _cli.commands,
+        beforeUninstall: beforeUninstall,
+        afterUninstall: (context, at, outcome) async {
+          handed.add(outcome);
+          return answer;
+        },
+      );
+
+      test('whichever it was', () async {
+        bundles();
+        final cli = stepping();
+        await cliInstall(cli)(context());
+
+        expect(await cliUninstall(cli)(context()), ExitCode.success);
+        expect(await cliUninstall(cli)(context()), ExitCode.success);
+        File(p.join(places.share, 'theirs'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('theirs');
+        expect(await cliUninstall(cli)(context()), ExitCode.success);
+
+        expect(handed, [
+          Uninstalled.removed,
+          Uninstalled.nothing,
+          Uninstalled.foreign,
+        ]);
+      });
+
+      test("whose answer is the uninstall's", () async {
+        expect(await cliUninstall(stepping(answer: 5))(context()), 5);
+      });
+
+      test('and not run where the step before stopped it', () async {
+        final cli = stepping(beforeUninstall: (context, at) async => 1);
+
+        expect(await cliUninstall(cli)(context()), 1);
+        expect(handed, isEmpty);
+      });
+    });
+  });
+
   test('an uninstall removes what a failed install left beside it', () async {
     final fresh = Directory('${places.share}.new');
     File(p.join(fresh.path, 'bin', 'half'))
