@@ -396,8 +396,12 @@ Future<int> _answer(
         // Narrowed to one set, the heading would repeat what was asked for;
         // over the whole file it is what makes the answer readable.
         (gate == null
-                ? report.grouping(file)
-                : report.listing(tasksInGate(file, declaredGate(file, gate))))
+                ? report.grouping(file, host: resolver.os, style: style)
+                : report.listing(
+                    tasksInGate(file, declaredGate(file, gate)),
+                    host: resolver.os,
+                    style: style,
+                  ))
             .forEach(out);
         return ExitCode.success;
 
