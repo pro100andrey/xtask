@@ -12,6 +12,12 @@
   refuses it; without the evidence it is refused as before, and so is one
   whose mark names another owner. `notOurDirectory` and `replaceDirectory`
   take the same evidence.
+- `forbiddenLibraries:` on `DartCli`: native libraries a bundle must not
+  carry, by bundle; the install refuses one that does before copying.
+- `afterInstall:` and `beforeUninstall:` on `DartCli`, each a `CliStep` run
+  with the `CliPlaces` the tool is installed to: a project's own step after a
+  successful install, answering for it, and before an uninstall removes
+  anything, stopping it where it fails.
 
 ## 0.1.0
 

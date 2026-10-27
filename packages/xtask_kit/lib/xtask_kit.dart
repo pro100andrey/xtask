@@ -18,6 +18,7 @@ export 'src/bash.dart' show bashScript, findGitBash, runBashScript;
 export 'src/cli.dart'
     show
         CliPlaces,
+        CliStep,
         DartCli,
         cliInstall,
         cliUninstall,

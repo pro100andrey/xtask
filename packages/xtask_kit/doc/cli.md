@@ -80,11 +80,58 @@ or `files:`, a file from the directory only that install wrote, such as
 `files: ['bin/BUILD']`. Either is enough for both verbs to treat it as
 marked; without it, the directory is refused as before.
 
+## A library a bundle must not carry
+
+A shared `lib/` hands every library in it to every executable, so a library
+the build pulled into the wrong bundle — a model only a server is to load,
+built into the client through a stray dependency — is installed for both.
+`forbiddenLibraries:` names, by the bundle as `bundles:` writes it, what that
+bundle must not carry; the install refuses one that does, before anything is
+copied:
+
+```dart
+const cli = DartCli(
+  // ...
+  forbiddenLibraries: {
+    'build/cli/bundle': ['libmodel.so', 'libmodel.dylib', 'model.dll'],
+  },
+);
+```
+
+## Steps of the project's own
+
+`afterInstall:` and `beforeUninstall:` are a project's steps around the
+install, each a `CliStep` handed the verb's context and the `CliPlaces` the
+tool is installed to — a build stamp beside the executables, a key in a
+registry, a command the installed tool runs once — so that they need no verb
+wrapped around these:
+
+```dart
+Future<int> stamp(VerbContext context, CliPlaces places) async {
+  File(p.join(places.bin, 'BUILD')).writeAsStringSync('built from source\n');
+  return 0;
+}
+
+const cli = DartCli(
+  // ...
+  afterInstall: stamp,
+);
+```
+
+`afterInstall` runs once the install has succeeded, after the lines about
+`PATH`, and what it answers is what the install answers; a failed install
+does not run it. `beforeUninstall` runs before the uninstall removes
+anything, while what was installed is still there to run — on a machine with
+nothing installed too, so it is to be as tolerant as the uninstall — and not
+over an install that is somebody else's. Anything but `0` from it stops the
+uninstall with nothing removed, and is what the uninstall answers.
+
 ## Refusals and exit codes
 
 The install refuses with `1`, before anything is copied, without `HOME` (on
 Windows, `USERPROFILE`), where a bundle has not been built, where a command
-starts an executable no bundle has, where two bundles carry different files
+starts an executable no bundle has, where a bundle carries a library
+`forbiddenLibraries:` keeps out of it, where two bundles carry different files
 of one name, where a command's place on `PATH` is somebody else's, and where
 `~/.local/share/<name>` is. A file
 it cannot copy or remove answers `1` too, naming it; so does an uninstall

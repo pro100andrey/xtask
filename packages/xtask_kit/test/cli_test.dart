@@ -365,6 +365,147 @@ void main() {
     });
   });
 
+  group('a library a bundle must not carry', () {
+    DartCli forbidding(Map<String, List<String>> libraries) => DartCli(
+      name: _cli.name,
+      bundles: _cli.bundles,
+      commands: _cli.commands,
+      forbiddenLibraries: libraries,
+    );
+
+    test('is refused before anything is copied', () async {
+      bundles();
+      write('build/cli/bundle/lib/libmodel.so', 'model');
+
+      final cli = forbidding({
+        'build/cli/bundle': ['libmodel.so'],
+      });
+      expect(await cliInstall(cli)(context()), ExitCode.taskFailed);
+      expect(
+        said.single,
+        'build/cli/bundle carries libmodel.so in its lib/, which it must not '
+        '— check what its package depends on',
+      );
+      expect(Directory(places.share).existsSync(), isFalse);
+      expect(Directory('${places.share}.new').existsSync(), isFalse);
+    });
+
+    test('while the bundle meant to carry it installs', () async {
+      bundles();
+
+      final cli = forbidding({
+        'build/cli/bundle': ['libmodel.so'],
+      });
+      expect(await cliInstall(cli)(context()), ExitCode.success);
+      expect(File(p.join(places.lib, 'libmodel.so')).existsSync(), isTrue);
+    });
+
+    test('and one named for no bundle is a mistake, said as one', () async {
+      bundles();
+
+      final cli = forbidding({
+        'build/clii/bundle': ['libmodel.so'],
+      });
+      expect(await cliInstall(cli)(context()), ExitCode.taskFailed);
+      expect(said.single, contains('not one of the bundles'));
+    });
+  });
+
+  group("the project's own steps", () {
+    late List<String> steps;
+
+    setUp(() => steps = []);
+
+    DartCli stepping({CliStep? afterInstall, CliStep? beforeUninstall}) =>
+        DartCli(
+          name: _cli.name,
+          bundles: _cli.bundles,
+          commands: _cli.commands,
+          afterInstall: afterInstall,
+          beforeUninstall: beforeUninstall,
+        );
+
+    test('run after an install, with what it installed in place', () async {
+      bundles();
+      final cli = stepping(
+        afterInstall: (context, at) async {
+          steps.add(at.share);
+          // What was installed is there to stamp beside.
+          File(p.join(at.bin, 'BUILD')).writeAsStringSync('commit=abc');
+          return ExitCode.success;
+        },
+      );
+
+      expect(await cliInstall(cli)(context()), ExitCode.success);
+      expect(steps, [places.share]);
+      expect(File(p.join(places.bin, 'BUILD')).existsSync(), isTrue);
+    });
+
+    test("whose answer is the install's", () async {
+      bundles();
+      final cli = stepping(afterInstall: (context, at) async => 7);
+
+      expect(await cliInstall(cli)(context()), 7);
+    });
+
+    test('and not where the install failed', () async {
+      final cli = stepping(
+        afterInstall: (context, at) async {
+          steps.add('ran');
+          return ExitCode.success;
+        },
+      );
+
+      expect(await cliInstall(cli)(context()), ExitCode.taskFailed);
+      expect(steps, isEmpty);
+    });
+
+    test('run before an uninstall, while what it removes is there', () async {
+      bundles();
+      final cli = stepping(
+        beforeUninstall: (context, at) async {
+          steps.add(
+            File(p.join(at.bin, exe('demo_cli'))).existsSync()
+                ? 'installed'
+                : 'gone',
+          );
+          return ExitCode.success;
+        },
+      );
+      await cliInstall(cli)(context());
+
+      expect(await cliUninstall(cli)(context()), ExitCode.success);
+      expect(steps, ['installed']);
+      expect(Directory(places.share).existsSync(), isFalse);
+    });
+
+    test('which stops the uninstall where it fails', () async {
+      bundles();
+      final cli = stepping(beforeUninstall: (context, at) async => 1);
+      await cliInstall(cli)(context());
+      said.clear();
+
+      expect(await cliUninstall(cli)(context()), 1);
+      expect(said.single, contains('nothing removed'));
+      expect(Directory(places.bin).existsSync(), isTrue);
+    });
+
+    test("and is not run over somebody else's install", () async {
+      File(p.join(places.share, 'bin', 'their-file'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('theirs');
+      final cli = stepping(
+        beforeUninstall: (context, at) async {
+          steps.add('ran');
+          return ExitCode.success;
+        },
+      );
+
+      expect(await cliUninstall(cli)(context()), ExitCode.success);
+      expect(steps, isEmpty);
+    });
+  });
+
   test('an uninstall removes what a failed install left beside it', () async {
     final fresh = Directory('${places.share}.new');
     File(p.join(fresh.path, 'bin', 'half'))
