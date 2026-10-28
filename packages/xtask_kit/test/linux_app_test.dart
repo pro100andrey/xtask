@@ -401,6 +401,30 @@ void main() {
         );
       });
 
+      test("and stays the app's when its uninstall stops part-way", () async {
+        // The link that showed it goes first; a file that will not go then
+        // stops the rest. Run again, the uninstall must still know it.
+        Link(places.binary).createSync(
+          p.join(places.app, 'demo'),
+          recursive: true,
+        );
+        final stuck = Directory(p.join(places.app, 'stuck'))..createSync();
+        File(p.join(stuck.path, 'held')).writeAsStringSync('held');
+        Process.runSync('chmod', ['555', stuck.path]);
+        addTearDown(() => Process.runSync('chmod', ['755', stuck.path]));
+
+        final app = adopting(const EarlierInstall(linked: true));
+        await expectLater(
+          linuxAppUninstall(app)(context()),
+          throwsA(isA<FileSystemException>()),
+        );
+        expect(File(p.join(places.app, ownerMark)).existsSync(), isTrue);
+
+        Process.runSync('chmod', ['755', stuck.path]);
+        expect(await linuxAppUninstall(app)(context()), ExitCode.success);
+        expect(Directory(places.app).existsSync(), isFalse);
+      });
+
       test('but is refused without the evidence asked for', () async {
         bundle();
         // A link would show it, but only the trace was asked for.

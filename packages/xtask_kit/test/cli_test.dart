@@ -404,6 +404,26 @@ void main() {
       expect(Directory(places.share).existsSync(), isFalse);
     });
 
+    test("and stays the tool's when its uninstall stops part-way", () async {
+      // The link that showed it goes first; a file that will not go then
+      // stops the rest. Run again, the uninstall must still know it.
+      Link(installed('demo'))
+        ..parent.createSync(recursive: true)
+        ..createSync(earlier.path);
+      final stuck = Directory(p.join(places.share, 'stuck'))..createSync();
+      File(p.join(stuck.path, 'held')).writeAsStringSync('held');
+      Process.runSync('chmod', ['555', stuck.path]);
+      addTearDown(() => Process.runSync('chmod', ['755', stuck.path]));
+
+      final cli = adopting(const EarlierInstall(linked: true));
+      expect(await cliUninstall(cli)(context()), ExitCode.taskFailed);
+      expect(File(p.join(places.share, ownerMark)).existsSync(), isTrue);
+
+      Process.runSync('chmod', ['755', stuck.path]);
+      expect(await cliUninstall(cli)(context()), ExitCode.success);
+      expect(Directory(places.share).existsSync(), isFalse);
+    }, testOn: '!windows');
+
     test('but is refused without the evidence asked for', () async {
       bundles();
 

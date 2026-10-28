@@ -35,6 +35,13 @@
   one task can publish every package of a repository and upload only those
   that were bumped. The refusal stays the default.
 
+### Fixed
+
+- An uninstall stopped part-way — a file in the installed directory that
+  would not go — no longer leaves what is left of the directory unmarked, and
+  so refused by the next uninstall as somebody else's: the `.xtask_kit` mark
+  is deleted last, for `cliUninstall` and `linuxAppUninstall` alike.
+
 ## 0.1.0
 
 ### Added
