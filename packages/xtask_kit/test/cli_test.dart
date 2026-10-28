@@ -146,6 +146,57 @@ void main() {
       expect(File(installed('demo-old')).readAsStringSync(), 'my own demo-old');
     }, testOn: '!windows');
 
+    group('where retired names are to be left', () {
+      const leaving = DartCli(
+        name: 'demo',
+        bundles: ['build/cli/bundle', 'build/server/bundle'],
+        commands: {'demo': 'demo_cli', 'demo-server': 'demo_server'},
+        retired: ['demo-old'],
+        foreignRetired: ForeignRetired.leave,
+      );
+
+      test('one under a retired name is left, with a warning', () async {
+        bundles();
+        File(installed('demo-old'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('my own demo-old');
+
+        expect(await cliInstall(leaving)(context()), ExitCode.success);
+        expect(
+          File(installed('demo-old')).readAsStringSync(),
+          'my own demo-old',
+        );
+        expect(
+          said.first,
+          startsWith('⚠ ${installed('demo-old')} is not a link'),
+        );
+        expect(said.first, endsWith('retired, so left as it is'));
+      });
+
+      test('while a link it made under that name still goes', () async {
+        bundles();
+        Link(installed('demo-old'))
+          ..parent.createSync(recursive: true)
+          ..createSync(p.join(places.bin, 'gone'));
+
+        expect(await cliInstall(leaving)(context()), ExitCode.success);
+        expect(
+          FileSystemEntity.typeSync(installed('demo-old'), followLinks: false),
+          FileSystemEntityType.notFound,
+        );
+      });
+
+      test("and one under a command's name is still refused", () async {
+        bundles();
+        File(installed('demo'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('my own demo');
+
+        expect(await cliInstall(leaving)(context()), ExitCode.taskFailed);
+        expect(File(installed('demo')).readAsStringSync(), 'my own demo');
+      });
+    }, testOn: '!windows');
+
     test('and an uninstall leaves it, saying so', () async {
       File(installed('demo'))
         ..createSync(recursive: true)
@@ -285,6 +336,302 @@ void main() {
       expect(await cliInstall(_cli)(context()), ExitCode.success);
       expect(await cliUninstall(_cli)(context()), ExitCode.success);
       expect(Directory(places.share).existsSync(), isFalse);
+    });
+  });
+
+  group('an install from before the mark', () {
+    // What a project's own verbs laid down before it used this package: the
+    // tool's directory, unmarked, with a stamp only they wrote.
+    late File earlier;
+
+    setUp(() {
+      earlier = File(p.join(places.bin, exe('demo_cli')))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('earlier build');
+    });
+
+    DartCli adopting(EarlierInstall adopt) => DartCli(
+      name: _cli.name,
+      bundles: _cli.bundles,
+      commands: _cli.commands,
+      retired: _cli.retired,
+      adopt: adopt,
+    );
+
+    test('is replaced where a command on PATH links into it', () async {
+      bundles();
+      Link(installed('demo'))
+        ..parent.createSync(recursive: true)
+        ..createSync(earlier.path);
+
+      final cli = adopting(const EarlierInstall(linked: true));
+      expect(await cliInstall(cli)(context()), ExitCode.success);
+      expect(earlier.readAsStringSync(), 'cli');
+      expect(
+        File(p.join(places.share, ownerMark)).readAsStringSync(),
+        'cli demo\n',
+      );
+    }, testOn: '!windows');
+
+    test('or a retired one does', () async {
+      bundles();
+      Link(installed('demo-old'))
+        ..parent.createSync(recursive: true)
+        ..createSync(earlier.path);
+
+      final cli = adopting(const EarlierInstall(linked: true));
+      expect(await cliInstall(cli)(context()), ExitCode.success);
+      expect(
+        FileSystemEntity.typeSync(installed('demo-old'), followLinks: false),
+        FileSystemEntityType.notFound,
+      );
+    }, testOn: '!windows');
+
+    test('or where it holds the file named as its trace', () async {
+      bundles();
+      File(p.join(places.bin, 'BUILD')).writeAsStringSync('commit=abc');
+
+      final cli = adopting(const EarlierInstall(files: ['bin/BUILD']));
+      expect(await cliInstall(cli)(context()), ExitCode.success);
+      expect(File(p.join(places.bin, 'BUILD')).existsSync(), isFalse);
+    });
+
+    test('and removed by an uninstall on the same evidence', () async {
+      File(p.join(places.bin, 'BUILD')).writeAsStringSync('commit=abc');
+
+      final cli = adopting(const EarlierInstall(files: ['bin/BUILD']));
+      expect(await cliUninstall(cli)(context()), ExitCode.success);
+      expect(Directory(places.share).existsSync(), isFalse);
+    });
+
+    test('but is refused without the evidence asked for', () async {
+      bundles();
+
+      final cli = adopting(
+        const EarlierInstall(linked: true, files: ['bin/BUILD']),
+      );
+      expect(await cliInstall(cli)(context()), ExitCode.taskFailed);
+      expect(said.single, contains('not a directory this install made'));
+      expect(earlier.readAsStringSync(), 'earlier build');
+    });
+  });
+
+  group('a library a bundle must not carry', () {
+    DartCli forbidding(Map<String, List<String>> libraries) => DartCli(
+      name: _cli.name,
+      bundles: _cli.bundles,
+      commands: _cli.commands,
+      forbiddenLibraries: libraries,
+    );
+
+    test('is refused before anything is copied', () async {
+      bundles();
+      write('build/cli/bundle/lib/libmodel.so', 'model');
+
+      final cli = forbidding({
+        'build/cli/bundle': ['libmodel.so'],
+      });
+      expect(await cliInstall(cli)(context()), ExitCode.taskFailed);
+      expect(
+        said.single,
+        'build/cli/bundle carries libmodel.so in its lib/, which it must not '
+        '— check what its package depends on',
+      );
+      expect(Directory(places.share).existsSync(), isFalse);
+      expect(Directory('${places.share}.new').existsSync(), isFalse);
+    });
+
+    test('while the bundle meant to carry it installs', () async {
+      bundles();
+
+      final cli = forbidding({
+        'build/cli/bundle': ['libmodel.so'],
+      });
+      expect(await cliInstall(cli)(context()), ExitCode.success);
+      expect(File(p.join(places.lib, 'libmodel.so')).existsSync(), isTrue);
+    });
+
+    test('and one named for no bundle is a mistake, said as one', () async {
+      bundles();
+
+      final cli = forbidding({
+        'build/clii/bundle': ['libmodel.so'],
+      });
+      expect(await cliInstall(cli)(context()), ExitCode.taskFailed);
+      expect(said.single, contains('not one of the bundles'));
+    });
+  });
+
+  group("the project's own steps", () {
+    late List<String> steps;
+
+    setUp(() => steps = []);
+
+    DartCli stepping({CliStep? afterInstall, CliStep? beforeUninstall}) =>
+        DartCli(
+          name: _cli.name,
+          bundles: _cli.bundles,
+          commands: _cli.commands,
+          afterInstall: afterInstall,
+          beforeUninstall: beforeUninstall,
+        );
+
+    test('run after an install, with what it installed in place', () async {
+      bundles();
+      final cli = stepping(
+        afterInstall: (context, at) async {
+          steps.add(at.share);
+          // What was installed is there to stamp beside.
+          File(p.join(at.bin, 'BUILD')).writeAsStringSync('commit=abc');
+          return ExitCode.success;
+        },
+      );
+
+      expect(await cliInstall(cli)(context()), ExitCode.success);
+      expect(steps, [places.share]);
+      expect(File(p.join(places.bin, 'BUILD')).existsSync(), isTrue);
+    });
+
+    test("whose answer is the install's", () async {
+      bundles();
+      final cli = stepping(afterInstall: (context, at) async => 7);
+
+      expect(await cliInstall(cli)(context()), 7);
+    });
+
+    test('and not where the install failed', () async {
+      final cli = stepping(
+        afterInstall: (context, at) async {
+          steps.add('ran');
+          return ExitCode.success;
+        },
+      );
+
+      expect(await cliInstall(cli)(context()), ExitCode.taskFailed);
+      expect(steps, isEmpty);
+    });
+
+    test('run before an uninstall, while what it removes is there', () async {
+      bundles();
+      final cli = stepping(
+        beforeUninstall: (context, at) async {
+          steps.add(
+            File(p.join(at.bin, exe('demo_cli'))).existsSync()
+                ? 'installed'
+                : 'gone',
+          );
+          return ExitCode.success;
+        },
+      );
+      await cliInstall(cli)(context());
+
+      expect(await cliUninstall(cli)(context()), ExitCode.success);
+      expect(steps, ['installed']);
+      expect(Directory(places.share).existsSync(), isFalse);
+    });
+
+    test('which stops the uninstall where it fails', () async {
+      bundles();
+      final cli = stepping(beforeUninstall: (context, at) async => 1);
+      await cliInstall(cli)(context());
+      said.clear();
+
+      expect(await cliUninstall(cli)(context()), 1);
+      expect(said.single, contains('nothing removed'));
+      expect(Directory(places.bin).existsSync(), isTrue);
+    });
+
+    test("and is not run over somebody else's install", () async {
+      File(p.join(places.share, 'bin', 'their-file'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('theirs');
+      final cli = stepping(
+        beforeUninstall: (context, at) async {
+          steps.add('ran');
+          return ExitCode.success;
+        },
+      );
+
+      expect(await cliUninstall(cli)(context()), ExitCode.success);
+      expect(steps, isEmpty);
+    });
+  });
+
+  group('what an uninstall came to', () {
+    test('is removed where it removed the install', () async {
+      bundles();
+      await cliInstall(_cli)(context());
+
+      expect(await uninstallCliWithOutcome(context(), _cli), (
+        code: ExitCode.success,
+        outcome: Uninstalled.removed,
+      ));
+    });
+
+    test('nothing where there was nothing to remove', () async {
+      expect(await uninstallCliWithOutcome(context(), _cli), (
+        code: ExitCode.success,
+        outcome: Uninstalled.nothing,
+      ));
+      expect(said.single, contains('nothing installed'));
+    });
+
+    test("and foreign where the install is somebody else's", () async {
+      File(p.join(places.share, 'bin', 'their-file'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('theirs');
+
+      expect(await uninstallCliWithOutcome(context(), _cli), (
+        code: ExitCode.success,
+        outcome: Uninstalled.foreign,
+      ));
+    });
+
+    group('handed to the step after it', () {
+      late List<Uninstalled> handed;
+
+      setUp(() => handed = []);
+
+      DartCli stepping({int answer = 0, CliStep? beforeUninstall}) => DartCli(
+        name: _cli.name,
+        bundles: _cli.bundles,
+        commands: _cli.commands,
+        beforeUninstall: beforeUninstall,
+        afterUninstall: (context, at, outcome) async {
+          handed.add(outcome);
+          return answer;
+        },
+      );
+
+      test('whichever it was', () async {
+        bundles();
+        final cli = stepping();
+        await cliInstall(cli)(context());
+
+        expect(await cliUninstall(cli)(context()), ExitCode.success);
+        expect(await cliUninstall(cli)(context()), ExitCode.success);
+        File(p.join(places.share, 'theirs'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('theirs');
+        expect(await cliUninstall(cli)(context()), ExitCode.success);
+
+        expect(handed, [
+          Uninstalled.removed,
+          Uninstalled.nothing,
+          Uninstalled.foreign,
+        ]);
+      });
+
+      test("whose answer is the uninstall's", () async {
+        expect(await cliUninstall(stepping(answer: 5))(context()), 5);
+      });
+
+      test('and not run where the step before stopped it', () async {
+        final cli = stepping(beforeUninstall: (context, at) async => 1);
+
+        expect(await cliUninstall(cli)(context()), 1);
+        expect(handed, isEmpty);
+      });
     });
   });
 

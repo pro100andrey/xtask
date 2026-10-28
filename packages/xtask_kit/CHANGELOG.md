@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.1.1
+
+### Added
+
+- `adopt:` on `LinuxApp` and `DartCli`, an `EarlierInstall`: what shows an
+  installed directory without the `.xtask_kit` mark to be the project's own
+  install from before it used this package — a command on `PATH` linking into
+  it, or a file only that install wrote. Such a directory is replaced and
+  removed like a marked one, so the first install after the move no longer
+  refuses it; without the evidence it is refused as before, and so is one
+  whose mark names another owner. `notOurDirectory` and `replaceDirectory`
+  take the same evidence.
+- `forbiddenLibraries:` on `DartCli`: native libraries a bundle must not
+  carry, by bundle; the install refuses one that does before copying.
+- `afterInstall:` and `beforeUninstall:` on `DartCli`, each a `CliStep` run
+  with the `CliPlaces` the tool is installed to: a project's own step after a
+  successful install, answering for it, and before an uninstall removes
+  anything, stopping it where it fails.
+- `uninstallCliWithOutcome` and `Uninstalled`: what a CLI uninstall came to
+  — `removed`, `nothing` or `foreign` — which its exit code, `0` for all
+  three, does not say; and `afterUninstall:` on `DartCli`, a
+  `CliUninstallStep` run after an uninstall that answered `0`, handed that
+  outcome. An uninstall with nothing to remove now says so rather than
+  `✓ removed`.
+- `findBash(context)`: the bash the `bash` verb runs a script under — `bash`
+  off Windows, Git's on it — found from a verb's context, for a verb that
+  starts bash itself, without handing `findGitBash` its lookups by hand.
+- `foreignRetired: ForeignRetired.leave` on `DartCli`: a file under a
+  `retired:` name the install did not lay down is left, with a warning,
+  rather than refusing the install, which stays the default.
+- `alreadyServed: AlreadyServed.skip` on `PubPackage`: a version the
+  registry already serves is skipped, `⊘` and `0`, rather than refused, so
+  one task can publish every package of a repository and upload only those
+  that were bumped. The refusal stays the default.
+
 ## 0.1.0
 
 ### Added

@@ -43,6 +43,22 @@ before it the verb checks:
   a directory covers the files pub lists under it;
 - that the registry does not already serve the version, and could be asked.
 
+## Publishing only what was bumped
+
+A task that publishes every package of a repository, where a release bumps
+only some, takes `alreadyServed: AlreadyServed.skip`:
+
+```dart
+'publish-my-pkg': pubPublish(
+  const PubPackage('packages/my_pkg', alreadyServed: AlreadyServed.skip),
+),
+```
+
+A version the registry already serves is then `⊘` and `0` rather than a
+refusal, and is asked about first: a package nobody bumped is not held to a
+clean tree or a changelog naming its version. A registry that cannot be asked
+is still a refusal.
+
 ## The upload and the wait
 
 Then `dart pub publish --force` in the package, and a bounded wait,

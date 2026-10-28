@@ -3,7 +3,7 @@ description: >-
   Verbs for xtask that projects otherwise write again each: installing a Linux
   app, CLI tools or a VS Code extension; publishing to pub; tests per package;
   scripts under Git's bash.
-version: 0.1.0
+version: 0.1.1
 repository: https://github.com/pro100andrey/xtask/tree/main/packages/xtask_kit
 issue_tracker: https://github.com/pro100andrey/xtask/issues
 

@@ -336,6 +336,104 @@ void main() {
       }
     });
 
+    group('an install from before the mark', () {
+      // What a project's own verbs laid down before it used this package:
+      // the app's directory, unmarked, and maybe its link onto PATH.
+      late LinuxAppPlaces places;
+
+      setUp(() {
+        places = LinuxAppPlaces.of(_app, home: home.path);
+        File(p.join(places.app, 'demo'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('earlier build');
+      });
+
+      LinuxApp adopting(EarlierInstall adopt) => LinuxApp(
+        binary: _app.binary,
+        applicationId: _app.applicationId,
+        bundle: _app.bundle,
+        desktopEntry: _app.desktopEntry,
+        requires: _app.requires,
+        icons: _app.icons,
+        adopt: adopt,
+      );
+
+      test('is replaced where the link on PATH leads into it', () async {
+        bundle();
+        Link(places.binary).createSync(
+          p.join(places.app, 'demo'),
+          recursive: true,
+        );
+
+        final app = adopting(const EarlierInstall(linked: true));
+        expect(await linuxAppInstall(app)(context()), ExitCode.success);
+        expect(
+          File(p.join(places.app, 'demo')).readAsStringSync(),
+          'build/bundle/demo',
+        );
+        expect(
+          File(p.join(places.app, ownerMark)).readAsStringSync(),
+          'linux-app dev.example.demo\n',
+        );
+      });
+
+      test('or where it holds the file named as its trace', () async {
+        bundle();
+        File(p.join(places.app, 'BUILD')).writeAsStringSync('commit=abc');
+
+        final app = adopting(const EarlierInstall(files: ['BUILD']));
+        expect(await linuxAppInstall(app)(context()), ExitCode.success);
+        expect(File(p.join(places.app, 'BUILD')).existsSync(), isFalse);
+      });
+
+      test('and removed by an uninstall on the same evidence', () async {
+        Link(places.binary).createSync(
+          p.join(places.app, 'demo'),
+          recursive: true,
+        );
+
+        final app = adopting(const EarlierInstall(linked: true));
+        expect(await linuxAppUninstall(app)(context()), ExitCode.success);
+        expect(Directory(places.app).existsSync(), isFalse);
+        expect(
+          FileSystemEntity.typeSync(places.binary, followLinks: false),
+          FileSystemEntityType.notFound,
+        );
+      });
+
+      test('but is refused without the evidence asked for', () async {
+        bundle();
+        // A link would show it, but only the trace was asked for.
+        Link(places.binary).createSync(
+          p.join(places.app, 'demo'),
+          recursive: true,
+        );
+
+        final app = adopting(const EarlierInstall(files: ['BUILD']));
+        expect(await linuxAppInstall(app)(context()), ExitCode.taskFailed);
+        expect(said.single, contains('not a directory this install made'));
+        expect(
+          File(p.join(places.app, 'demo')).readAsStringSync(),
+          'earlier build',
+        );
+      });
+
+      test('and so is one marked by another owner, evidence or not', () async {
+        bundle();
+        File(p.join(places.app, 'BUILD')).writeAsStringSync('commit=abc');
+        File(
+          p.join(places.app, ownerMark),
+        ).writeAsStringSync('linux-app other\n');
+
+        final app = adopting(const EarlierInstall(files: ['BUILD']));
+        expect(await linuxAppInstall(app)(context()), ExitCode.taskFailed);
+        expect(
+          File(p.join(places.app, 'demo')).readAsStringSync(),
+          'earlier build',
+        );
+      });
+    });
+
     /// Somebody else's install of the app, as another installer lays it
     /// down: its directory, its menu entry and its icon, none marked.
     List<String> theirs(LinuxAppPlaces places) {

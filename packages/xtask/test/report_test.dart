@@ -390,6 +390,40 @@ tasks:
     test('and nothing at all for nothing at all', () {
       expect(listing(const []), isEmpty);
     });
+
+    test('marking a task for another OS as the run will skip it here', () {
+      final file = parseXtaskFile('''
+version: 1
+tasks:
+  desktop: {desc: install the menu entry, platforms: [linux], run: [d]}
+  test: {desc: run the suite, run: [d]}
+''');
+      expect(listing(file.tasks.values, host: OperatingSystem.macos), [
+        'desktop  install the menu entry  ⊘ linux only',
+        'test     run the suite',
+      ]);
+      expect(listing(file.tasks.values, host: OperatingSystem.linux), [
+        'desktop  install the menu entry',
+        'test     run the suite',
+      ]);
+    });
+
+    test('and under a gate set too', () {
+      final file = parseXtaskFile('''
+version: 1
+gates: [check]
+tasks:
+  desktop:
+    desc: install the menu entry
+    gate: [check]
+    platforms: [linux, macos]
+    run: [d]
+''');
+      expect(grouping(file, host: OperatingSystem.windows), [
+        'gate check',
+        '  desktop  install the menu entry  ⊘ linux and macos only',
+      ]);
+    });
   });
 
   group('--why', () {

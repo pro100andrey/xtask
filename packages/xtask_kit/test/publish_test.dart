@@ -236,6 +236,50 @@ void main() {
       expect(started, isEmpty);
     });
 
+    group('where a version already served is a skip', () {
+      const skipping = PubPackage(
+        'packages/demo',
+        waits: [Duration.zero],
+        alreadyServed: AlreadyServed.skip,
+      );
+
+      test('one the registry serves is a 0, and nothing else runs', () async {
+        registry = [
+          {'1.1.0', '1.2.0'},
+        ];
+        // A package nobody bumped is not held to a tree or a changelog.
+        porcelain = ' M packages/demo/lib/demo.dart\n';
+        write('packages/demo/CHANGELOG.md', '# Changelog\n');
+        expect(await run(skipping), ExitCode.success);
+        expect(
+          said.join('\n'),
+          contains('⊘ https://pub.dev already serves demo 1.2.0'),
+        );
+        expect(captured, isEmpty);
+        expect(started, isEmpty);
+      });
+
+      test('one it does not serve is published, asked once before', () async {
+        expect(await run(skipping), ExitCode.success);
+        expect(started.single.argv, ['dart', 'pub', 'publish', '--force']);
+        expect(asked, hasLength(2));
+      });
+
+      test('and is checked as any other before the upload', () async {
+        porcelain = ' M packages/demo/lib/demo.dart\n';
+        expect(await run(skipping), ExitCode.taskFailed);
+        expect(started, isEmpty);
+      });
+
+      test('a registry that cannot be asked still refuses', () async {
+        registry = [const RegistryUnavailable('connection refused')];
+        expect(await run(skipping), ExitCode.taskFailed);
+        expect(said.join('\n'), contains('connection refused'));
+        expect(captured, isEmpty);
+        expect(started, isEmpty);
+      });
+    });
+
     test('a registry that cannot be asked refuses rather than guess', () async {
       registry = [const RegistryUnavailable('connection refused')];
       expect(await run(), ExitCode.taskFailed);

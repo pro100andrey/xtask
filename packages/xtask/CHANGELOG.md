@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1
+
+### Changed
+
+- `--list` marks a task whose `platforms:` leave this machine out
+  `⊘ linux only`, as the summary and `--graph` do, so the list read before a
+  run says what it will skip here.
+
 ## 0.5.0
 
 ### Added

@@ -879,8 +879,9 @@ tasks:
 ```
 
 On another machine the summary prints `⊘ install-desktop  linux only`,
-`--report` writes it as `skipped` with that `why`, and `--dry-run` prints the
-same line without resolving its body. **What needs it, or follows it by
+`--report` writes it as `skipped` with that `why`, `--dry-run` prints the
+same line without resolving its body, and `--list` and `--graph` mark the task
+`⊘ linux only` before anything runs. **What needs it, or follows it by
 `then:`, runs as though it had passed**, so `smoke` runs on macOS too. The skip
 is decided where the task would have begun: what it needs still runs first,
 and a failure there skips it as any failure would. `--check-ci` counts the task

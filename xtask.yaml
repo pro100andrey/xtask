@@ -96,6 +96,32 @@ tasks:
     run: [dart, pub, publish, --dry-run]
 
 
+  # Publishing, by hand and after the merge: an upload cannot be taken back,
+  # and the credentials are a person's. No gate reaches these — CI would need
+  # pub.dev's OIDC set up to run them, and `release` already asks pub's own
+  # questions of every package on every push.
+  #
+  # The verbs are `pubPublish` from xtask_kit, registered in `bin/xtask.dart`
+  # in the mode that skips a version pub.dev already serves: `xtask publish`
+  # uploads what a release bumped, and run again it uploads nothing. The
+  # engine first, because the kit depends on it and the verb waits until
+  # pub.dev serves what it uploaded. They need no `check`: they run on a
+  # `main` CI has already passed, and the verb refuses a tree that differs
+  # from HEAD.
+  publish:
+    desc: publish each package whose version pub.dev does not serve yet
+    needs: [publish-xtask, publish-kit]
+
+  publish-xtask:
+    desc: publish packages/xtask, unless pub.dev serves its version already
+    do: publish-xtask
+
+  publish-kit:
+    desc: publish packages/xtask_kit, unless pub.dev serves its version already
+    needs: [publish-xtask]
+    do: publish-kit
+
+
   # A person's convenience, and the one task in this file no gate reaches.
   #
   # Not in `check`, because compiling costs two seconds and produces something

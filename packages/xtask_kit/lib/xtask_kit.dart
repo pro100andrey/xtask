@@ -14,16 +14,21 @@
 /// its own, which the install `needs:`.
 library;
 
-export 'src/bash.dart' show bashScript, findGitBash, runBashScript;
+export 'src/bash.dart' show bashScript, findBash, findGitBash, runBashScript;
 export 'src/cli.dart'
     show
         CliPlaces,
+        CliStep,
+        CliUninstallStep,
         DartCli,
+        ForeignRetired,
+        Uninstalled,
         cliInstall,
         cliUninstall,
         conflictingLibraries,
         installCli,
-        uninstallCli;
+        uninstallCli,
+        uninstallCliWithOutcome;
 export 'src/home.dart' show dataHome, homeOf;
 export 'src/linux_app.dart'
     show
@@ -40,6 +45,7 @@ export 'src/on_path.dart' show onPathLine;
 export 'src/package_tests.dart' show packageTests, runPackageTests, usesFlutter;
 export 'src/publish.dart'
     show
+        AlreadyServed,
         PubPackage,
         RegistryProbe,
         RegistryUnavailable,
@@ -55,6 +61,7 @@ export 'src/publish.dart'
         untrackedRefusal;
 export 'src/replace.dart'
     show
+        EarlierInstall,
         markDirectory,
         notALink,
         notOurDirectory,

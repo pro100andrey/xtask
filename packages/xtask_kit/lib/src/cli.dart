@@ -26,6 +26,12 @@ final class DartCli {
     required this.bundles,
     required this.commands,
     this.retired = const [],
+    this.foreignRetired = ForeignRetired.refuse,
+    this.adopt,
+    this.forbiddenLibraries = const {},
+    this.afterInstall,
+    this.beforeUninstall,
+    this.afterUninstall,
   });
 
   /// The directory under `~/.local/share` the bundles go into.
@@ -44,6 +50,73 @@ final class DartCli {
   /// install laid down: a file of that name that is not is refused like any
   /// other on `PATH` ([installCli]).
   final List<String> retired;
+
+  /// What an install does with a file under a [retired] name that it did
+  /// not lay down: refuse, as for any command, or leave it and say so. The
+  /// second is for a project whose earlier version removed whatever was
+  /// there, so that somebody's own file under that name does not stop every
+  /// install after the move.
+  final ForeignRetired foreignRetired;
+
+  /// What shows a `~/.local/share/<name>` without the install's mark to be
+  /// this tool's own earlier install, to replace and remove like a marked
+  /// one; null for none, which refuses it. [EarlierInstall.linked] takes a
+  /// command or a retired one on `PATH` leading into it as that — on POSIX
+  /// only, where a command is a link.
+  final EarlierInstall? adopt;
+
+  /// Native libraries a bundle must not carry, by the bundle as [bundles]
+  /// writes it: a library the build pulled into the wrong one — a model only
+  /// a server is to load, built into the client by a stray dependency —
+  /// which the shared `lib/` would then hand to every executable. A bundle
+  /// carrying one is refused before anything is copied.
+  final Map<String, List<String>> forbiddenLibraries;
+
+  /// A step of the project's after the install has succeeded — a stamp
+  /// beside the executables, a key in a registry, a command the installed
+  /// tool runs once — with the places it installed to. What it answers is
+  /// what the install answers; it is not run where the install failed.
+  final CliStep? afterInstall;
+
+  /// A step of the project's before the uninstall removes anything, while
+  /// what was installed is still there to run, with the places it is in.
+  /// Run wherever the uninstall goes ahead, a machine with nothing installed
+  /// included, so it is to be as tolerant as the uninstall; not run where
+  /// the install is somebody else's. Anything but `0` stops the uninstall
+  /// with nothing removed, and is what it answers.
+  final CliStep? beforeUninstall;
+
+  /// A step of the project's once the uninstall has done what it does,
+  /// handed what that came to — a key in a registry to forget only where
+  /// the tool is gone ([Uninstalled.removed]), say. Run where the uninstall
+  /// answered `0`: after a removal, on a machine with nothing installed, and
+  /// over an install that is somebody else's. What it answers is what the
+  /// uninstall answers.
+  final CliUninstallStep? afterUninstall;
+}
+
+/// A step a project adds to [installCli] or [uninstallCli]
+/// ([DartCli.afterInstall], [DartCli.beforeUninstall]): run in [context],
+/// with the [places] the tool is installed to, answering an [ExitCode].
+typedef CliStep = Future<int> Function(VerbContext context, CliPlaces places);
+
+/// A step a project adds after [uninstallCli] ([DartCli.afterUninstall]): a
+/// [CliStep] handed as well what the uninstall came to.
+typedef CliUninstallStep =
+    Future<int> Function(
+      VerbContext context,
+      CliPlaces places,
+      Uninstalled outcome,
+    );
+
+/// What [installCli] does with a file under a [DartCli.retired] name that is
+/// not one it laid down ([DartCli.foreignRetired]).
+enum ForeignRetired {
+  /// Refuse the install, before anything changes, as for any command.
+  refuse,
+
+  /// Leave the file as it is, say so, and go on.
+  leave,
 }
 
 /// Where a [DartCli] is installed for a person whose home is `home`.
@@ -76,6 +149,18 @@ final class CliPlaces {
   String exe(String name) => windows ? '$name.exe' : name;
 }
 
+/// Why [places]' directory is not [cli]'s, as [notOurDirectory] says, with
+/// [DartCli.adopt] and its commands on `PATH` as the evidence it weighs.
+String? _notOurDirectory(DartCli cli, CliPlaces places) => notOurDirectory(
+  places.share,
+  owner: _owner(cli),
+  adopt: cli.adopt,
+  links: [
+    for (final command in [...cli.commands.keys, ...cli.retired])
+      p.join(places.bindir, places.exe(command)),
+  ],
+);
+
 /// `do:` a verb installing [cli] for whoever runs it ([installCli]).
 Verb cliInstall(DartCli cli) =>
     (context) => installCli(context, cli);
@@ -105,8 +190,9 @@ Verb cliUninstall(DartCli cli) =>
 ///
 /// **Only its own directory is replaced.** `~/.local/share` is every
 /// application's, and a `<name>` there without this install's mark is
-/// somebody else's ([notOurDirectory]): it is refused before anything
-/// changes, as is anything on `PATH` that links into it.
+/// somebody else's ([notOurDirectory]) unless [DartCli.adopt] shows it to be
+/// an earlier install's: it is refused before anything changes, as is
+/// anything on `PATH` that links into it.
 ///
 /// **Only its own files on `PATH` are replaced.** `~/.local/bin` is not this
 /// tool's alone, and a file of the command's name there may be somebody
@@ -115,7 +201,9 @@ Verb cliUninstall(DartCli cli) =>
 /// of an executable the earlier install holds — which is why a copy is
 /// written as `<command>.new` and renamed into place, so that one cut off
 /// halfway is not mistaken for somebody else's. Either is refused before
-/// anything changes, retired commands included.
+/// anything changes, retired commands included — unless
+/// [DartCli.foreignRetired] says to leave one under a retired name, which it
+/// then does, saying so.
 ///
 /// **Windows holds what is running.** A file a running process has open
 /// cannot be deleted there — the very tool being reinstalled, serving an
@@ -126,9 +214,11 @@ Verb cliUninstall(DartCli cli) =>
 /// aside: a file there named `.old-` is somebody's backup, and is left alone.
 ///
 /// It refuses, naming why, without a home, when a bundle has no `bin/` or a
-/// command's executable is in none of them, and when two bundles carry
+/// command's executable is in none of them, when a bundle carries a library
+/// [DartCli.forbiddenLibraries] keeps out of it, and when two bundles carry
 /// different files of one name for the shared `bin/` or `lib/`. It ends by
-/// saying whether `PATH` reaches each command ([onPathLine]).
+/// saying whether `PATH` reaches each command ([onPathLine]), and then runs
+/// [DartCli.afterInstall], whose answer is its own.
 Future<int> installCli(VerbContext context, DartCli cli) =>
     installCliOn(context, cli, windows: Platform.isWindows);
 
@@ -167,19 +257,28 @@ Future<int> installCliOn(
       return ExitCode.taskFailed;
     }
   }
-  if (_conflicting(bundles, 'bin') ?? conflictingLibraries(bundles)
+  if (_forbidden(cli, context) ??
+          _conflicting(bundles, 'bin') ??
+          conflictingLibraries(bundles)
       case final why?) {
     context.log(why);
     return ExitCode.taskFailed;
   }
+  final left = <String>{};
   for (final command in [...cli.commands.keys, ...cli.retired]) {
     if (_notOurs(p.join(places.bindir, places.exe(command)), places)
         case final why?) {
+      if (!cli.commands.containsKey(command) &&
+          cli.foreignRetired == ForeignRetired.leave) {
+        context.log('⚠ $why — retired, so left as it is');
+        left.add(command);
+        continue;
+      }
       context.log(why);
       return ExitCode.taskFailed;
     }
   }
-  if (notOurDirectory(places.share, owner: _owner(cli)) case final why?) {
+  if (_notOurDirectory(cli, places) case final why?) {
     context.log(why);
     return ExitCode.taskFailed;
   }
@@ -207,7 +306,9 @@ Future<int> installCliOn(
     _swapIn(fresh, places, aside);
     Directory(places.bindir).createSync(recursive: true);
     for (final command in cli.retired) {
-      _retire(p.join(places.bindir, places.exe(command)), aside, windows);
+      if (!left.contains(command)) {
+        _retire(p.join(places.bindir, places.exe(command)), aside, windows);
+      }
     }
     for (final MapEntry(key: command, value: executable)
         in cli.commands.entries) {
@@ -260,7 +361,7 @@ Future<int> installCliOn(
       ),
     );
   }
-  return ExitCode.success;
+  return await cli.afterInstall?.call(context, places) ?? ExitCode.success;
 }
 
 /// Removes what [installCli] laid down for [cli], and answers with an
@@ -271,14 +372,45 @@ Future<int> installCliOn(
 /// and stays, with a line saying so. A `~/.local/share/<name>` without this
 /// install's mark is somebody else's whole: nothing is removed, neither it
 /// nor what on `PATH` leads into it, and the uninstall says why and
-/// succeeds. On Windows the libraries copied to
-/// `~/.local/lib` are removed by the names the installed `lib/` has, because
-/// that directory is not only this tool's.
+/// succeeds. Otherwise [DartCli.beforeUninstall] runs first, and anything but
+/// `0` from it stops the uninstall there. Where it answers `0`,
+/// [DartCli.afterUninstall] runs last, with what it came to
+/// ([uninstallCliWithOutcome] answers that too), and answers for it. On
+/// Windows the libraries copied to `~/.local/lib` are removed by the names
+/// the installed `lib/` has, because that directory is not only this tool's.
 Future<int> uninstallCli(VerbContext context, DartCli cli) =>
     uninstallCliOn(context, cli, windows: Platform.isWindows);
 
+/// [uninstallCli], answering as well what it came to ([Uninstalled]) — for
+/// a project whose step after it depends on whether the tool is gone, which
+/// the exit code, `0` for a removal and for an install left as somebody
+/// else's alike, does not say.
+Future<({int code, Uninstalled outcome})> uninstallCliWithOutcome(
+  VerbContext context,
+  DartCli cli,
+) => _uninstallCli(context, cli, windows: Platform.isWindows);
+
 /// [uninstallCli] under [windows]' rules rather than the running platform's.
 Future<int> uninstallCliOn(
+  VerbContext context,
+  DartCli cli, {
+  required bool windows,
+}) async => (await _uninstallCli(context, cli, windows: windows)).code;
+
+/// What [uninstallCli] came to, whatever it answered.
+enum Uninstalled {
+  /// It removed something of this install's.
+  removed,
+
+  /// There was nothing of this install's to remove.
+  nothing,
+
+  /// The install there is somebody else's, and nothing was removed.
+  foreign,
+}
+
+/// [uninstallCliOn], with what it came to.
+Future<({int code, Uninstalled outcome})> _uninstallCli(
   VerbContext context,
   DartCli cli, {
   required bool windows,
@@ -286,14 +418,48 @@ Future<int> uninstallCliOn(
   final home = homeOf(context.env, windows: windows);
   if (home == null) {
     context.log('no HOME${windows ? ' or USERPROFILE' : ''} is set');
-    return ExitCode.taskFailed;
+    return (code: ExitCode.taskFailed, outcome: Uninstalled.nothing);
   }
   final places = CliPlaces.of(cli, home: home, windows: windows);
-  if (notOurDirectory(places.share, owner: _owner(cli)) case final why?) {
+  Future<({int code, Uninstalled outcome})> after(
+    Uninstalled outcome,
+  ) async => (
+    code:
+        await cli.afterUninstall?.call(context, places, outcome) ??
+        ExitCode.success,
+    outcome: outcome,
+  );
+
+  if (_notOurDirectory(cli, places) case final why?) {
     context.log('$why — nothing removed');
-    return ExitCode.success;
+    return after(Uninstalled.foreign);
+  }
+  if (cli.beforeUninstall case final step?) {
+    final stepped = await step(context, places);
+    if (stepped != ExitCode.success) {
+      context.log(
+        'the step before the uninstall answered $stepped — nothing removed',
+      );
+      return (code: stepped, outcome: Uninstalled.nothing);
+    }
   }
   final aside = '.old-${DateTime.now().millisecondsSinceEpoch}';
+  var removed = false;
+  void retire(String path) {
+    if (FileSystemEntity.typeSync(path, followLinks: false) !=
+        FileSystemEntityType.notFound) {
+      removed = true;
+    }
+    _retire(path, aside, windows);
+  }
+
+  void clear(Directory directory) {
+    if (directory.existsSync()) {
+      removed = true;
+    }
+    _clear(directory, aside, windows: windows);
+  }
+
   try {
     // The commands first: on Windows whether a copy is this install's is
     // read from the installed `bin/`, which goes next.
@@ -303,32 +469,56 @@ Future<int> uninstallCliOn(
         context.log('$why — left as it is');
         continue;
       }
-      _retire(onPath, aside, windows);
+      retire(onPath);
       if (windows) {
-        _retire('$onPath.new', aside, windows);
+        retire('$onPath.new');
       }
     }
     if (windows && Directory(places.lib).existsSync()) {
       for (final library in Directory(
         places.lib,
       ).listSync().whereType<File>()) {
-        _retire(
-          p.join(places.bindirLib, p.basename(library.path)),
-          aside,
-          windows,
-        );
+        retire(p.join(places.bindirLib, p.basename(library.path)));
       }
     }
     // With what a failed install left beside it, which is this install's
     // too and nothing else removes.
-    _clear(Directory('${places.share}.new'), aside, windows: windows);
-    _clear(Directory(places.share), aside, windows: windows);
+    clear(Directory('${places.share}.new'));
+    clear(Directory(places.share));
   } on FileSystemException catch (error) {
     context.log('${_failure(error)}; fix that and uninstall again');
-    return ExitCode.taskFailed;
+    return (
+      code: ExitCode.taskFailed,
+      outcome: removed ? Uninstalled.removed : Uninstalled.nothing,
+    );
+  }
+  if (!removed) {
+    context.log('${cli.name}: nothing installed in ${places.share}');
+    return after(Uninstalled.nothing);
   }
   context.log('✓ ${cli.name} removed from ${places.share}');
-  return ExitCode.success;
+  return after(Uninstalled.removed);
+}
+
+/// Why one of [cli]'s bundles, read from [context]'s root, must not be
+/// installed — it carries a library [DartCli.forbiddenLibraries] keeps out
+/// of it — or null where none does.
+String? _forbidden(DartCli cli, VerbContext context) {
+  for (final MapEntry(key: bundle, value: libraries)
+      in cli.forbiddenLibraries.entries) {
+    if (!cli.bundles.contains(bundle)) {
+      return 'forbiddenLibraries names $bundle, which is not one of the '
+          'bundles';
+    }
+    final lib = p.join(context.directory(bundle).path, 'lib');
+    for (final library in libraries) {
+      if (File(p.join(lib, library)).existsSync()) {
+        return '$bundle carries $library in its lib/, which it must not — '
+            'check what its package depends on';
+      }
+    }
+  }
+  return null;
 }
 
 /// Why [bundles] cannot share one `lib/`, or null when they can: a library

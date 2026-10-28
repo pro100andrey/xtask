@@ -25,6 +25,7 @@ final class LinuxApp {
     this.contents,
     this.requires = const [],
     this.icons,
+    this.adopt,
   });
 
   /// The executable's file name in [bundle], and the command it goes onto
@@ -58,6 +59,12 @@ final class LinuxApp {
 
   /// The app's icons, or null for none.
   final LinuxIcons? icons;
+
+  /// What shows a `~/.local/lib/<binary>` without the install's mark to be
+  /// the app's own earlier install, to replace and remove like a marked one;
+  /// null for none, which refuses it. [EarlierInstall.linked] takes
+  /// `~/.local/bin/<binary>` leading into it as that.
+  final EarlierInstall? adopt;
 }
 
 /// Where a [LinuxApp]'s icons come from.
@@ -139,9 +146,10 @@ final class LinuxAppPlaces {
 /// It refuses, naming why, off Linux, without `HOME`, when the bundle lacks
 /// what [LinuxApp.requires] says it has, when `~/.local/bin/<binary>` is
 /// something other than a link into the app's directory, and when
-/// `~/.local/lib/<binary>` is there without the app's mark — either would be
-/// somebody else's. It ends by
-/// saying whether `PATH` reaches what it installed ([onPathLine]).
+/// `~/.local/lib/<binary>` is there without the app's mark and
+/// [LinuxApp.adopt] does not show it the app's — either would be somebody
+/// else's. It ends by saying whether `PATH` reaches what it installed
+/// ([onPathLine]).
 Verb linuxAppInstall(LinuxApp app) =>
     (context) => _install(context, app);
 
@@ -150,10 +158,11 @@ Verb linuxAppInstall(LinuxApp app) =>
 /// Tolerant and safe to repeat: a teardown that fails on a machine already
 /// clean is a puzzle rather than a tool. Where `~/.local/bin/<binary>` is
 /// not a link into the app's directory, or that directory is there without
-/// the app's mark, the install is somebody else's: nothing at all is removed
-/// — the menu entry and the icons by the same name are that install's too —
-/// and it says why and succeeds. Off Linux there is nothing it could have
-/// installed, and it says so and succeeds.
+/// the app's mark or what [LinuxApp.adopt] asks, the install is somebody
+/// else's: nothing at all is removed — the menu entry and the icons by the
+/// same name are that install's too — and it says why and succeeds. Off
+/// Linux there is nothing it could have installed, and it says so and
+/// succeeds.
 Verb linuxAppUninstall(LinuxApp app) =>
     (context) => _uninstall(context, app);
 
@@ -276,6 +285,8 @@ Future<int> _install(VerbContext context, LinuxApp app) async {
     ],
     into: places.app,
     owner: _owner(app),
+    adopt: app.adopt,
+    links: [places.binary],
   );
   if (replaced != ExitCode.success) {
     return replaced;
@@ -325,7 +336,12 @@ Future<int> _uninstall(VerbContext context, LinuxApp app) async {
   // somebody else's, and the menu entry and icons named for its id are then
   // theirs as well.
   if (notOurLink(places.binary, within: places.app) ??
-          notOurDirectory(places.app, owner: _owner(app))
+          notOurDirectory(
+            places.app,
+            owner: _owner(app),
+            adopt: app.adopt,
+            links: [places.binary],
+          )
       case final why?) {
     context.log('$why — nothing removed');
     return ExitCode.success;

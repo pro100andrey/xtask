@@ -586,11 +586,31 @@ String asTime(Duration took) {
 }
 
 /// `--list`: every task with what it is for, in one column.
-List<String> listing(Iterable<Task> tasks) {
+///
+/// A task for another OS than [host] says so after its description, with
+/// the summary's mark and sentence for it — `⊘ linux only` — so that the
+/// list a person reads before a run says what that run will skip here.
+/// Drawn in [style]: the mark yellow, as the summary draws it.
+List<String> listing(
+  Iterable<Task> tasks, {
+  OperatingSystem? host,
+  Style style = Style.plain,
+}) {
   final width = _widest(tasks.map((task) => task.name));
-  return [
-    for (final task in tasks) '${task.name.padRight(width)}  ${task.desc}',
-  ];
+  return [for (final task in tasks) _listed(task, width, host, style)];
+}
+
+/// [task]'s `--list` row, its name padded to [width]: its description, and
+/// after it, where [host] is not an OS it is for, what the summary says of
+/// it then.
+String _listed(Task task, int width, OperatingSystem? host, Style style) {
+  final row = '${task.name.padRight(width)}  ${task.desc}';
+  if (host == null || task.isFor(host)) {
+    return row;
+  }
+  final skipped =
+      '${style.glyphs.skipped} ${OffPlatform(task.platforms).sentence}';
+  return '$row  ${style.paint(skipped, Tint.warned)}';
 }
 
 /// `--list` over a whole file: the tasks grouped under the gate sets that run
@@ -601,15 +621,21 @@ List<String> listing(Iterable<Task> tasks) {
 /// task under it is one nothing runs rather than one this report did not think
 /// of — which is what a gate set existing by being mentioned could not
 /// promise.
-List<String> grouping(XtaskFile file) {
+///
+/// A task for another OS than [host] is marked as [listing] marks it.
+List<String> grouping(
+  XtaskFile file, {
+  OperatingSystem? host,
+  Style style = Style.plain,
+}) {
   if (file.gates.isEmpty) {
     // Nothing to group by. A single heading over the whole file would be a
     // grouping the file does not have.
-    return listing(file.tasks.values);
+    return listing(file.tasks.values, host: host, style: style);
   }
 
   final width = _widest(file.tasks.keys);
-  String row(Task task) => '  ${task.name.padRight(width)}  ${task.desc}';
+  String row(Task task) => '  ${_listed(task, width, host, style)}';
 
   final groups = <List<String>>[
     for (final gate in file.gates.keys)

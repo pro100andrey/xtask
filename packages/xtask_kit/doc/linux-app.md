@@ -94,6 +94,26 @@ has no `.xtask_kit` naming the app — an app unpacked there by hand, say —
 rather than replace it whole. Every refusal answers `1`, as does a copy that
 fails; `0` is an app installed.
 
+## An install from before the kit
+
+A project that installed its app with its own verbs before it used this
+package left a `~/.local/lib/<binary>` with no mark, which the first install
+after the move would refuse. `adopt:` says what shows that directory to be the
+project's own:
+
+```dart
+const app = LinuxApp(
+  // ...
+  adopt: EarlierInstall(linked: true, files: ['BUILD']),
+);
+```
+
+`linked: true` takes `~/.local/bin/<binary>` leading into the directory as
+that, and `files:` any of the files named, from the directory, that only the
+earlier install wrote. Either one is enough; the install then replaces the
+directory, marked, and the uninstall removes it. Without the evidence, or with
+a mark naming another owner, it is refused as before.
+
 ## On Windows and macOS
 
 There is nothing to install there: the install refuses with `1`, and the
