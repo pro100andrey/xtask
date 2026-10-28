@@ -101,6 +101,21 @@ const ownerMark = '.xtask_kit';
 void markDirectory(String directory, {required String owner}) =>
     File(p.join(directory, ownerMark)).writeAsStringSync('$owner\n');
 
+/// Deletes [directory], which exists, with its [ownerMark] last.
+///
+/// A removal stopped part-way — a file that would not go — then leaves what
+/// is left still marked, and the uninstall run again knows it for the
+/// install's. Deleted whole, the mark could go first, and what was left
+/// would read as somebody else's for good.
+void deleteMarkLast(Directory directory) {
+  for (final entry in directory.listSync(followLinks: false)) {
+    if (p.basename(entry.path) != ownerMark) {
+      entry.deleteSync(recursive: true);
+    }
+  }
+  directory.deleteSync(recursive: true);
+}
+
 /// What shows a directory without [ownerMark] to be one an earlier install
 /// laid down — a project's own install from before it used this package,
 /// which marked nothing — so that the first install after the move replaces

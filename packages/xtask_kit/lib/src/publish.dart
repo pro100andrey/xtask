@@ -203,9 +203,10 @@ Verb pubPublish(
 /// - git says the package matches HEAD ([uncommittedRefusal]), and every
 ///   file pub would upload is one git tracks ([untrackedRefusal]);
 /// - the registry does not already serve the version, and could be asked —
-///   asked first instead where [PubPackage.alreadyServed] is
+///   asked first as well where [PubPackage.alreadyServed] is
 ///   [AlreadyServed.skip], a version it serves then being a `0` with
-///   nothing else checked.
+///   nothing else checked, and a version served by the time of the second
+///   look a `0` too.
 ///
 /// Then `dart pub publish --force` in the package. `--force` because the
 /// checks above are the confirmation, and a prompt is what a CI job cannot
@@ -277,16 +278,15 @@ Future<int> publishToPub(
 
   // Asked first where a version out already is a skip: everything below is
   // about an upload that would not happen.
-  var asked = false;
-  if (package.alreadyServed == AlreadyServed.skip) {
-    switch (await _served(context, probe, registry, name, version)) {
-      case null:
-        return ExitCode.taskFailed;
-      case true:
-        context.log('⊘ $registry already serves $release — nothing to publish');
-        return ExitCode.success;
-      case false:
-        asked = true;
+  final skip = package.alreadyServed == AlreadyServed.skip;
+  if (skip) {
+    final served = await _served(context, probe, registry, name, version);
+    if (served == null) {
+      return ExitCode.taskFailed;
+    }
+    if (served) {
+      context.log('⊘ $registry already serves $release — nothing to publish');
+      return ExitCode.success;
     }
   }
 
@@ -391,18 +391,22 @@ Future<int> publishToPub(
     return ExitCode.taskFailed;
   }
 
-  if (!asked) {
-    final served = await _served(context, probe, registry, name, version);
-    if (served == null) {
-      return ExitCode.taskFailed;
-    }
-    if (served) {
-      context.log(
-        '$registry already serves $release, and a version is never uploaded '
-        'twice; bump the version',
-      );
-      return ExitCode.taskFailed;
-    }
+  // Asked again, just before the upload, in either mode: the checks above
+  // take a while, and another run may have published the version meanwhile.
+  final served = await _served(context, probe, registry, name, version);
+  if (served == null) {
+    return ExitCode.taskFailed;
+  }
+  if (served && skip) {
+    context.log('⊘ $registry already serves $release — nothing to publish');
+    return ExitCode.success;
+  }
+  if (served) {
+    context.log(
+      '$registry already serves $release, and a version is never uploaded '
+      'twice; bump the version',
+    );
+    return ExitCode.taskFailed;
   }
 
   context.log('publishing $release to $registry');

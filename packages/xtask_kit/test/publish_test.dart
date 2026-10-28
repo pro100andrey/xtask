@@ -259,10 +259,26 @@ void main() {
         expect(started, isEmpty);
       });
 
-      test('one it does not serve is published, asked once before', () async {
+      test('one it does not serve is published, asked again before', () async {
+        registry = [
+          {'1.1.0'},
+          {'1.1.0'},
+          {'1.1.0', '1.2.0'},
+        ];
         expect(await run(skipping), ExitCode.success);
         expect(started.single.argv, ['dart', 'pub', 'publish', '--force']);
-        expect(asked, hasLength(2));
+        expect(asked, hasLength(3));
+      });
+
+      test('and one served while it was checked is skipped then', () async {
+        // Another run published it between the first look and the upload.
+        registry = [
+          {'1.1.0'},
+          {'1.1.0', '1.2.0'},
+        ];
+        expect(await run(skipping), ExitCode.success);
+        expect(said.join('\n'), contains('⊘'));
+        expect(started, isEmpty);
       });
 
       test('and is checked as any other before the upload', () async {

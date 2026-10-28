@@ -461,6 +461,12 @@ Future<({int code, Uninstalled outcome})> _uninstallCli(
   }
 
   try {
+    // Marked before anything goes, where it was taken as the tool's on
+    // [DartCli.adopt]'s evidence: the links that may be that evidence go
+    // first, and a run stopped after them would find the directory nobody's.
+    if (Directory(places.share).existsSync()) {
+      markDirectory(places.share, owner: _owner(cli));
+    }
     // The commands first: on Windows whether a copy is this install's is
     // read from the installed `bin/`, which goes next.
     for (final command in [...cli.commands.keys, ...cli.retired]) {
@@ -672,7 +678,7 @@ void _clear(Directory directory, String aside, {required bool windows}) {
     return;
   }
   try {
-    directory.deleteSync(recursive: true);
+    deleteMarkLast(directory);
     return;
   } on FileSystemException {
     if (!windows) {

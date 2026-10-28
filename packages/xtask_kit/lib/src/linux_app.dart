@@ -346,6 +346,12 @@ Future<int> _uninstall(VerbContext context, LinuxApp app) async {
     context.log('$why — nothing removed');
     return ExitCode.success;
   }
+  // Marked before anything goes, where it was taken as the app's on
+  // [LinuxApp.adopt]'s evidence: the link that may be that evidence goes
+  // first, and a run stopped after it would find the directory nobody's.
+  if (Directory(places.app).existsSync()) {
+    markDirectory(places.app, owner: _owner(app));
+  }
   if (FileSystemEntity.typeSync(places.binary, followLinks: false) ==
       FileSystemEntityType.link) {
     Link(places.binary).deleteSync();
@@ -379,7 +385,7 @@ Future<int> _uninstall(VerbContext context, LinuxApp app) async {
     }
   }
   if (Directory(places.app).existsSync()) {
-    Directory(places.app).deleteSync(recursive: true);
+    deleteMarkLast(Directory(places.app));
   }
   context.log('✓ ${app.binary} removed from ${places.app}');
   return ExitCode.success;
