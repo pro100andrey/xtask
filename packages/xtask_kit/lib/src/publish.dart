@@ -45,6 +45,7 @@ final class PubPackage {
     this.directory, {
     this.changelog = 'CHANGELOG.md',
     this.waits = registryWaits,
+    this.alreadyServed = AlreadyServed.refuse,
   });
 
   /// The package — the directory holding its `pubspec.yaml` — from the root.
@@ -56,6 +57,26 @@ final class PubPackage {
   /// The pauses before each look at the registry after the upload; how long
   /// that wait may take is their sum.
   final List<Duration> waits;
+
+  /// What a version the registry already serves comes to: a refusal, by
+  /// default, or — for a task publishing every package of a repository,
+  /// where only some were bumped — a skip.
+  final AlreadyServed alreadyServed;
+}
+
+/// What [publishToPub] does with a version its registry already serves.
+enum AlreadyServed {
+  /// Refuses it, `1`: a version is never uploaded twice, and a publish of
+  /// one already out is a version somebody forgot to bump.
+  refuse,
+
+  /// Answers `0` with `⊘` and checks nothing else, the version being out:
+  /// the package was not bumped, and there is nothing of it to publish. Asked
+  /// before anything else is checked, so a package left as it was is not
+  /// held to a tree or a changelog nobody is about to upload. A registry
+  /// that cannot be asked is still a refusal — whether there is anything to
+  /// publish is not known.
+  skip,
 }
 
 /// What a [RegistryProbe] throws when the registry could not be asked — as
@@ -181,7 +202,10 @@ Verb pubPublish(
 ///   is the one it was uploaded with;
 /// - git says the package matches HEAD ([uncommittedRefusal]), and every
 ///   file pub would upload is one git tracks ([untrackedRefusal]);
-/// - the registry does not already serve the version, and could be asked.
+/// - the registry does not already serve the version, and could be asked —
+///   asked first instead where [PubPackage.alreadyServed] is
+///   [AlreadyServed.skip], a version it serves then being a `0` with
+///   nothing else checked.
 ///
 /// Then `dart pub publish --force` in the package. `--force` because the
 /// checks above are the confirmation, and a prompt is what a CI job cannot
@@ -250,6 +274,21 @@ Future<int> publishToPub(
         _ => 'https://pub.dev',
       };
   final release = '$name $version';
+
+  // Asked first where a version out already is a skip: everything below is
+  // about an upload that would not happen.
+  var asked = false;
+  if (package.alreadyServed == AlreadyServed.skip) {
+    switch (await _served(context, probe, registry, name, version)) {
+      case null:
+        return ExitCode.taskFailed;
+      case true:
+        context.log('⊘ $registry already serves $release — nothing to publish');
+        return ExitCode.success;
+      case false:
+        asked = true;
+    }
+  }
 
   final changelog = File(p.join(directory.path, package.changelog));
   if (!changelog.existsSync()) {
@@ -352,23 +391,18 @@ Future<int> publishToPub(
     return ExitCode.taskFailed;
   }
 
-  try {
-    if ((await probe(registry, name)).contains(version)) {
+  if (!asked) {
+    final served = await _served(context, probe, registry, name, version);
+    if (served == null) {
+      return ExitCode.taskFailed;
+    }
+    if (served) {
       context.log(
         '$registry already serves $release, and a version is never uploaded '
         'twice; bump the version',
       );
       return ExitCode.taskFailed;
     }
-  } on RegistryUnavailable catch (error) {
-    // Before the upload this is a refusal, not a "probably not published":
-    // the upload is the step that cannot be taken back, so it does not start
-    // on a guess.
-    context.log(
-      'whether $registry already serves $release is not known — '
-      '${error.reason} — so nothing was uploaded',
-    );
-    return ExitCode.taskFailed;
   }
 
   context.log('publishing $release to $registry');
@@ -436,6 +470,30 @@ Future<int> publishToPub(
     'give it a few minutes before running what depends on it',
   );
   return ExitCode.continuationFailed;
+}
+
+/// Whether [registry] serves [version] of [name], before the upload — or
+/// null, said, where it could not be asked.
+///
+/// Before the upload a registry that cannot be asked is a refusal, not a
+/// "probably not published": the upload is the step that cannot be taken
+/// back, so it does not start on a guess.
+Future<bool?> _served(
+  VerbContext context,
+  RegistryProbe probe,
+  String registry,
+  String name,
+  String version,
+) async {
+  try {
+    return (await probe(registry, name)).contains(version);
+  } on RegistryUnavailable catch (error) {
+    context.log(
+      'whether $registry already serves $name $version is not known — '
+      '${error.reason} — so nothing was uploaded',
+    );
+    return null;
+  }
 }
 
 /// Why [package]'s tree would not be what is uploaded, or null when it

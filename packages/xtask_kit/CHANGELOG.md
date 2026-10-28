@@ -30,6 +30,10 @@
 - `foreignRetired: ForeignRetired.leave` on `DartCli`: a file under a
   `retired:` name the install did not lay down is left, with a warning,
   rather than refusing the install, which stays the default.
+- `alreadyServed: AlreadyServed.skip` on `PubPackage`: a version the
+  registry already serves is skipped, `⊘` and `0`, rather than refused, so
+  one task can publish every package of a repository and upload only those
+  that were bumped. The refusal stays the default.
 
 ## 0.1.0
 

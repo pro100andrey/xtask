@@ -45,6 +45,7 @@ export 'src/on_path.dart' show onPathLine;
 export 'src/package_tests.dart' show packageTests, runPackageTests, usesFlutter;
 export 'src/publish.dart'
     show
+        AlreadyServed,
         PubPackage,
         RegistryProbe,
         RegistryUnavailable,
