@@ -65,11 +65,19 @@ void main() {
 
     test('and passes everything `--validate` refuses', () {
       // The same check `--validate` does, run from inside the suite so that a
-      // broken task file cannot be green. This project registers no verbs of
-      // its own , so what a `do:` may name is the built-in list.
+      // broken task file cannot be green. What a `do:` may name is the
+      // built-in list and what the root's entry point registers — read from
+      // it, as the documents' entry points are below, rather than listed a
+      // second time here.
+      final registered = RegExp("^      '([a-z-]+)': ", multiLine: true)
+          .allMatches(
+            File(p.join(root, 'bin', 'xtask.dart')).readAsStringSync(),
+          )
+          .map((match) => match.group(1)!);
+      expect(registered, isNotEmpty);
       final report = validateFile(
         file,
-        knownVerbs: builtInVerbNames,
+        knownVerbs: {...builtInVerbNames, ...registered},
         sets: SetExpander(root: root),
       );
       expect(report.problems, isEmpty, reason: '$report');
@@ -103,7 +111,7 @@ void main() {
       // fails here, and so does a name left behind after the task it excused
       // is gone. It is not a second copy of any gate: their members are
       // exactly what is not written on this line.
-      const typedByHand = {'aot'};
+      const typedByHand = {'aot', 'publish', 'publish-xtask', 'publish-kit'};
       final reached = {
         for (final gate in file.gates.keys) ...planGate(file, gate).names,
       };
