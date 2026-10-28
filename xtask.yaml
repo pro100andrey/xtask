@@ -21,8 +21,10 @@ version: 1
 
 # Declared, so that a misspelling here or in a task's `gate:` is a refusal
 # rather than a new gate set nobody runs. The order is the one a report
-# groups by.
-gates: [check, release]
+# groups by. `releasable` is a question — could the packages be released as
+# they stand — and not the release: `--list` reads a gate's name as what it
+# asks, and a gate called `release` read as the act, which `publish` is.
+gates: [check, releasable]
 
 # What this repository publishes, one directory each. A new package is a new
 # directory here, and the tasks below reach it without being edited.
@@ -90,39 +92,37 @@ tasks:
   # nobody would have written by hand come with it.
   publishable:
     desc: refuse a package that could not be published as it stands
-    gate: [release]
+    gate: [releasable]
     each: packages
     in: $each
     run: [dart, pub, publish, --dry-run]
 
 
-  # Publishing, by hand and after the merge: an upload cannot be taken back,
-  # and the credentials are a person's. No gate reaches these — CI would need
-  # pub.dev's OIDC set up to run them, and `release` already asks pub's own
-  # questions of every package on every push.
+  # The release itself, by hand and after the merge: an upload cannot be
+  # taken back, and the credentials are a person's. No gate reaches it — CI
+  # would need pub.dev's OIDC set up to run it, and `releasable` already asks
+  # pub's own questions of every package on every push.
   #
-  # The verbs are `pubPublish` from xtask_kit, registered in `bin/xtask.dart`
-  # in the mode that skips a version pub.dev already serves: `xtask publish`
-  # uploads what a release bumped, and run again it uploads nothing. The
-  # engine first, because the kit depends on it and the verb waits until
-  # pub.dev serves what it uploaded. They need no `check`: they run on a
-  # `main` CI has already passed, and the verb refuses a tree that differs
-  # from HEAD.
+  # One task over `packages`, as `test` and `publishable` are, so a new
+  # package is published without this file being edited. The verb is
+  # xtask_kit's publish, registered in `bin/xtask.dart` in the mode that skips
+  # a version pub.dev already serves: it uploads what a release bumped, and
+  # run again it uploads nothing. It needs no `check`: it runs on a `main` CI
+  # has already passed, and it refuses a tree that differs from HEAD.
+  #
+  # The engine goes up before the kit because the set's order is the
+  # directories' — `packages/xtask` before `packages/xtask_kit` — and members
+  # run one at a time, each waiting until pub.dev serves what it uploaded. Not
+  # with `-j`, which would start the kit beside an engine it may depend on.
   publish:
     desc: publish each package whose version pub.dev does not serve yet
-    needs: [publish-xtask, publish-kit]
-
-  publish-xtask:
-    desc: publish packages/xtask, unless pub.dev serves its version already
-    do: publish-xtask
-
-  publish-kit:
-    desc: publish packages/xtask_kit, unless pub.dev serves its version already
-    needs: [publish-xtask]
-    do: publish-kit
+    each: packages
+    do: publish
+    args: [$each]
 
 
-  # A person's convenience, and the one task in this file no gate reaches.
+  # A person's convenience, and with `publish` the other task no gate
+  # reaches.
   #
   # Not in `check`, because compiling costs two seconds and produces something
   # only one machine can run: the binary is platform-specific, so CI cannot use
@@ -150,6 +150,6 @@ tasks:
 # There are two gate sets, and they are not two copies. A `ci` set beside
 # `check` WOULD have been — the same three tasks written twice, which is the
 # defect §1 exists to remove and is not made acceptable by both copies living
-# in one file. `release` holds something `check` cannot hold at all: a check
+# in one file. `releasable` holds something `check` cannot hold at all: a check
 # that only a clean tree can pass. Different members, different job, different
 # question.

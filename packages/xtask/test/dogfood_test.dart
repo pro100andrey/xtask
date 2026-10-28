@@ -69,11 +69,17 @@ void main() {
       // built-in list and what the root's entry point registers — read from
       // it, as the documents' entry points are below, rather than listed a
       // second time here.
-      final registered = RegExp("^      '([a-z-]+)': ", multiLine: true)
-          .allMatches(
-            File(p.join(root, 'bin', 'xtask.dart')).readAsStringSync(),
-          )
-          .map((match) => match.group(1)!);
+      // Its code only: the comment above `main` shows a registration as an
+      // example, which registers nothing.
+      final code = File(p.join(root, 'bin', 'xtask.dart'))
+          .readAsLinesSync()
+          .where((line) => !line.trimLeft().startsWith('//'))
+          .join('\n');
+      final registered = [
+        for (final map in RegExp(r'verbs: \{([^}]*)\}').allMatches(code))
+          for (final name in RegExp("'([a-z-]+)':").allMatches(map[1]!))
+            name[1]!,
+      ];
       expect(registered, isNotEmpty);
       final report = validateFile(
         file,
@@ -111,7 +117,7 @@ void main() {
       // fails here, and so does a name left behind after the task it excused
       // is gone. It is not a second copy of any gate: their members are
       // exactly what is not written on this line.
-      const typedByHand = {'aot', 'publish', 'publish-xtask', 'publish-kit'};
+      const typedByHand = {'aot', 'publish'};
       final reached = {
         for (final gate in file.gates.keys) ...planGate(file, gate).names,
       };
