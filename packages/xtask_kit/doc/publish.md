@@ -62,11 +62,17 @@ is still a refusal.
 ## The upload and the wait
 
 Then `dart pub publish --force` in the package, and a bounded wait,
-`registryWaits` (about three and a half minutes), until the registry lists the
-version. The registry is where pub uploads: the `publish_to:` URL, or
-`PUB_HOSTED_URL`, or pub.dev, asked through
-pub's API without a credential; a private registry that wants one takes a
-`probe:` of the project's own.
+`registryWaits`, until the registry lists the version: ten minutes, the time
+pub.dev itself says a new version may take, looked for every half minute and
+then every minute. The wait is one line, `waiting until … serves …`, and its
+end; a registry that cannot be asked is said once for each new reason. The
+registry is where pub uploads: the `publish_to:` URL, or `PUB_HOSTED_URL`, or
+pub.dev, asked through pub's API without a credential; a private registry
+that wants one takes a `probe:` of the project's own.
+
+The wait is there for what runs next: a package that depends on the version
+just uploaded resolves against the registry. Where nothing does,
+`waitUntilServed: false` ends the publish at the upload, with a `0`.
 
 ## Exit codes
 

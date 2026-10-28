@@ -112,8 +112,10 @@ tasks:
   #
   # The engine goes up before the kit because the set's order is the
   # directories' — `packages/xtask` before `packages/xtask_kit` — and members
-  # run one at a time, each waiting until pub.dev serves what it uploaded. Not
-  # with `-j`, which would start the kit beside an engine it may depend on.
+  # run one at a time. A member another one depends on waits until pub.dev
+  # serves what it uploaded — where that one's constraint needs the new
+  # version, which `bin/xtask.dart` reads from the manifests. Not with `-j`,
+  # which would start the kit beside an engine it may depend on.
   publish:
     desc: publish each package whose version pub.dev does not serve yet
     each: packages

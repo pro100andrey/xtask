@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `waitUntilServed:` on `PubPackage`: false ends a publish at the upload,
+  answering `0` without waiting for the registry to serve the version — for
+  a package nothing published after it depends on.
+
+### Changed
+
+- A publish waits up to ten minutes for the registry to serve what it
+  uploaded, the time pub.dev says a new version may take, rather than three
+  and a half: pub.dev was seen to take all of that. It first looks after
+  half a minute, and then every half minute and every minute, rather than
+  at once and every few seconds.
+- The wait is one line and its end, rather than a line for each look that
+  found nothing; a registry that cannot be asked is said once for each new
+  reason.
+
 ## 0.1.1
 
 ### Added

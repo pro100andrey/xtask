@@ -14,17 +14,26 @@ import 'pubspec.dart';
 /// How long [publishToPub] holds off before each look at the registry, once
 /// the upload is through.
 ///
-/// Bounded, which is the timeout: what is waited on is an index write the
-/// upload has already triggered, so a registry that has not caught up in
-/// three and a half minutes is not going to in thirty — and saying that out
-/// loud, with the code that means it, beats a run that hangs.
+/// Ten minutes in all, which is what pub.dev answers an upload with: "it may
+/// take up-to 10 minutes before the new version is available". Bounded,
+/// which is the timeout: a registry that has not caught up in the time it
+/// promised is not going to in thirty — and saying that out loud, with the
+/// code that means it, beats a run that hangs.
+///
+/// Not sooner than half a minute, and not more often than that: pub.dev was
+/// seen to serve a version three and a half minutes after its upload, so
+/// looks in the first seconds only ask the registry for nothing.
 const registryWaits = <Duration>[
-  Duration.zero,
-  Duration(seconds: 5),
-  Duration(seconds: 10),
-  Duration(seconds: 20),
   Duration(seconds: 30),
   Duration(seconds: 30),
+  Duration(seconds: 30),
+  Duration(seconds: 30),
+  Duration(minutes: 1),
+  Duration(minutes: 1),
+  Duration(minutes: 1),
+  Duration(minutes: 1),
+  Duration(minutes: 1),
+  Duration(minutes: 1),
   Duration(minutes: 1),
   Duration(minutes: 1),
 ];
@@ -46,6 +55,7 @@ final class PubPackage {
     this.changelog = 'CHANGELOG.md',
     this.waits = registryWaits,
     this.alreadyServed = AlreadyServed.refuse,
+    this.waitUntilServed = true,
   });
 
   /// The package — the directory holding its `pubspec.yaml` — from the root.
@@ -62,6 +72,12 @@ final class PubPackage {
   /// default, or — for a task publishing every package of a repository,
   /// where only some were bumped — a skip.
   final AlreadyServed alreadyServed;
+
+  /// Whether a publish that uploaded waits until the registry serves the
+  /// version ([waits]) before it answers `0`. The default, because what runs
+  /// next may depend on that version; false where nothing does — the upload
+  /// is then the whole of it, and the registry catches up on its own.
+  final bool waitUntilServed;
 }
 
 /// What [publishToPub] does with a version its registry already serves.
@@ -220,7 +236,9 @@ Verb pubPublish(
 /// **Everything passed**, `0`: the registry serves the version — looked for
 /// after each of [PubPackage.waits], because pub answers when the archive is
 /// accepted, not when it is served, and a task that runs next, depending on
-/// that version, would otherwise fail for a reason that is not its own.
+/// that version, would otherwise fail for a reason that is not its own —
+/// or, where [PubPackage.waitUntilServed] is false, the upload went through
+/// and nothing is waited for.
 ///
 /// **The upload happened and the check after it is red**, `4`
 /// ([ExitCode.continuationFailed]): the registry did not serve the version in
@@ -449,15 +467,32 @@ Future<int> publishToPub(
     return ExitCode.continuationFailed;
   }
 
-  for (final (index, delay) in package.waits.indexed) {
+  if (!package.waitUntilServed) {
+    context.log(
+      '✓ $release uploaded; not waiting for $registry to serve it, as '
+      'nothing here needs it to',
+    );
+    return ExitCode.success;
+  }
+
+  // One line for the wait, and none for each look that found nothing: that
+  // the registry has not caught up yet is what waiting means. A registry
+  // that cannot be asked is said, once for each new reason.
+  final minutes = package.waits
+      .fold(Duration.zero, (sum, delay) => sum + delay)
+      .inMinutes;
+  context.log(
+    'waiting until $registry serves $release — up to $minutes min',
+  );
+  String? said;
+  for (final delay in package.waits) {
     await pause(delay);
-    String why;
+    String? why;
     try {
       if ((await probe(registry, name)).contains(version)) {
         context.log('✓ $registry serves $release');
         return ExitCode.success;
       }
-      why = 'not listed yet';
     } on Object catch (error) {
       // After the upload, a registry that cannot be asked is one more reason
       // to look again, not a verdict: what is being waited out is the
@@ -466,7 +501,10 @@ Future<int> publishToPub(
       // `1`, the one answer the upload rules out.
       why = error is RegistryUnavailable ? error.reason : '$error';
     }
-    context.log('  ${index + 1}/${package.waits.length}: $why');
+    if (why != null && why != said) {
+      context.log('  $why');
+    }
+    said = why ?? said;
   }
   context.log(
     'the upload succeeded and is not undone, but $registry does not serve '

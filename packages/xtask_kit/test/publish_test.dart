@@ -422,6 +422,52 @@ void main() {
       },
     );
 
+    test('says it waits once, and nothing for each look in vain', () async {
+      registry = [
+        {'1.1.0'},
+        {'1.1.0'},
+        {'1.1.0'},
+        {'1.1.0', '1.2.0'},
+      ];
+      expect(await run(), ExitCode.success);
+      expect(said.where((line) => line.startsWith('waiting')), hasLength(1));
+      expect(said.last, contains('serves demo 1.2.0'));
+      expect(said.join('\n'), isNot(contains('not listed')));
+    });
+
+    test('and a reason the registry cannot be asked once each', () async {
+      registry = [
+        {'1.1.0'},
+        const RegistryUnavailable('timed out'),
+        const RegistryUnavailable('timed out'),
+        const RegistryUnavailable('answered 503'),
+        {'1.2.0'},
+      ];
+      final package = PubPackage(
+        'packages/demo',
+        waits: List.filled(5, Duration.zero),
+      );
+      expect(await run(package), ExitCode.success);
+      expect(said.where((line) => line.contains('timed out')), hasLength(1));
+      expect(said.where((line) => line.contains('503')), hasLength(1));
+    });
+
+    test('not waiting where it is not to be waited for', () async {
+      const package = PubPackage('packages/demo', waitUntilServed: false);
+      expect(await run(package), ExitCode.success);
+      expect(started.single.argv, ['dart', 'pub', 'publish', '--force']);
+      expect(paused, isEmpty);
+      expect(said.last, contains('not waiting'));
+    });
+
+    test('the default wait is the ten minutes pub.dev promises', () {
+      expect(
+        registryWaits.fold(Duration.zero, (sum, delay) => sum + delay),
+        const Duration(minutes: 10),
+      );
+      expect(registryWaits.first, const Duration(seconds: 30));
+    });
+
     test('one that never serves it is a 4: the upload is not undone', () async {
       registry = [
         {'1.1.0'},
