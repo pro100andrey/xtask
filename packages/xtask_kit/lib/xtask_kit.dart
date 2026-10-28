@@ -52,6 +52,7 @@ export 'src/publish.dart'
         askRegistry,
         changelogNames,
         manifestField,
+        needsUnserved,
         pubPublish,
         publishToPub,
         publishedFiles,

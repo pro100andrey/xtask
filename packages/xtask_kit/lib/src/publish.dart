@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:pub_semver/pub_semver.dart';
 import 'package:xtask/xtask.dart';
 
 import 'pubspec.dart';
@@ -478,11 +479,9 @@ Future<int> publishToPub(
   // One line for the wait, and none for each look that found nothing: that
   // the registry has not caught up yet is what waiting means. A registry
   // that cannot be asked is said, once for each new reason.
-  final minutes = package.waits
-      .fold(Duration.zero, (sum, delay) => sum + delay)
-      .inMinutes;
+  final total = package.waits.fold(Duration.zero, (sum, delay) => sum + delay);
   context.log(
-    'waiting until $registry serves $release — up to $minutes min',
+    'waiting until $registry serves $release — up to ${_span(total)}',
   );
   String? said;
   for (final delay in package.waits) {
@@ -504,7 +503,7 @@ Future<int> publishToPub(
     if (why != null && why != said) {
       context.log('  $why');
     }
-    said = why ?? said;
+    said = why;
   }
   context.log(
     'the upload succeeded and is not undone, but $registry does not serve '
@@ -512,6 +511,61 @@ Future<int> publishToPub(
     'give it a few minutes before running what depends on it',
   );
   return ExitCode.continuationFailed;
+}
+
+/// [span] as a person reads a wait: `10 min`, `1 min 30 s`, `45 s`.
+String _span(Duration span) {
+  final minutes = span.inMinutes;
+  final seconds = span.inSeconds % 60;
+  return [
+    if (minutes > 0) '$minutes min',
+    if (seconds > 0 || minutes == 0) '$seconds s',
+  ].join(' ');
+}
+
+/// Whether one of [manifests], the `pubspec.yaml` of each package published
+/// beside [name], needs a version of [name] the registry does not serve yet
+/// — none of [served] allowed by its constraint — and so cannot be resolved
+/// by its users until the one uploaded now is served. What
+/// [PubPackage.waitUntilServed] is for: false where this is.
+///
+/// `dependencies:` only, since a dev dependency is not what a package's
+/// users resolve; and a dependency by `path:`, `git:` or `sdk:` is not
+/// resolved against the registry at all. A dependency written as a map
+/// without any of those is hosted, of any version unless it names one.
+/// Throws a [FormatException] where a manifest is not one, or a constraint
+/// is not one pub reads.
+bool needsUnserved(
+  String name, {
+  required Iterable<String> manifests,
+  required Iterable<String> served,
+}) {
+  final versions = [for (final version in served) Version.parse(version)];
+  for (final manifest in manifests) {
+    final dependencies = readPubspec(manifest)['dependencies'];
+    if (dependencies is! Map<Object?, Object?> ||
+        !dependencies.containsKey(name)) {
+      continue;
+    }
+    final constraint = switch (dependencies[name]) {
+      null => VersionConstraint.any,
+      final String text => VersionConstraint.parse(text),
+      final Map<Object?, Object?> source
+          when source.containsKey('path') ||
+              source.containsKey('git') ||
+              source.containsKey('sdk') =>
+        null,
+      {'version': final String text} => VersionConstraint.parse(text),
+      Map<Object?, Object?>() => VersionConstraint.any,
+      final other => throw FormatException(
+        'the dependency on $name is neither a constraint nor a source: $other',
+      ),
+    };
+    if (constraint != null && !versions.any(constraint.allows)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// Whether [registry] serves [version] of [name], before the upload — or

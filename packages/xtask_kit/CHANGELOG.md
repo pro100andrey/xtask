@@ -7,6 +7,10 @@
 - `waitUntilServed:` on `PubPackage`: false ends a publish at the upload,
   answering `0` without waiting for the registry to serve the version — for
   a package nothing published after it depends on.
+- `needsUnserved`: whether one of a set of manifests depends on a package
+  with a constraint no version the registry serves allows — so that a
+  publish of it is to be waited for. Dev dependencies, and dependencies by
+  `path:`, `git:` or `sdk:`, do not count.
 
 ### Changed
 

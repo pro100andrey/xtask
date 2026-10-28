@@ -73,6 +73,8 @@ that wants one takes a `probe:` of the project's own.
 The wait is there for what runs next: a package that depends on the version
 just uploaded resolves against the registry. Where nothing does,
 `waitUntilServed: false` ends the publish at the upload, with a `0`.
+`needsUnserved` says which it is: whether one of the manifests of the
+packages published beside it needs a version the registry does not serve yet.
 
 ## Exit codes
 
