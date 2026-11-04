@@ -62,18 +62,66 @@ is still a refusal.
 ## The upload and the wait
 
 Then `dart pub publish --force` in the package, and a bounded wait,
-`registryWaits` (about three and a half minutes), until the registry lists the
-version. The registry is where pub uploads: the `publish_to:` URL, or
-`PUB_HOSTED_URL`, or pub.dev, asked through
-pub's API without a credential; a private registry that wants one takes a
-`probe:` of the project's own.
+`registryWaits`, until the registry lists the version: ten minutes, the time
+pub.dev itself says a new version may take, looked for every half minute and
+then every minute. The wait is one line, `waiting until … serves …`, and its
+end; a registry that cannot be asked is said once for each new reason. The
+registry is where pub uploads: the `publish_to:` URL, or `PUB_HOSTED_URL`, or
+pub.dev, asked through pub's API without a credential; a private registry
+that wants one takes a `probe:` of the project's own.
+
+The wait is there for what runs next: a package that depends on the version
+just uploaded resolves against the registry. Where nothing does,
+`waitUntilServed: false` ends the publish at the upload, with a `0`.
+`needsUnserved` says which it is: whether one of the manifests of the
+packages published beside it needs a version the registry does not serve yet.
+
+## Tagging what went out
+
+`tag:` names the tag a version gets once it is uploaded, `{{name}}` and
+`{{version}}` in it, as pub.dev's publishing from GitHub Actions names them:
+`releaseTagPattern`, `{{name}}-v{{version}}`, where a repository publishes
+several packages on their own, or `v{{version}}` where it has one.
+
+```dart
+'publish-my-pkg': pubPublish(
+  const PubPackage(
+    'packages/my_pkg',
+    alreadyServed: AlreadyServed.skip,
+    tag: releaseTagPattern,
+  ),
+),
+'tag-release': pubTagRelease(),
+```
+
+The tag is annotated, `my_pkg 1.2.0`, at HEAD (which the checks before the
+upload found the package matching), and pushed to `origin`; with `gh` on the
+PATH the tag gets a GitHub release too, titled the same, its notes the
+changelog's entry for the version. Only a version this publish uploaded is
+tagged: one the registry served already may have gone out from an older
+commit. A tag that cannot be made is a `4`, as the upload stands.
+
+`pubTagRelease` tags a version published before, or one whose tag failed:
+its arguments are the package and the commit it went out from (HEAD where
+none is given), the version and the notes being that commit's. Run again, it
+makes only what is missing; a tag already at another commit, here or on the
+remote, is a refusal, since a tag is not moved under whoever fetched it.
+
+```yaml
+version: 1
+
+tasks:
+  tag-release:
+    desc: 'tag a published version: -- <package> [<commit>]'
+    do: tag-release
+```
 
 ## Exit codes
 
 Three endings. Nothing was uploaded: `2` where there is no package to publish
 (no `pubspec.yaml`, no name or version, `publish_to: none`), `1` for any other
 refusal. Uploaded and served: `0`. Uploaded, and the registry
-has not served it in time: `4`. Pub answering other than `0` is not proof
+has not served it in time, or its tag could not be made: `4`. Pub answering other than `0` is not proof
 that nothing went up, so the registry is asked once then: serving the version
 is a `0`. Not serving it is a `1` only after pub's `65`, its refusal before
 the upload (validation, credentials); after any other failure, and where the
@@ -88,4 +136,4 @@ body's program is.
 
 ## As functions
 
-`publishToPub` is the same as a function.
+`publishToPub` is the same as a function, and so is `tagRelease`.

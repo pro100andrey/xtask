@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.2.0
+
+### Added
+
+- `tag:` on `PubPackage`: a version uploaded is tagged — `{{name}}` and
+  `{{version}}` in the pattern, `releaseTagPattern` (`{{name}}-v{{version}}`)
+  where a repository publishes several packages — at HEAD, the tag pushed,
+  and released on GitHub with its changelog entry where `gh` is on the PATH.
+  A tag that cannot be made is a `4`: the upload stands.
+- `pubTagRelease` and `tagRelease`: a version published before tagged at the
+  commit it went out from, the same way; run again, only what is missing is
+  made, and a tag at another commit is a refusal.
+- `releaseTag` and `changelogEntry`: a tag of a pattern, and what a
+  changelog says under a version's heading.
+- `waitUntilServed:` on `PubPackage`: false ends a publish at the upload,
+  answering `0` without waiting for the registry to serve the version — for
+  a package nothing published after it depends on.
+- `needsUnserved`: whether one of a set of manifests depends on a package
+  with a constraint no version the registry serves allows — so that a
+  publish of it is to be waited for. Dev dependencies, and dependencies by
+  `path:`, `git:` or `sdk:`, do not count.
+
+### Changed
+
+- A publish waits up to ten minutes for the registry to serve what it
+  uploaded, the time pub.dev says a new version may take, rather than three
+  and a half: pub.dev was seen to take all of that. It first looks after
+  half a minute, and then every half minute and every minute, rather than
+  at once and every few seconds.
+- The wait is one line and its end, rather than a line for each look that
+  found nothing; a registry that cannot be asked is said once for each new
+  reason.
+
 ## 0.1.1
 
 ### Added

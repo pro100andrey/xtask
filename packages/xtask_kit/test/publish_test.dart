@@ -422,6 +422,81 @@ void main() {
       },
     );
 
+    test('says it waits once, and nothing for each look in vain', () async {
+      registry = [
+        {'1.1.0'},
+        {'1.1.0'},
+        {'1.1.0'},
+        {'1.1.0', '1.2.0'},
+      ];
+      expect(await run(), ExitCode.success);
+      expect(said.where((line) => line.startsWith('waiting')), hasLength(1));
+      expect(said.last, contains('serves demo 1.2.0'));
+      expect(said.join('\n'), isNot(contains('not listed')));
+    });
+
+    test('and a reason the registry cannot be asked once each', () async {
+      registry = [
+        {'1.1.0'},
+        const RegistryUnavailable('timed out'),
+        const RegistryUnavailable('timed out'),
+        const RegistryUnavailable('answered 503'),
+        {'1.2.0'},
+      ];
+      final package = PubPackage(
+        'packages/demo',
+        waits: List.filled(5, Duration.zero),
+      );
+      expect(await run(package), ExitCode.success);
+      expect(said.where((line) => line.contains('timed out')), hasLength(1));
+      expect(said.where((line) => line.contains('503')), hasLength(1));
+    });
+
+    test('not waiting where it is not to be waited for', () async {
+      const package = PubPackage('packages/demo', waitUntilServed: false);
+      expect(await run(package), ExitCode.success);
+      expect(started.single.argv, ['dart', 'pub', 'publish', '--force']);
+      expect(paused, isEmpty);
+      expect(said.last, contains('not waiting'));
+    });
+
+    test('the default wait is the ten minutes pub.dev promises', () {
+      expect(
+        registryWaits.fold(Duration.zero, (sum, delay) => sum + delay),
+        const Duration(minutes: 10),
+      );
+      expect(registryWaits.first, const Duration(seconds: 30));
+    });
+
+    test('a reason said again after a look that found nothing', () async {
+      registry = [
+        {'1.1.0'},
+        const RegistryUnavailable('timed out'),
+        {'1.1.0'},
+        const RegistryUnavailable('timed out'),
+        {'1.2.0'},
+      ];
+      final package = PubPackage(
+        'packages/demo',
+        waits: List.filled(5, Duration.zero),
+      );
+      expect(await run(package), ExitCode.success);
+      expect(said.where((line) => line.contains('timed out')), hasLength(2));
+    });
+
+    test('says how long it may wait as it is: minutes and seconds', () async {
+      registry = [
+        {'1.1.0'},
+        {'1.2.0'},
+      ];
+      const package = PubPackage(
+        'packages/demo',
+        waits: [Duration(seconds: 30), Duration(minutes: 1)],
+      );
+      expect(await run(package), ExitCode.success);
+      expect(said.join('\n'), contains('up to 1 min 30 s'));
+    });
+
     test('one that never serves it is a 4: the upload is not undone', () async {
       registry = [
         {'1.1.0'},
@@ -720,6 +795,75 @@ void main() {
       expect(
         askRegistry('http://127.0.0.1:$port', 'demo'),
         throwsA(isA<RegistryUnavailable>()),
+      );
+    });
+  });
+
+  group('whether a package beside needs the version uploaded', () {
+    String manifest(String dependencies) =>
+        'name: other\nversion: 1.0.0\n$dependencies';
+
+    bool needs(String dependencies, {Set<String> served = const {'0.5.0'}}) =>
+        needsUnserved(
+          'xtask',
+          manifests: [manifest(dependencies)],
+          served: served,
+        );
+
+    test('not where a version served allows its constraint', () {
+      expect(needs('dependencies:\n  xtask: ^0.5.0\n'), isFalse);
+    });
+
+    test('where none does', () {
+      expect(needs('dependencies:\n  xtask: ^0.6.0\n'), isTrue);
+      expect(
+        needs('dependencies:\n  xtask: {version: ">=0.5.1 <0.6.0"}\n'),
+        isTrue,
+      );
+    });
+
+    test('and where nothing is served yet, of any version', () {
+      expect(
+        needs('dependencies:\n  xtask:\n', served: const {}),
+        isTrue,
+      );
+      expect(
+        needs(
+          'dependencies:\n  xtask: {hosted: https://pub.dev}\n',
+          served: const {},
+        ),
+        isTrue,
+      );
+    });
+
+    test('never for a dev dependency, nor one not on it at all', () {
+      expect(needs('dev_dependencies:\n  xtask: ^0.9.0\n'), isFalse);
+      expect(needs('dependencies:\n  yaml: ^3.1.3\n'), isFalse);
+      expect(needs(''), isFalse);
+    });
+
+    test('never for one by path, git or sdk, which pub.dev does not serve', () {
+      for (final source in [
+        '{path: ../xtask}',
+        '{git: https://example.com/xtask.git}',
+        '{sdk: flutter}',
+      ]) {
+        expect(
+          needs('dependencies:\n  xtask: $source\n', served: const {}),
+          isFalse,
+          reason: source,
+        );
+      }
+    });
+
+    test('a manifest or a constraint pub would not read throws', () {
+      expect(
+        () => needs('dependencies:\n  xtask: not a constraint\n'),
+        throwsFormatException,
+      );
+      expect(
+        () => needsUnserved('xtask', manifests: ['- a list'], served: const {}),
+        throwsFormatException,
       );
     });
   });

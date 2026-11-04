@@ -7,24 +7,35 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:pub_semver/pub_semver.dart';
 import 'package:xtask/xtask.dart';
 
 import 'pubspec.dart';
+import 'release_tag.dart';
 
 /// How long [publishToPub] holds off before each look at the registry, once
 /// the upload is through.
 ///
-/// Bounded, which is the timeout: what is waited on is an index write the
-/// upload has already triggered, so a registry that has not caught up in
-/// three and a half minutes is not going to in thirty — and saying that out
-/// loud, with the code that means it, beats a run that hangs.
+/// Ten minutes in all, which is what pub.dev answers an upload with: "it may
+/// take up-to 10 minutes before the new version is available". Bounded,
+/// which is the timeout: a registry that has not caught up in the time it
+/// promised is not going to in thirty — and saying that out loud, with the
+/// code that means it, beats a run that hangs.
+///
+/// Not sooner than half a minute, and not more often than that: pub.dev was
+/// seen to serve a version three and a half minutes after its upload, so
+/// looks in the first seconds only ask the registry for nothing.
 const registryWaits = <Duration>[
-  Duration.zero,
-  Duration(seconds: 5),
-  Duration(seconds: 10),
-  Duration(seconds: 20),
   Duration(seconds: 30),
   Duration(seconds: 30),
+  Duration(seconds: 30),
+  Duration(seconds: 30),
+  Duration(minutes: 1),
+  Duration(minutes: 1),
+  Duration(minutes: 1),
+  Duration(minutes: 1),
+  Duration(minutes: 1),
+  Duration(minutes: 1),
   Duration(minutes: 1),
   Duration(minutes: 1),
 ];
@@ -46,6 +57,8 @@ final class PubPackage {
     this.changelog = 'CHANGELOG.md',
     this.waits = registryWaits,
     this.alreadyServed = AlreadyServed.refuse,
+    this.waitUntilServed = true,
+    this.tag,
   });
 
   /// The package — the directory holding its `pubspec.yaml` — from the root.
@@ -62,6 +75,21 @@ final class PubPackage {
   /// default, or — for a task publishing every package of a repository,
   /// where only some were bumped — a skip.
   final AlreadyServed alreadyServed;
+
+  /// Whether a publish that uploaded waits until the registry serves the
+  /// version ([waits]) before it answers `0`. The default, because what runs
+  /// next may depend on that version; false where nothing does — the upload
+  /// is then the whole of it, and the registry catches up on its own.
+  final bool waitUntilServed;
+
+  /// The tag a version uploaded gets ([releaseTag]: `{{name}}` and
+  /// `{{version}}` in it, [releaseTagPattern] where a repository publishes
+  /// several packages), at HEAD, pushed, with a GitHub release of its
+  /// changelog entry where `gh` is on the PATH ([tagRelease]); null, the
+  /// default, for none. Only a version this publish uploaded is tagged: one
+  /// the registry served already may have gone out from another commit, and
+  /// is tagged there with [pubTagRelease].
+  final String? tag;
 }
 
 /// What [publishToPub] does with a version its registry already serves.
@@ -99,7 +127,10 @@ final class RegistryUnavailable implements Exception {
 /// never served — is about what a registry answered, none of which needs a
 /// real one; [askRegistry] is the one that asks.
 typedef RegistryProbe =
-    Future<Set<String>> Function(String registry, String package);
+    Future<Set<String>> Function(
+      String registry,
+      String package,
+    );
 
 /// [RegistryProbe] by pub's own API: `GET <registry>/api/packages/<package>`.
 ///
@@ -121,9 +152,7 @@ Future<Set<String>> askRegistry(String registry, String package) async {
       HttpHeaders.acceptHeader,
       'application/vnd.pub.v2+json',
     );
-    final response = await request.close().timeout(
-      const Duration(seconds: 30),
-    );
+    final response = await request.close().timeout(const Duration(seconds: 30));
     final body = await response
         .transform(utf8.decoder)
         .join()
@@ -220,7 +249,9 @@ Verb pubPublish(
 /// **Everything passed**, `0`: the registry serves the version — looked for
 /// after each of [PubPackage.waits], because pub answers when the archive is
 /// accepted, not when it is served, and a task that runs next, depending on
-/// that version, would otherwise fail for a reason that is not its own.
+/// that version, would otherwise fail for a reason that is not its own —
+/// or, where [PubPackage.waitUntilServed] is false, the upload went through
+/// and nothing is waited for.
 ///
 /// **The upload happened and the check after it is red**, `4`
 /// ([ExitCode.continuationFailed]): the registry did not serve the version in
@@ -424,7 +455,7 @@ Future<int> publishToPub(
           '`dart pub publish` answered $published, but ✓ $registry serves '
           '$release: the upload went through',
         );
-        return ExitCode.success;
+        return await _tagged(context, package, release, ExitCode.success);
       }
       // 65 is pub refusing before anything went up — its validation, its
       // credentials — and only that is proof of nothing uploaded. Any other
@@ -449,15 +480,30 @@ Future<int> publishToPub(
     return ExitCode.continuationFailed;
   }
 
-  for (final (index, delay) in package.waits.indexed) {
+  if (!package.waitUntilServed) {
+    context.log(
+      '✓ $release uploaded; not waiting for $registry to serve it, as '
+      'nothing here needs it to',
+    );
+    return _tagged(context, package, release, ExitCode.success);
+  }
+
+  // One line for the wait, and none for each look that found nothing: that
+  // the registry has not caught up yet is what waiting means. A registry
+  // that cannot be asked is said, once for each new reason.
+  final total = package.waits.fold(Duration.zero, (sum, delay) => sum + delay);
+  context.log(
+    'waiting until $registry serves $release — up to ${_span(total)}',
+  );
+  String? said;
+  for (final delay in package.waits) {
     await pause(delay);
-    String why;
+    String? why;
     try {
       if ((await probe(registry, name)).contains(version)) {
         context.log('✓ $registry serves $release');
-        return ExitCode.success;
+        return await _tagged(context, package, release, ExitCode.success);
       }
-      why = 'not listed yet';
     } on Object catch (error) {
       // After the upload, a registry that cannot be asked is one more reason
       // to look again, not a verdict: what is being waited out is the
@@ -466,14 +512,103 @@ Future<int> publishToPub(
       // `1`, the one answer the upload rules out.
       why = error is RegistryUnavailable ? error.reason : '$error';
     }
-    context.log('  ${index + 1}/${package.waits.length}: $why');
+    if (why != null && why != said) {
+      context.log('  $why');
+    }
+    said = why;
   }
   context.log(
     'the upload succeeded and is not undone, but $registry does not serve '
     '$release yet. That is the registry catching up, not a defect here: '
     'give it a few minutes before running what depends on it',
   );
-  return ExitCode.continuationFailed;
+  return _tagged(context, package, release, ExitCode.continuationFailed);
+}
+
+/// [answer], what a publish that uploaded [release] comes to, once the
+/// version is tagged where [package] names a tag ([PubPackage.tag]). A tag
+/// that could not be made is a `4`: the upload stands, and is not to be
+/// tried again, while the tag is made after ([pubTagRelease]).
+Future<int> _tagged(
+  VerbContext context,
+  PubPackage package,
+  String release,
+  int answer,
+) async {
+  final pattern = package.tag;
+  if (pattern == null) {
+    return answer;
+  }
+  final tagged = await tagRelease(
+    context,
+    package.directory,
+    pattern: pattern,
+    changelog: package.changelog,
+  );
+  if (tagged != ExitCode.success) {
+    context.log(
+      '$release is uploaded, and that is not undone, but its tag is not '
+      'made: make it with pubTagRelease, from the commit it was published '
+      'from',
+    );
+    return ExitCode.continuationFailed;
+  }
+  return answer;
+}
+
+/// [span] as a person reads a wait: `10 min`, `1 min 30 s`, `45 s`.
+String _span(Duration span) {
+  final minutes = span.inMinutes;
+  final seconds = span.inSeconds % 60;
+  return [
+    if (minutes > 0) '$minutes min',
+    if (seconds > 0 || minutes == 0) '$seconds s',
+  ].join(' ');
+}
+
+/// Whether one of [manifests], the `pubspec.yaml` of each package published
+/// beside [name], needs a version of [name] the registry does not serve yet
+/// — none of [served] allowed by its constraint — and so cannot be resolved
+/// by its users until the one uploaded now is served. What
+/// [PubPackage.waitUntilServed] is for: false where this is.
+///
+/// `dependencies:` only, since a dev dependency is not what a package's
+/// users resolve; and a dependency by `path:`, `git:` or `sdk:` is not
+/// resolved against the registry at all. A dependency written as a map
+/// without any of those is hosted, of any version unless it names one.
+/// Throws a [FormatException] where a manifest is not one, or a constraint
+/// is not one pub reads.
+bool needsUnserved(
+  String name, {
+  required Iterable<String> manifests,
+  required Iterable<String> served,
+}) {
+  final versions = [for (final version in served) Version.parse(version)];
+  for (final manifest in manifests) {
+    final dependencies = readPubspec(manifest)['dependencies'];
+    if (dependencies is! Map<Object?, Object?> ||
+        !dependencies.containsKey(name)) {
+      continue;
+    }
+    final constraint = switch (dependencies[name]) {
+      null => VersionConstraint.any,
+      final String text => VersionConstraint.parse(text),
+      final Map<Object?, Object?> source
+          when source.containsKey('path') ||
+              source.containsKey('git') ||
+              source.containsKey('sdk') =>
+        null,
+      {'version': final String text} => VersionConstraint.parse(text),
+      Map<Object?, Object?>() => VersionConstraint.any,
+      final other => throw FormatException(
+        'the dependency on $name is neither a constraint nor a source: $other',
+      ),
+    };
+    if (constraint != null && !versions.any(constraint.allows)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// Whether [registry] serves [version] of [name], before the upload — or

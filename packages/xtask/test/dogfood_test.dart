@@ -117,7 +117,7 @@ void main() {
       // fails here, and so does a name left behind after the task it excused
       // is gone. It is not a second copy of any gate: their members are
       // exactly what is not written on this line.
-      const typedByHand = {'aot', 'publish'};
+      const typedByHand = {'aot', 'publish', 'tag-release'};
       final reached = {
         for (final gate in file.gates.keys) ...planGate(file, gate).names,
       };

@@ -52,6 +52,7 @@ export 'src/publish.dart'
         askRegistry,
         changelogNames,
         manifestField,
+        needsUnserved,
         pubPublish,
         publishToPub,
         publishedFiles,
@@ -59,6 +60,13 @@ export 'src/publish.dart'
         servedVersions,
         uncommittedRefusal,
         untrackedRefusal;
+export 'src/release_tag.dart'
+    show
+        changelogEntry,
+        pubTagRelease,
+        releaseTag,
+        releaseTagPattern,
+        tagRelease;
 export 'src/replace.dart'
     show
         EarlierInstall,
