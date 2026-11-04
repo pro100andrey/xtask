@@ -24,7 +24,7 @@ dependencies:
   xtask: ^0.5.0
   # For the publish verb `bin/xtask.dart` registers; resolved from the
   # workspace member, never from pub.
-  xtask_kit: ^0.1.1
+  xtask_kit: ^0.2.0
 
 dev_dependencies:
   # `analysis_options.yaml` is here, and is read for every member below it, so
