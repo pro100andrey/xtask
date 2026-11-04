@@ -11,6 +11,7 @@ import 'package:pub_semver/pub_semver.dart';
 import 'package:xtask/xtask.dart';
 
 import 'pubspec.dart';
+import 'release_tag.dart';
 
 /// How long [publishToPub] holds off before each look at the registry, once
 /// the upload is through.
@@ -57,6 +58,7 @@ final class PubPackage {
     this.waits = registryWaits,
     this.alreadyServed = AlreadyServed.refuse,
     this.waitUntilServed = true,
+    this.tag,
   });
 
   /// The package — the directory holding its `pubspec.yaml` — from the root.
@@ -79,6 +81,15 @@ final class PubPackage {
   /// next may depend on that version; false where nothing does — the upload
   /// is then the whole of it, and the registry catches up on its own.
   final bool waitUntilServed;
+
+  /// The tag a version uploaded gets ([releaseTag]: `{{name}}` and
+  /// `{{version}}` in it, [releaseTagPattern] where a repository publishes
+  /// several packages), at HEAD, pushed, with a GitHub release of its
+  /// changelog entry where `gh` is on the PATH ([tagRelease]); null, the
+  /// default, for none. Only a version this publish uploaded is tagged: one
+  /// the registry served already may have gone out from another commit, and
+  /// is tagged there with [pubTagRelease].
+  final String? tag;
 }
 
 /// What [publishToPub] does with a version its registry already serves.
@@ -116,7 +127,10 @@ final class RegistryUnavailable implements Exception {
 /// never served — is about what a registry answered, none of which needs a
 /// real one; [askRegistry] is the one that asks.
 typedef RegistryProbe =
-    Future<Set<String>> Function(String registry, String package);
+    Future<Set<String>> Function(
+      String registry,
+      String package,
+    );
 
 /// [RegistryProbe] by pub's own API: `GET <registry>/api/packages/<package>`.
 ///
@@ -138,9 +152,7 @@ Future<Set<String>> askRegistry(String registry, String package) async {
       HttpHeaders.acceptHeader,
       'application/vnd.pub.v2+json',
     );
-    final response = await request.close().timeout(
-      const Duration(seconds: 30),
-    );
+    final response = await request.close().timeout(const Duration(seconds: 30));
     final body = await response
         .transform(utf8.decoder)
         .join()
@@ -443,7 +455,7 @@ Future<int> publishToPub(
           '`dart pub publish` answered $published, but ✓ $registry serves '
           '$release: the upload went through',
         );
-        return ExitCode.success;
+        return await _tagged(context, package, release, ExitCode.success);
       }
       // 65 is pub refusing before anything went up — its validation, its
       // credentials — and only that is proof of nothing uploaded. Any other
@@ -473,7 +485,7 @@ Future<int> publishToPub(
       '✓ $release uploaded; not waiting for $registry to serve it, as '
       'nothing here needs it to',
     );
-    return ExitCode.success;
+    return _tagged(context, package, release, ExitCode.success);
   }
 
   // One line for the wait, and none for each look that found nothing: that
@@ -490,7 +502,7 @@ Future<int> publishToPub(
     try {
       if ((await probe(registry, name)).contains(version)) {
         context.log('✓ $registry serves $release');
-        return ExitCode.success;
+        return await _tagged(context, package, release, ExitCode.success);
       }
     } on Object catch (error) {
       // After the upload, a registry that cannot be asked is one more reason
@@ -510,7 +522,38 @@ Future<int> publishToPub(
     '$release yet. That is the registry catching up, not a defect here: '
     'give it a few minutes before running what depends on it',
   );
-  return ExitCode.continuationFailed;
+  return _tagged(context, package, release, ExitCode.continuationFailed);
+}
+
+/// [answer], what a publish that uploaded [release] comes to, once the
+/// version is tagged where [package] names a tag ([PubPackage.tag]). A tag
+/// that could not be made is a `4`: the upload stands, and is not to be
+/// tried again, while the tag is made after ([pubTagRelease]).
+Future<int> _tagged(
+  VerbContext context,
+  PubPackage package,
+  String release,
+  int answer,
+) async {
+  final pattern = package.tag;
+  if (pattern == null) {
+    return answer;
+  }
+  final tagged = await tagRelease(
+    context,
+    package.directory,
+    pattern: pattern,
+    changelog: package.changelog,
+  );
+  if (tagged != ExitCode.success) {
+    context.log(
+      '$release is uploaded, and that is not undone, but its tag is not '
+      'made: make it with pubTagRelease, from the commit it was published '
+      'from',
+    );
+    return ExitCode.continuationFailed;
+  }
+  return answer;
 }
 
 /// [span] as a person reads a wait: `10 min`, `1 min 30 s`, `45 s`.

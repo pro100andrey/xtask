@@ -20,12 +20,16 @@ import 'package:xtask/xtask.dart';
 import 'package:xtask_kit/xtask_kit.dart';
 
 Future<void> main(List<String> args) async {
-  exitCode = await runXtask(args, verbs: {'publish': _publish});
+  exitCode = await runXtask(
+    args,
+    verbs: {'publish': _publish, 'tag-release': pubTagRelease()},
+  );
 }
 
 /// `do: publish` — the package `args:` names, published to pub unless
-/// pub.dev serves its version already, and waited for only where another
-/// package here needs the version it uploads ([_neededNext]).
+/// pub.dev serves its version already, waited for only where another
+/// package here needs the version it uploads ([_neededNext]), and tagged
+/// `<name>-v<version>` once uploaded, with its GitHub release.
 Future<int> _publish(VerbContext context) async {
   if (context.args case [final directory]) {
     return publishToPub(
@@ -34,6 +38,8 @@ Future<int> _publish(VerbContext context) async {
         directory,
         alreadyServed: AlreadyServed.skip,
         waitUntilServed: await _neededNext(context, directory),
+        // each package's own: they are released apart
+        tag: releaseTagPattern,
       ),
     );
   }

@@ -4,6 +4,16 @@
 
 ### Added
 
+- `tag:` on `PubPackage`: a version uploaded is tagged — `{{name}}` and
+  `{{version}}` in the pattern, `releaseTagPattern` (`{{name}}-v{{version}}`)
+  where a repository publishes several packages — at HEAD, the tag pushed,
+  and released on GitHub with its changelog entry where `gh` is on the PATH.
+  A tag that cannot be made is a `4`: the upload stands.
+- `pubTagRelease` and `tagRelease`: a version published before tagged at the
+  commit it went out from, the same way; run again, only what is missing is
+  made, and a tag at another commit is a refusal.
+- `releaseTag` and `changelogEntry`: a tag of a pattern, and what a
+  changelog says under a version's heading.
 - `waitUntilServed:` on `PubPackage`: false ends a publish at the upload,
   answering `0` without waiting for the registry to serve the version — for
   a package nothing published after it depends on.
